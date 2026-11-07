@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -13,6 +14,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.OpenWith
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -22,8 +24,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.lernspace.app.ui.workspace.model.ImageElement
 import kotlin.math.roundToInt
 
@@ -37,10 +41,19 @@ fun DraggableImage(
     modifier: Modifier = Modifier
 ) {
     val density = LocalDensity.current
-    var offsetX by remember(image.x) { mutableFloatStateOf(image.x) }
-    var offsetY by remember(image.y) { mutableFloatStateOf(image.y) }
-    var widthDp by remember(image.width) { mutableFloatStateOf(image.width) }
-    var heightDp by remember(image.height) { mutableFloatStateOf(image.height) }
+    var offsetX by remember(image.id) { mutableFloatStateOf(image.x) }
+    var offsetY by remember(image.id) { mutableFloatStateOf(image.y) }
+    var widthDp by remember(image.id) { mutableFloatStateOf(image.width) }
+    var heightDp by remember(image.id) { mutableFloatStateOf(image.height) }
+
+    LaunchedEffect(image.x, image.y) {
+        offsetX = image.x
+        offsetY = image.y
+    }
+    LaunchedEffect(image.width, image.height) {
+        widthDp = image.width
+        heightDp = image.height
+    }
 
     val selectionColor = Color(0xFF2563EB)
 
@@ -49,7 +62,6 @@ fun DraggableImage(
             .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
             .width(widthDp.dp)
             .height(heightDp.dp)
-            .clickable { onSelect() }
     ) {
         Surface(
             modifier = Modifier
@@ -76,14 +88,29 @@ fun DraggableImage(
             )
         }
 
+        // Tap overlay when unselected
+        if (!image.isSelected) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) {
+                        onSelect()
+                    }
+            )
+        }
+
         if (image.isSelected) {
-            // Move Grip (Top-Center)
+            // Move Grip (Top-Center, 40dp clearance)
             Box(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .offset(y = (-14).dp)
-                    .size(width = 32.dp, height = 18.dp)
-                    .clip(RoundedCornerShape(9.dp))
+                    .offset(y = (-40).dp)
+                    .size(width = 76.dp, height = 30.dp)
+                    .shadow(4.dp, RoundedCornerShape(15.dp))
+                    .clip(RoundedCornerShape(15.dp))
                     .background(selectionColor)
                     .pointerInput(Unit) {
                         detectDragGestures { change, dragAmount ->
@@ -95,20 +122,32 @@ fun DraggableImage(
                     },
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = Icons.Filled.OpenWith,
-                    contentDescription = "Move Image",
-                    tint = Color.White,
-                    modifier = Modifier.size(12.dp)
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.OpenWith,
+                        contentDescription = "Move Image",
+                        tint = Color.White,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Text(
+                        text = "Move",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
 
             // Delete Button (Top-Right)
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .offset(x = 10.dp, y = (-10).dp)
-                    .size(22.dp)
+                    .offset(x = 8.dp, y = (-40).dp)
+                    .size(30.dp)
+                    .shadow(4.dp, CircleShape)
                     .clip(CircleShape)
                     .background(Color(0xFFEF4444))
                     .clickable { onDelete() },
@@ -118,7 +157,7 @@ fun DraggableImage(
                     imageVector = Icons.Filled.Close,
                     contentDescription = "Delete Image",
                     tint = Color.White,
-                    modifier = Modifier.size(13.dp)
+                    modifier = Modifier.size(16.dp)
                 )
             }
 
@@ -126,11 +165,8 @@ fun DraggableImage(
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .offset(x = 8.dp, y = 8.dp)
-                    .size(18.dp)
-                    .clip(CircleShape)
-                    .background(Color.White)
-                    .border(2.dp, selectionColor, CircleShape)
+                    .offset(x = 16.dp, y = 16.dp)
+                    .size(44.dp)
                     .pointerInput(Unit) {
                         detectDragGestures { change, dragAmount ->
                             change.consume()
@@ -140,8 +176,18 @@ fun DraggableImage(
                             heightDp = maxOf(80f, heightDp + deltaY)
                             onResize(widthDp, heightDp)
                         }
-                    }
-            )
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(18.dp)
+                        .shadow(3.dp, CircleShape)
+                        .clip(CircleShape)
+                        .background(Color.White)
+                        .border(2.5.dp, selectionColor, CircleShape)
+                )
+            }
         }
     }
 }

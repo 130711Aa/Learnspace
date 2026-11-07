@@ -50,14 +50,14 @@ fun DraggableTextBox(
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusRequester = remember { FocusRequester() }
 
-    // Local state for smooth real-time 120Hz gesture interaction
+    // Local reactive state for smooth real-time 120Hz gesture interaction
     var offsetX by remember(box.id) { mutableFloatStateOf(box.x) }
     var offsetY by remember(box.id) { mutableFloatStateOf(box.y) }
     var widthDp by remember(box.id) { mutableFloatStateOf(box.width) }
     var heightDp by remember(box.id) { mutableFloatStateOf(box.height) }
     var textContent by remember(box.id) { mutableStateOf(box.text) }
 
-    // Keep in sync with external updates if any
+    // Synchronize if parent state changes
     LaunchedEffect(box.x, box.y) {
         offsetX = box.x
         offsetY = box.y
@@ -72,19 +72,19 @@ fun DraggableTextBox(
         }
     }
 
-    // Auto focus when selected
+    // Auto focus text cursor and show keyboard when selected
     LaunchedEffect(box.isSelected) {
         if (box.isSelected) {
             try {
                 focusRequester.requestFocus()
                 keyboardController?.show()
             } catch (e: Exception) {
-                // Ignore if not yet attached
+                // ignore
             }
         }
     }
 
-    val selectionColor = Color(0xFF2563EB) // Word Accent Blue
+    val selectionColor = Color(0xFF2563EB) // MS Word Accent Blue
 
     Box(
         modifier = modifier
@@ -92,7 +92,7 @@ fun DraggableTextBox(
             .width(widthDp.dp)
             .height(heightDp.dp)
     ) {
-        // Main Box Container (MS Word Style Frame)
+        // 1. Main Box Container
         Surface(
             modifier = Modifier
                 .fillMaxSize()
@@ -104,15 +104,7 @@ fun DraggableTextBox(
                     } else {
                         Modifier
                     }
-                )
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null
-                ) {
-                    onSelect()
-                    focusRequester.requestFocus()
-                    keyboardController?.show()
-                },
+                ),
             color = if (box.isSelected) Color.White.copy(alpha = 0.95f) else Color.Transparent,
             shape = RoundedCornerShape(6.dp)
         ) {
@@ -121,9 +113,9 @@ fun DraggableTextBox(
                     .fillMaxSize()
                     .padding(if (box.isSelected) 10.dp else 4.dp)
             ) {
-                if (textContent.isEmpty()) {
+                if (textContent.isEmpty() && box.isSelected) {
                     Text(
-                        text = "Tap here to type notes...",
+                        text = "Type notes here...",
                         color = Color(0xFF94A3B8),
                         fontSize = 16.sp,
                         lineHeight = 24.sp
@@ -149,16 +141,31 @@ fun DraggableTextBox(
             }
         }
 
-        // Active Selection Overlays (Floating Move Pill, Delete Button, and Big Touch Resize Handles)
+        // 2. CRITICAL FIX: Click-to-Select Overlay when Unselected
+        // When unselected, any tap on the text immediately re-selects it and reveals the Word frame and handles!
+        if (!box.isSelected) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) {
+                        onSelect()
+                    }
+            )
+        }
+
+        // 3. Active Selection Overlays (Floating Move Pill, Delete Button, and Big Touch Resize Handles)
         if (box.isSelected) {
-            // 1. Move Drag Handle (Elevated pill above the top border with comfortable 14dp gap)
+            // Move Handle: Elevated pill with generous 38dp clearance above border
             Box(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .offset(y = (-36).dp)
-                    .size(width = 68.dp, height = 28.dp)
-                    .shadow(3.dp, RoundedCornerShape(14.dp))
-                    .clip(RoundedCornerShape(14.dp))
+                    .offset(y = (-40).dp)
+                    .size(width = 76.dp, height = 30.dp)
+                    .shadow(4.dp, RoundedCornerShape(15.dp))
+                    .clip(RoundedCornerShape(15.dp))
                     .background(selectionColor)
                     .pointerInput(Unit) {
                         detectDragGestures { change, dragAmount ->
@@ -178,24 +185,24 @@ fun DraggableTextBox(
                         imageVector = Icons.Filled.OpenWith,
                         contentDescription = "Move box",
                         tint = Color.White,
-                        modifier = Modifier.size(14.dp)
+                        modifier = Modifier.size(15.dp)
                     )
                     Text(
                         text = "Move",
                         color = Color.White,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
                     )
                 }
             }
 
-            // 2. Delete Button (Positioned at top right, aligned with the move handle)
+            // Delete Button (Top-Right, aligned with Move handle)
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .offset(x = 8.dp, y = (-36).dp)
-                    .size(28.dp)
-                    .shadow(3.dp, CircleShape)
+                    .offset(x = 8.dp, y = (-40).dp)
+                    .size(30.dp)
+                    .shadow(4.dp, CircleShape)
                     .clip(CircleShape)
                     .background(Color(0xFFEF4444))
                     .clickable { onDelete() },
@@ -209,12 +216,12 @@ fun DraggableTextBox(
                 )
             }
 
-            // 3. Right-Edge Horizontal Resize Handle (36dp wide touch target)
+            // Right-Edge Horizontal Resize Handle (38dp wide hit area)
             Box(
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
                     .offset(x = 18.dp)
-                    .size(width = 36.dp, height = 48.dp)
+                    .size(width = 38.dp, height = 48.dp)
                     .pointerInput(Unit) {
                         detectDragGestures { change, dragAmount ->
                             change.consume()
@@ -227,7 +234,7 @@ fun DraggableTextBox(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(width = 8.dp, height = 24.dp)
+                        .size(width = 8.dp, height = 26.dp)
                         .shadow(2.dp, RoundedCornerShape(4.dp))
                         .clip(RoundedCornerShape(4.dp))
                         .background(Color.White)
@@ -235,12 +242,12 @@ fun DraggableTextBox(
                 )
             }
 
-            // 4. Bottom-Edge Vertical Resize Handle (36dp high touch target)
+            // Bottom-Edge Vertical Resize Handle (38dp high hit area)
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .offset(y = 18.dp)
-                    .size(width = 48.dp, height = 36.dp)
+                    .size(width = 48.dp, height = 38.dp)
                     .pointerInput(Unit) {
                         detectDragGestures { change, dragAmount ->
                             change.consume()
@@ -253,7 +260,7 @@ fun DraggableTextBox(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(width = 24.dp, height = 8.dp)
+                        .size(width = 26.dp, height = 8.dp)
                         .shadow(2.dp, RoundedCornerShape(4.dp))
                         .clip(RoundedCornerShape(4.dp))
                         .background(Color.White)
@@ -261,7 +268,7 @@ fun DraggableTextBox(
                 )
             }
 
-            // 5. Bottom-Right Corner Resize Handle (44dp x 44dp generous touch area)
+            // Bottom-Right Corner Resize Handle (Diagonal Resize, 44dp x 44dp comfortable target)
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)

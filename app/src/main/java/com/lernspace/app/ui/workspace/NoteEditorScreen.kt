@@ -151,28 +151,15 @@ fun NoteEditorScreen(
         // 1. Paper Background (Ruled, Grid, Dotted, Blank)
         PaperBackground(style = paperStyle)
 
-        // 2. Gesture Detector for Canvas (Deselect or Place Text Box on Tap)
+        // 2. Gesture Detector for Canvas (Deselect all when tapping blank canvas)
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(activeTool) {
-                    detectTapGestures { offset ->
-                        if (activeTool == NoteTool.TEXT) {
-                            deselectAll()
-                            textBoxes.add(
-                                TextBoxElement(
-                                    x = offset.x - 80f,
-                                    y = offset.y - 30f,
-                                    width = 240f,
-                                    height = 100f,
-                                    text = "",
-                                    isSelected = true
-                                )
-                            )
-                        } else {
-                            // Tapping blank canvas deselects any active text boxes/images
-                            deselectAll()
-                        }
+                .pointerInput(Unit) {
+                    detectTapGestures {
+                        // Tapping blank canvas deselects any active text box or image
+                        // Completely immune to palm touches creating unwanted text boxes!
+                        deselectAll()
                     }
                 }
         )
@@ -241,6 +228,7 @@ fun NoteEditorScreen(
                     if (index < textBoxes.size) {
                         textBoxes[index] = textBoxes[index].copy(isSelected = true)
                     }
+                    activeTool = NoteTool.TEXT
                 },
                 onDelete = {
                     textBoxes.remove(boxElement)
@@ -423,20 +411,19 @@ fun NoteEditorScreen(
             onSelectTool = { tool ->
                 activeTool = tool
                 if (tool == NoteTool.TEXT) {
-                    // If no box is selected, create a new Word-style box in the visible workspace
-                    if (textBoxes.none { it.isSelected }) {
-                        deselectAll()
-                        textBoxes.add(
-                            TextBoxElement(
-                                x = 200f,
-                                y = 200f,
-                                width = 260f,
-                                height = 110f,
-                                text = "",
-                                isSelected = true
-                            )
+                    deselectAll()
+                    val newX = 140f + ((textBoxes.size * 25f) % 200f)
+                    val newY = 160f + ((textBoxes.size * 35f) % 250f)
+                    textBoxes.add(
+                        TextBoxElement(
+                            x = newX,
+                            y = newY,
+                            width = 260f,
+                            height = 110f,
+                            text = "",
+                            isSelected = true
                         )
-                    }
+                    )
                 }
             },
             selectedColor = selectedColor,
