@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -53,6 +54,7 @@ fun DraggableTextBox(
 ) {
     val density = LocalDensity.current
     val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
     val focusRequester = remember { FocusRequester() }
 
     // 120 FPS Local Gesture State:
@@ -78,7 +80,7 @@ fun DraggableTextBox(
         }
     }
 
-    // Auto focus text cursor and show keyboard when selected
+    // Auto focus text cursor and show keyboard when selected; clear when unselected
     LaunchedEffect(box.isSelected) {
         if (box.isSelected) {
             try {
@@ -87,6 +89,9 @@ fun DraggableTextBox(
             } catch (e: Exception) {
                 // ignore
             }
+        } else {
+            focusManager.clearFocus(force = true)
+            keyboardController?.hide()
         }
     }
 
@@ -178,38 +183,61 @@ fun DraggableTextBox(
                     }
                 }
 
-                // Inner Text Input Field
+                // Inner Text Display / Input Area
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
                         .padding(if (box.isSelected) 8.dp else 4.dp)
                 ) {
-                    if (textContent.isEmpty()) {
-                        Text(
-                            text = if (box.isSelected) "Type notes here..." else "Empty note",
-                            color = Color(0xFF94A3B8),
-                            fontSize = 16.sp,
-                            lineHeight = 24.sp
-                        )
-                    }
+                    if (box.isSelected) {
+                        // EDIT MODE: BasicTextField with active cursor and keyboard
+                        if (textContent.isEmpty()) {
+                            Text(
+                                text = "Type notes here...",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 16.sp,
+                                lineHeight = 24.sp
+                            )
+                        }
 
-                    BasicTextField(
-                        value = textContent,
-                        onValueChange = { newText ->
-                            textContent = newText
-                            onTextChange(newText)
-                        },
-                        textStyle = TextStyle(
-                            color = LernspaceDark,
-                            fontSize = 16.sp,
-                            lineHeight = 24.sp
-                        ),
-                        cursorBrush = SolidColor(selectionColor),
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .focusRequester(focusRequester)
-                    )
+                        BasicTextField(
+                            value = textContent,
+                            onValueChange = { newText ->
+                                textContent = newText
+                                onTextChange(newText)
+                            },
+                            textStyle = TextStyle(
+                                color = LernspaceDark,
+                                fontSize = 16.sp,
+                                lineHeight = 24.sp
+                            ),
+                            cursorBrush = SolidColor(selectionColor),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .focusRequester(focusRequester)
+                        )
+                    } else {
+                        // UNSELECTED MODE: Pure Text - ZERO cursor, ZERO focus
+                        if (textContent.isNotEmpty()) {
+                            Text(
+                                text = textContent,
+                                style = TextStyle(
+                                    color = LernspaceDark,
+                                    fontSize = 16.sp,
+                                    lineHeight = 24.sp
+                                ),
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else {
+                            Text(
+                                text = "Empty note",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 16.sp,
+                                lineHeight = 24.sp
+                            )
+                        }
+                    }
                 }
             }
         }

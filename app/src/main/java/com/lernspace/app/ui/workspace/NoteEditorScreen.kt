@@ -4,6 +4,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
@@ -18,15 +19,19 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
 import androidx.ink.brush.Brush
 import androidx.ink.brush.StockBrushes
 import androidx.ink.brush.compose.createWithComposeColor
@@ -67,6 +72,11 @@ fun NoteEditorScreen(
     val textBoxes = remember { mutableStateListOf<TextBoxElement>() }
     val imageElements = remember { mutableStateListOf<ImageElement>() }
 
+    // Canvas Viewport Pan & Zoom State (Fingers only for Pan & Zoom, Stylus dedicated to Inking!)
+    var scale by remember { mutableFloatStateOf(1f) }
+    var panX by remember { mutableFloatStateOf(0f) }
+    var panY by remember { mutableFloatStateOf(0f) }
+
     // Helper: Deselect all objects
     fun deselectAll() {
         for (i in textBoxes.indices) {
@@ -87,10 +97,12 @@ fun NoteEditorScreen(
                     val bitmap = BitmapFactory.decodeStream(stream)
                     if (bitmap != null) {
                         deselectAll()
+                        val spawnX = (-panX + 200f) / scale
+                        val spawnY = (-panY + 160f) / scale
                         imageElements.add(
                             ImageElement(
-                                x = 120f,
-                                y = 140f,
+                                x = maxOf(40f, spawnX),
+                                y = maxOf(60f, spawnY),
                                 bitmap = bitmap.asImageBitmap(),
                                 isSelected = true
                             )
@@ -148,92 +160,106 @@ fun NoteEditorScreen(
     }
 
     Box(modifier = modifier.fillMaxSize()) {
-        // 1. Paper Background (Ruled, Grid, Dotted, Blank)
-        PaperBackground(style = paperStyle)
-
-        // 2. Gesture Detector for Canvas (Deselect all when tapping blank canvas)
+        // 1. Infinite Note Canvas Viewport with GPU Pan & Zoom Layer
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(Unit) {
-                    detectTapGestures {
-                        // Tapping blank canvas deselects any active text box or image
-                        // Completely immune to palm touches creating unwanted text boxes!
+                .clipToBounds()
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    translationX = panX
+                    translationY = panY
+                    transformOrigin = TransformOrigin(0f, 0f)
+                }
+        ) {
+            // Paper Background
+            PaperBackground(
+                style = paperStyle,
+                modifier = Modifier.size(3200.dp, 4800.dp)
+            )
+
+            // Placed Images Layer
+            imageElements.forEachIndexed { index, img ->
+                DraggableImage(
+                    image = img,
+                    onCommitMove = { newX, newY ->
+                        if (index < imageElements.size) {
+                            imageElements[index] = imageElements[index].copy(x = newX, y = newY)
+                        }
+                    },
+                    onCommitResize = { newW, newH ->
+                        if (index < imageElements.size) {
+                            imageElements[index] = imageElements[index].copy(width = newW, height = newH)
+                        }
+                    },
+                    onSelect = {
                         deselectAll()
-                    }
-                }
-        )
+                        if (index < imageElements.size) {
+                            imageElements[index] = imageElements[index].copy(isSelected = true)
+                        }
+                    },
+                    onDelete = { imageElements.remove(img) }
+                )
+            }
 
-        // 3. Placed Images Layer
-        imageElements.forEachIndexed { index, img ->
-            DraggableImage(
-                image = img,
-                onCommitMove = { newX, newY ->
-                    if (index < imageElements.size) {
-                        imageElements[index] = imageElements[index].copy(x = newX, y = newY)
-                    }
+            // Inking Layer (AndroidX Ink - STYLUS ONLY for Inking, FINGER for Pan & Zoom)
+            DrawingSurface(
+                strokes = strokes,
+                canvasStrokeRenderer = canvasStrokeRenderer,
+                currentBrush = currentBrush,
+                onGetNextBrush = { currentBrush },
+                onStrokesFinished = { newStrokes ->
+                    strokes.addAll(newStrokes)
+                    undoneStrokes.clear()
                 },
-                onCommitResize = { newW, newH ->
-                    if (index < imageElements.size) {
-                        imageElements[index] = imageElements[index].copy(width = newW, height = newH)
-                    }
+                isEraserMode = activeTool == NoteTool.ERASER,
+                isDrawingEnabled = activeTool == NoteTool.PEN || activeTool == NoteTool.HIGHLIGHTER || activeTool == NoteTool.ERASER,
+                onErase = { x, y -> eraseNear(x, y) },
+                onTransform = { centroid, pan, zoom ->
+                    val newScale = (scale * zoom).coerceIn(0.5f, 3.5f)
+                    val effectiveZoom = newScale / scale
+                    panX = centroid.x - (centroid.x - panX) * effectiveZoom + pan.x
+                    panY = centroid.y - (centroid.y - panY) * effectiveZoom + pan.y
+                    scale = newScale
                 },
-                onSelect = {
+                onCanvasTap = {
                     deselectAll()
-                    if (index < imageElements.size) {
-                        imageElements[index] = imageElements[index].copy(isSelected = true)
-                    }
                 },
-                onDelete = { imageElements.remove(img) }
+                modifier = Modifier.size(3200.dp, 4800.dp)
             )
-        }
 
-        // 4. Inking Layer (AndroidX Ink)
-        DrawingSurface(
-            strokes = strokes,
-            canvasStrokeRenderer = canvasStrokeRenderer,
-            currentBrush = currentBrush,
-            onGetNextBrush = { currentBrush },
-            onStrokesFinished = { newStrokes ->
-                strokes.addAll(newStrokes)
-                undoneStrokes.clear()
-            },
-            isEraserMode = activeTool == NoteTool.ERASER,
-            isDrawingEnabled = activeTool == NoteTool.PEN || activeTool == NoteTool.HIGHLIGHTER || activeTool == NoteTool.ERASER,
-            onErase = { x, y -> eraseNear(x, y) },
-            modifier = Modifier.fillMaxSize()
-        )
-
-        // 5. Placed Draggable Text Boxes Layer (MS Word Style)
-        textBoxes.forEachIndexed { index, boxElement ->
-            DraggableTextBox(
-                box = boxElement,
-                onCommitMove = { newX, newY ->
-                    if (index < textBoxes.size) {
-                        textBoxes[index] = textBoxes[index].copy(x = newX, y = newY)
+            // Placed Draggable Text Boxes Layer (MS Word Style)
+            textBoxes.forEachIndexed { index, boxElement ->
+                DraggableTextBox(
+                    box = boxElement,
+                    onCommitMove = { newX, newY ->
+                        if (index < textBoxes.size) {
+                            textBoxes[index] = textBoxes[index].copy(x = newX, y = newY)
+                        }
+                    },
+                    onCommitResize = { newW, newH ->
+                        if (index < textBoxes.size) {
+                            textBoxes[index] = textBoxes[index].copy(width = newW, height = newH)
+                        }
+                    },
+                    onTextChange = { newText ->
+                        if (index < textBoxes.size) {
+                            textBoxes[index] = textBoxes[index].copy(text = newText)
+                        }
+                    },
+                    onSelect = {
+                        deselectAll()
+                        if (index < textBoxes.size) {
+                            textBoxes[index] = textBoxes[index].copy(isSelected = true)
+                        }
+                        activeTool = NoteTool.TEXT
+                    },
+                    onDelete = {
+                        textBoxes.remove(boxElement)
                     }
-                },
-                onCommitResize = { newW, newH ->
-                    if (index < textBoxes.size) {
-                        textBoxes[index] = textBoxes[index].copy(width = newW, height = newH)
-                    }
-                },
-                onTextChange = { newText ->
-                    if (index < textBoxes.size) {
-                        textBoxes[index] = textBoxes[index].copy(text = newText)
-                    }
-                },
-                onSelect = {
-                    deselectAll()
-                    if (index < textBoxes.size) {
-                        textBoxes[index] = textBoxes[index].copy(isSelected = true)
-                    }
-                    activeTool = NoteTool.TEXT
-                },
-                onDelete = {
-                    textBoxes.remove(boxElement)
-                }
-            )
+                )
+            }
         }
 
         // 6. Top Header Navigation Bar
@@ -290,11 +316,36 @@ fun NoteEditorScreen(
                 }
             }
 
-            // Right: Actions (Paper style, Undo, Redo, Clear)
+            // Right: Actions (Zoom level, Paper style, Undo, Redo, Clear)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                // Zoom Indicator & One-Tap Reset Button
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (scale != 1f || panX != 0f || panY != 0f) Color(0xFFEFF6FF) else Color.White,
+                    border = if (scale != 1f || panX != 0f || panY != 0f) BorderStroke(1.5.dp, Color(0xFF3B82F6)) else null,
+                    shadowElevation = 2.dp,
+                    modifier = Modifier
+                        .height(38.dp)
+                        .clickable {
+                            scale = 1f
+                            panX = 0f
+                            panY = 0f
+                        }
+                        .padding(horizontal = 10.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = "${(scale * 100).roundToInt()}%",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (scale != 1f || panX != 0f || panY != 0f) Color(0xFF2563EB) else Color(0xFF64748B)
+                        )
+                    }
+                }
+
                 // Paper Style Selector
                 Box {
                     Surface(
@@ -410,14 +461,16 @@ fun NoteEditorScreen(
             activeTool = activeTool,
             onSelectTool = { tool ->
                 activeTool = tool
-                if (tool == NoteTool.TEXT) {
+                if (tool != NoteTool.TEXT) {
                     deselectAll()
-                    val newX = 140f + ((textBoxes.size * 25f) % 200f)
-                    val newY = 160f + ((textBoxes.size * 35f) % 250f)
+                } else {
+                    deselectAll()
+                    val screenCenterX = (-panX + 260f) / scale
+                    val screenCenterY = (-panY + 220f) / scale
                     textBoxes.add(
                         TextBoxElement(
-                            x = newX,
-                            y = newY,
+                            x = maxOf(40f, screenCenterX),
+                            y = maxOf(60f, screenCenterY),
                             width = 260f,
                             height = 110f,
                             text = "",
