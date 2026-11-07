@@ -20,7 +20,7 @@ sealed class Screen(
     data object Insights : Screen("insights", "Insights", Icons.Filled.Analytics)
 
     companion object {
-        val items = listOf(Home, Planner, Learning, Workspace, Insights)
+        val items get() = listOf(Home, Planner, Learning, Workspace, Insights)
     }
 }
 

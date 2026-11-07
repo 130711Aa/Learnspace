@@ -14,10 +14,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.graphics.Color
 import com.lernspace.app.ui.theme.*
+import com.lernspace.app.ui.components.DrawingSurface
+import com.lernspace.app.ui.components.createDefaultPenBrush
+import androidx.ink.strokes.Stroke
+import androidx.ink.rendering.android.canvas.CanvasStrokeRenderer
+import androidx.ink.brush.Brush
 
 @Composable
 fun WorkspaceScreen() {
+    var showStylusCanvas by remember { mutableStateOf(false) }
+
     Column(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -43,7 +53,7 @@ fun WorkspaceScreen() {
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
-                    onClick = { /* Quick stylus note */ },
+                    onClick = { showStylusCanvas = true },
                     shape = RoundedCornerShape(8.dp)
                 ) {
                     Icon(imageVector = Icons.Filled.Draw, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -84,6 +94,74 @@ fun WorkspaceScreen() {
                 subject = "Cognitive Psychology",
                 snippet = "Baddeley's multicomponent model includes the phonological loop, visuospatial sketchpad, and central executive...",
                 date = "Oct 19"
+            )
+        }
+    }
+
+    if (showStylusCanvas) {
+        Dialog(
+            onDismissRequest = { showStylusCanvas = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = LernspaceSurface
+            ) {
+                StylusCanvasScreen(
+                    onClose = { showStylusCanvas = false }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun StylusCanvasScreen(onClose: () -> Unit) {
+    val strokes = remember { mutableStateListOf<Stroke>() }
+    val canvasStrokeRenderer = remember { CanvasStrokeRenderer.create() }
+    var currentBrush by remember { mutableStateOf(createDefaultPenBrush()) }
+    var isEraserMode by remember { mutableStateOf(false) }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Quick Canvas", style = MaterialTheme.typography.titleLarge)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = { isEraserMode = !isEraserMode },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isEraserMode) AccentTeal else LernspaceSurfaceLow,
+                        contentColor = if (isEraserMode) Color.White else LernspaceDark
+                    )
+                ) {
+                    Text(if (isEraserMode) "Eraser: ON" else "Eraser: OFF")
+                }
+                Button(onClick = onClose) {
+                    Text("Close")
+                }
+            }
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color.White)
+                .padding(16.dp)
+        ) {
+            DrawingSurface(
+                strokes = strokes,
+                canvasStrokeRenderer = canvasStrokeRenderer,
+                currentBrush = currentBrush,
+                onGetNextBrush = { currentBrush },
+                onStrokesFinished = { newStrokes -> strokes.addAll(newStrokes) },
+                isEraserMode = isEraserMode,
+                modifier = Modifier.fillMaxSize()
             )
         }
     }

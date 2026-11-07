@@ -67,6 +67,20 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.work.runtime.ktx)
 
+    // Jetpack Ink for Quick Canvas
+    implementation("androidx.ink:ink-authoring:1.0.0")
+    implementation("androidx.ink:ink-brush:1.0.0")
+    implementation("androidx.ink:ink-geometry:1.0.0")
+    implementation("androidx.ink:ink-nativeloader:1.0.0")
+    implementation("androidx.ink:ink-rendering:1.0.0")
+    implementation("androidx.ink:ink-strokes:1.0.0")
+    implementation("androidx.ink:ink-storage:1.0.0")
+    implementation("androidx.ink:ink-authoring-android:1.0.0")
+    implementation("androidx.ink:ink-authoring-compose:1.0.0")
+    implementation("androidx.ink:ink-brush-compose:1.0.0")
+    implementation("androidx.ink:ink-geometry-compose:1.0.0")
+    implementation("androidx.input:input-motionprediction:1.0.1")
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
