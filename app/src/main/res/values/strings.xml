@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">Lernspace</string>
+    <string name="nav_home">Home</string>
+    <string name="nav_planner">Planner</string>
+    <string name="nav_learning">Learning</string>
+    <string name="nav_workspace">Workspace</string>
+    <string name="nav_insights">Insights</string>
+    <string name="quick_add">Quick Add</string>
+</resources>
