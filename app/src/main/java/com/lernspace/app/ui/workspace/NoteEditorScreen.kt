@@ -182,16 +182,20 @@ fun NoteEditorScreen(
             DraggableImage(
                 image = img,
                 onMove = { newX, newY ->
-                    img.x = newX
-                    img.y = newY
+                    if (index < imageElements.size) {
+                        imageElements[index] = imageElements[index].copy(x = newX, y = newY)
+                    }
                 },
                 onResize = { newW, newH ->
-                    img.width = newW
-                    img.height = newH
+                    if (index < imageElements.size) {
+                        imageElements[index] = imageElements[index].copy(width = newW, height = newH)
+                    }
                 },
                 onSelect = {
                     deselectAll()
-                    imageElements[index] = img.copy(isSelected = true)
+                    if (index < imageElements.size) {
+                        imageElements[index] = imageElements[index].copy(isSelected = true)
+                    }
                 },
                 onDelete = { imageElements.remove(img) }
             )
@@ -218,21 +222,29 @@ fun NoteEditorScreen(
             DraggableTextBox(
                 box = boxElement,
                 onMove = { newX, newY ->
-                    boxElement.x = newX
-                    boxElement.y = newY
+                    if (index < textBoxes.size) {
+                        textBoxes[index] = textBoxes[index].copy(x = newX, y = newY)
+                    }
                 },
                 onResize = { newW, newH ->
-                    boxElement.width = newW
-                    boxElement.height = newH
+                    if (index < textBoxes.size) {
+                        textBoxes[index] = textBoxes[index].copy(width = newW, height = newH)
+                    }
                 },
                 onTextChange = { newText ->
-                    boxElement.text = newText
+                    if (index < textBoxes.size) {
+                        textBoxes[index] = textBoxes[index].copy(text = newText)
+                    }
                 },
                 onSelect = {
                     deselectAll()
-                    textBoxes[index] = boxElement.copy(isSelected = true)
+                    if (index < textBoxes.size) {
+                        textBoxes[index] = textBoxes[index].copy(isSelected = true)
+                    }
                 },
-                onDelete = { textBoxes.remove(boxElement) }
+                onDelete = {
+                    textBoxes.remove(boxElement)
+                }
             )
         }
 
