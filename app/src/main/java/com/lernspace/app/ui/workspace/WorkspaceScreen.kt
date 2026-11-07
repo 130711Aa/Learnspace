@@ -2,66 +2,95 @@ package com.lernspace.app.ui.workspace
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.Draw
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 import com.lernspace.app.ui.theme.*
-import com.lernspace.app.ui.components.DrawingSurface
-import com.lernspace.app.ui.components.createDefaultPenBrush
-import androidx.ink.strokes.Stroke
-import androidx.ink.rendering.android.canvas.CanvasStrokeRenderer
-import androidx.ink.brush.Brush
+import com.lernspace.app.ui.workspace.model.NoteUiModel
 
 @Composable
 fun WorkspaceScreen() {
-    var showStylusCanvas by remember { mutableStateOf(false) }
+    var activeNote by remember { mutableStateOf<NoteUiModel?>(null) }
 
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        // Header
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+    val initialNotes = remember {
+        mutableStateListOf(
+            NoteUiModel(
+                title = "LTP Induction & NMDA Receptors",
+                subject = "Neurobiology",
+                date = "Today, 10:15 AM",
+                snippet = "Long-term potentiation requires high-frequency stimulation of Schaffer collaterals to relieve magnesium block..."
+            ),
+            NoteUiModel(
+                title = "Bayesian Prior Distributions Summary",
+                subject = "Advanced Statistics",
+                date = "Yesterday",
+                snippet = "Conjugate priors simplify posterior density calculation when sampling from exponential family distributions..."
+            ),
+            NoteUiModel(
+                title = "Working Memory & Executive Control",
+                subject = "Cognitive Psychology",
+                date = "Oct 19",
+                snippet = "Baddeley's multicomponent model includes the phonological loop, visuospatial sketchpad, and central executive..."
+            )
+        )
+    }
+
+    if (activeNote != null) {
+        // Full screen Interactive Note Editor
+        NoteEditorScreen(
+            note = activeNote!!,
+            onBack = { activeNote = null }
+        )
+    } else {
+        // Workspace Notes Overview
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
-            Column {
-                Text(
-                    text = "Workspace & Notes",
-                    style = MaterialTheme.typography.headlineLarge,
-                    color = LernspaceDark
-                )
-                Text(
-                    text = "Text notes and material references connected to subjects and topics",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = LernspaceTextSecondary
-                )
-            }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = { showStylusCanvas = true },
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Icon(imageVector = Icons.Filled.Draw, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Stylus Canvas")
+            // Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "Workspace & Notes",
+                        style = MaterialTheme.typography.headlineLarge,
+                        color = LernspaceDark
+                    )
+                    Text(
+                        text = "Your connected learning environment with stylus inking, text boxes, and images",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = LernspaceTextSecondary
+                    )
                 }
+
                 Button(
-                    onClick = { /* New text note */ },
+                    onClick = {
+                        val newNote = NoteUiModel(
+                            title = "Untitled Note",
+                            subject = "General Study",
+                            date = "Just now",
+                            snippet = "Start handwriting or typing notes..."
+                        )
+                        initialNotes.add(0, newNote)
+                        activeNote = newNote
+                    },
                     shape = RoundedCornerShape(8.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark)
                 ) {
@@ -70,116 +99,36 @@ fun WorkspaceScreen() {
                     Text("New Note")
                 }
             }
-        }
 
-        // Workspace note cards
-        Row(
-            modifier = Modifier.fillMaxSize(),
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            NoteCard(
-                title = "LTP Induction & NMDA Receptors",
-                subject = "Neurobiology",
-                snippet = "Long-term potentiation requires high-frequency stimulation of the Schaffer collaterals to relieve magnesium block...",
-                date = "Oct 24"
-            )
-            NoteCard(
-                title = "Bayesian Prior Distributions Summary",
-                subject = "Advanced Statistics",
-                snippet = "Conjugate priors simplify posterior density calculation when sampling from exponential families...",
-                date = "Oct 22"
-            )
-            NoteCard(
-                title = "Working Memory & Executive Control",
-                subject = "Cognitive Psychology",
-                snippet = "Baddeley's multicomponent model includes the phonological loop, visuospatial sketchpad, and central executive...",
-                date = "Oct 19"
-            )
-        }
-    }
-
-    if (showStylusCanvas) {
-        Dialog(
-            onDismissRequest = { showStylusCanvas = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false)
-        ) {
-            Surface(
+            // Note Cards Landscape Row
+            Row(
                 modifier = Modifier.fillMaxSize(),
-                color = LernspaceSurface
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                StylusCanvasScreen(
-                    onClose = { showStylusCanvas = false }
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun StylusCanvasScreen(onClose: () -> Unit) {
-    val strokes = remember { mutableStateListOf<Stroke>() }
-    val canvasStrokeRenderer = remember { CanvasStrokeRenderer.create() }
-    var currentBrush by remember { mutableStateOf(createDefaultPenBrush()) }
-    var isEraserMode by remember { mutableStateOf(false) }
-
-    Column(modifier = Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("Quick Canvas", style = MaterialTheme.typography.titleLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = { isEraserMode = !isEraserMode },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isEraserMode) AccentTeal else LernspaceSurfaceLow,
-                        contentColor = if (isEraserMode) Color.White else LernspaceDark
+                initialNotes.forEach { note ->
+                    NoteCard(
+                        note = note,
+                        onOpen = { activeNote = note },
+                        modifier = Modifier.weight(1f)
                     )
-                ) {
-                    Text(if (isEraserMode) "Eraser: ON" else "Eraser: OFF")
-                }
-                Button(onClick = onClose) {
-                    Text("Close")
                 }
             }
-        }
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .clip(RoundedCornerShape(12.dp))
-                .background(Color.White)
-                .padding(16.dp)
-        ) {
-            DrawingSurface(
-                strokes = strokes,
-                canvasStrokeRenderer = canvasStrokeRenderer,
-                currentBrush = currentBrush,
-                onGetNextBrush = { currentBrush },
-                onStrokesFinished = { newStrokes -> strokes.addAll(newStrokes) },
-                isEraserMode = isEraserMode,
-                modifier = Modifier.fillMaxSize()
-            )
         }
     }
 }
 
 @Composable
-fun RowScope.NoteCard(
-    title: String,
-    subject: String,
-    snippet: String,
-    date: String
+fun NoteCard(
+    note: NoteUiModel,
+    onOpen: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Surface(
-        modifier = Modifier
-            .weight(1f)
+        modifier = modifier
             .fillMaxHeight()
             .clip(RoundedCornerShape(12.dp))
-            .border(1.dp, LernspaceBorder, RoundedCornerShape(12.dp)),
+            .border(1.dp, LernspaceBorder, RoundedCornerShape(12.dp))
+            .clickable(onClick = onOpen),
         color = LernspaceSurfaceCard
     ) {
         Column(
@@ -194,19 +143,19 @@ fun RowScope.NoteCard(
                 ) {
                     Surface(shape = RoundedCornerShape(6.dp), color = LernspaceSurfaceLow) {
                         Text(
-                            text = subject,
+                            text = note.subject,
                             style = MaterialTheme.typography.labelSmall,
                             color = LernspaceTextSecondary,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                         )
                     }
-                    Text(text = date, style = MaterialTheme.typography.labelSmall, color = LernspaceTextSecondary)
+                    Text(text = note.date, style = MaterialTheme.typography.labelSmall, color = LernspaceTextSecondary)
                 }
 
                 Spacer(modifier = Modifier.height(14.dp))
 
                 Text(
-                    text = title,
+                    text = note.title,
                     style = MaterialTheme.typography.titleLarge,
                     color = LernspaceDark
                 )
@@ -214,29 +163,42 @@ fun RowScope.NoteCard(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Text(
-                    text = snippet,
+                    text = note.snippet,
                     style = MaterialTheme.typography.bodyMedium,
                     color = LernspaceTextSecondary
                 )
             }
 
             Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = Icons.Filled.Description,
-                    contentDescription = null,
-                    tint = AccentTeal,
-                    modifier = Modifier.size(16.dp)
-                )
-                Text(
-                    text = "Text Note",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = AccentTeal
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Edit,
+                        contentDescription = null,
+                        tint = AccentTeal,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = "Interactive Note",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = AccentTeal
+                    )
+                }
+
+                FilledTonalButton(
+                    onClick = onOpen,
+                    shape = RoundedCornerShape(6.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                ) {
+                    Text("Open", style = MaterialTheme.typography.labelSmall)
+                }
             }
         }
     }
 }
-

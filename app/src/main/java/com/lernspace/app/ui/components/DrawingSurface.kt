@@ -37,6 +37,7 @@ fun DrawingSurface(
     onStrokesFinished: (List<Stroke>) -> Unit,
     isEraserMode: Boolean,
     modifier: Modifier = Modifier,
+    isDrawingEnabled: Boolean = true,
     onErase: (Float, Float) -> Unit = { _, _ -> },
     onEraseStart: () -> Unit = {},
     onEraseEnd: () -> Unit = {},
@@ -80,31 +81,33 @@ fun DrawingSurface(
             }
         }
 
-        if (isEraserMode) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .pointerInput(Unit) {
-                        detectDragGestures(
-                            onDragStart = { currentOnEraseStart() },
-                            onDragEnd = { currentOnEraseEnd() },
-                            onDragCancel = { currentOnEraseEnd() },
-                            onDrag = { change, _ ->
-                                currentOnErase(change.position.x, change.position.y)
-                                change.consume()
-                            },
-                        )
+        if (isDrawingEnabled) {
+            if (isEraserMode) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(Unit) {
+                            detectDragGestures(
+                                onDragStart = { currentOnEraseStart() },
+                                onDragEnd = { currentOnEraseEnd() },
+                                onDragCancel = { currentOnEraseEnd() },
+                                onDrag = { change, _ ->
+                                    currentOnErase(change.position.x, change.position.y)
+                                    change.consume()
+                                },
+                            )
+                        }
+                )
+            } else {
+                InProgressStrokes(
+                    defaultBrush = currentBrush,
+                    nextBrush = onGetNextBrush,
+                    onStrokesFinished = { newStrokes ->
+                        pendingStrokes = pendingStrokes + newStrokes
+                        onStrokesFinished(newStrokes)
                     }
-            )
-        } else {
-            InProgressStrokes(
-                defaultBrush = currentBrush,
-                nextBrush = onGetNextBrush,
-                onStrokesFinished = { newStrokes ->
-                    pendingStrokes = pendingStrokes + newStrokes
-                    onStrokesFinished(newStrokes)
-                }
-            )
+                )
+            }
         }
     }
 }

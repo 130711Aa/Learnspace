@@ -12,3 +12,4 @@ if %ERRORLEVEL% equ 0 (
     echo.
     echo Build failed! Please check error output above.
 )
+
