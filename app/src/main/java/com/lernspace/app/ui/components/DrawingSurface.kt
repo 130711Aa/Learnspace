@@ -2,7 +2,11 @@ package com.lernspace.app.ui.components
 
 import android.graphics.Matrix
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.gestures.*
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
@@ -10,7 +14,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.input.pointer.*
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.util.fastForEach
 import androidx.core.graphics.withSave
 import androidx.ink.authoring.compose.InProgressStrokes
@@ -72,7 +77,30 @@ fun DrawingSurface(
     val currentOnTransform by rememberUpdatedState(onTransform)
     val currentOnCanvasTap by rememberUpdatedState(onCanvasTap)
 
-    Box(modifier = modifier) {
+    Box(
+        modifier = modifier
+            // 2-finger Pinch to Zoom & Pan interceptor:
+            // When 2 fingers touch, compute pan/zoom and consume so InProgressStrokes doesn't draw lines between fingers.
+            // When 1 pointer touches (Stylus or pen), it is NOT consumed at all, so InProgressStrokes draws smoothly!
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        val pressed = event.changes.filter { it.pressed }
+                        if (pressed.size >= 2) {
+                            val zoom = event.calculateZoom()
+                            val pan = event.calculatePan()
+                            val centroid = event.calculateCentroid(useCurrent = true)
+                            currentOnTransform(centroid, pan, zoom)
+                            event.changes.forEach { it.consume() }
+                        } else if (pressed.isEmpty() && event.changes.size == 1 && !event.changes[0].isConsumed) {
+                            // Canvas tap to deselect active objects
+                            currentOnCanvasTap()
+                        }
+                    }
+                }
+            }
+    ) {
         // 1. Render Completed Strokes
         Canvas(modifier = Modifier.fillMaxSize()) {
             val nativeCanvas = drawContext.canvas.nativeCanvas
@@ -87,152 +115,33 @@ fun DrawingSurface(
             }
         }
 
-        // 2. Active Inking / Eraser Layer (STYLUS ONLY)
+        // 2. Active Inking / Eraser Layer
         if (isDrawingEnabled) {
             if (isEraserMode) {
-                // Eraser: Only triggers when touched by Stylus
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .pointerInput(Unit) {
-                            awaitEachGesture {
-                                val down = awaitFirstDown(requireUnconsumed = false)
-                                if (down.type == PointerType.Stylus || down.type == PointerType.Eraser) {
-                                    currentOnEraseStart()
-                                    currentOnErase(down.position.x, down.position.y)
-                                    drag(down.id) { change ->
-                                        if (change.type == PointerType.Stylus || change.type == PointerType.Eraser) {
-                                            change.consume()
-                                            currentOnErase(change.position.x, change.position.y)
-                                        }
-                                    }
-                                    currentOnEraseEnd()
-                                }
-                            }
+                            detectDragGestures(
+                                onDragStart = { currentOnEraseStart() },
+                                onDragEnd = { currentOnEraseEnd() },
+                                onDragCancel = { currentOnEraseEnd() },
+                                onDrag = { change, _ ->
+                                    currentOnErase(change.position.x, change.position.y)
+                                    change.consume()
+                                },
+                            )
                         }
                 )
             } else {
-                // InProgressStrokes: Only triggers for Stylus.
-                // We consume all PointerType.Touch in Initial pass so fingers NEVER draw ink!
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .pointerInput(Unit) {
-                            awaitEachGesture {
-                                while (true) {
-                                    val event = awaitPointerEvent(PointerEventPass.Initial)
-                                    for (change in event.changes) {
-                                        if (change.type == PointerType.Touch) {
-                                            change.consume()
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                ) {
-                    InProgressStrokes(
-                        defaultBrush = currentBrush,
-                        nextBrush = onGetNextBrush,
-                        onStrokesFinished = { newStrokes ->
-                            pendingStrokes = pendingStrokes + newStrokes
-                            onStrokesFinished(newStrokes)
-                        }
-                    )
-                }
-            }
-        }
-
-        // 3. Finger Gesture Detector (Pan & Pinch-to-Zoom & Canvas Tap)
-        // Stylus is completely ignored here so it draws at full speed!
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .pointerInput(Unit) {
-                    detectFingerTransformGestures(
-                        onGesture = { centroid, pan, zoom ->
-                            currentOnTransform(centroid, pan, zoom)
-                        },
-                        onTap = {
-                            currentOnCanvasTap()
-                        }
-                    )
-                }
-        )
-    }
-}
-
-/**
- * Custom transform gesture detector that strictly responds to FINGER touches (PointerType.Touch).
- * Stylus inputs (PointerType.Stylus / PointerType.Eraser) are ignored so they pass through to inking!
- */
-private suspend fun PointerInputScope.detectFingerTransformGestures(
-    onGesture: (centroid: Offset, pan: Offset, zoom: Float) -> Unit,
-    onTap: () -> Unit
-) {
-    awaitEachGesture {
-        var zoom = 1f
-        var pan = Offset.Zero
-        var pastTouchSlop = false
-        val touchSlop = viewConfiguration.touchSlop
-
-        val down = awaitFirstDown(requireUnconsumed = false)
-        // If touched by stylus, exit immediately!
-        if (down.type != PointerType.Touch) {
-            return@awaitEachGesture
-        }
-
-        var isTransforming = false
-
-        while (true) {
-            val event = awaitPointerEvent(PointerEventPass.Main)
-            val pressedFingers = event.changes.filter { it.type == PointerType.Touch && it.pressed }
-            if (pressedFingers.isEmpty()) {
-                if (!pastTouchSlop && !isTransforming) {
-                    onTap()
-                }
-                break
-            }
-
-            if (pressedFingers.size >= 2) {
-                // 2-finger Pinch to Zoom and Pan
-                val zoomChange = event.calculateZoom()
-                val panChange = event.calculatePan()
-                val centroid = event.calculateCentroid(useCurrent = true)
-
-                if (!pastTouchSlop) {
-                    zoom *= zoomChange
-                    pan += panChange
-                    val centroidSize = event.calculateCentroidSize(useCurrent = true)
-                    val zoomMotion = kotlin.math.abs(1 - zoom) * centroidSize
-                    val panMotion = pan.getDistance()
-
-                    if (zoomMotion > touchSlop || panMotion > touchSlop) {
-                        pastTouchSlop = true
-                        isTransforming = true
+                InProgressStrokes(
+                    defaultBrush = currentBrush,
+                    nextBrush = onGetNextBrush,
+                    onStrokesFinished = { newStrokes ->
+                        pendingStrokes = pendingStrokes + newStrokes
+                        onStrokesFinished(newStrokes)
                     }
-                }
-
-                if (pastTouchSlop) {
-                    event.changes.forEach { it.consume() }
-                    onGesture(centroid, panChange, zoomChange)
-                }
-            } else if (pressedFingers.size == 1) {
-                // 1-finger Pan
-                val change = pressedFingers[0]
-                val panChange = change.positionChange()
-
-                if (!pastTouchSlop) {
-                    pan += panChange
-                    if (pan.getDistance() > touchSlop) {
-                        pastTouchSlop = true
-                        isTransforming = true
-                    }
-                }
-
-                if (pastTouchSlop) {
-                    change.consume()
-                    onGesture(change.position, panChange, 1f)
-                }
+                )
             }
         }
     }

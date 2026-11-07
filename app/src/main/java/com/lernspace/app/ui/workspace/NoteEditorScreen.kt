@@ -316,36 +316,11 @@ fun NoteEditorScreen(
                 }
             }
 
-            // Right: Actions (Zoom level, Paper style, Undo, Redo, Clear)
+            // Right: Actions (Paper style, Undo, Redo, Clear)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // Zoom Indicator & One-Tap Reset Button
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = if (scale != 1f || panX != 0f || panY != 0f) Color(0xFFEFF6FF) else Color.White,
-                    border = if (scale != 1f || panX != 0f || panY != 0f) BorderStroke(1.5.dp, Color(0xFF3B82F6)) else null,
-                    shadowElevation = 2.dp,
-                    modifier = Modifier
-                        .height(38.dp)
-                        .clickable {
-                            scale = 1f
-                            panX = 0f
-                            panY = 0f
-                        }
-                        .padding(horizontal = 10.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(
-                            text = "${(scale * 100).roundToInt()}%",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (scale != 1f || panX != 0f || panY != 0f) Color(0xFF2563EB) else Color(0xFF64748B)
-                        )
-                    }
-                }
-
                 // Paper Style Selector
                 Box {
                     Surface(
@@ -496,5 +471,48 @@ fun NoteEditorScreen(
                 .align(Alignment.TopCenter)
                 .padding(top = 10.dp)
         )
+
+        // 8. Floating Zoom Percentage Indicator (Bottom-Left Corner of Canvas)
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = Color.White.copy(alpha = 0.95f),
+            shadowElevation = 3.dp,
+            border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(start = 20.dp, bottom = 20.dp)
+                .clickable {
+                    scale = 1f
+                    panX = 0f
+                    panY = 0f
+                }
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.ZoomIn,
+                    contentDescription = "Zoom",
+                    tint = Color(0xFF2563EB),
+                    modifier = Modifier.size(16.dp)
+                )
+                Text(
+                    text = "${(scale * 100).roundToInt()}%",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF1E293B)
+                )
+                if (scale != 1f || panX != 0f || panY != 0f) {
+                    Text(
+                        text = "Reset",
+                        fontSize = 11.sp,
+                        color = Color(0xFF2563EB),
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
     }
 }
