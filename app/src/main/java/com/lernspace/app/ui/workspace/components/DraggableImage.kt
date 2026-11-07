@@ -4,38 +4,39 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.OpenWith
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.lernspace.app.ui.workspace.model.ImageElement
 import kotlin.math.roundToInt
 
 @Composable
 fun DraggableImage(
     image: ImageElement,
-    onMove: (Float, Float) -> Unit,
-    onResize: (Float, Float) -> Unit,
+    onCommitMove: (Float, Float) -> Unit,
+    onCommitResize: (Float, Float) -> Unit,
     onSelect: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
@@ -70,7 +71,7 @@ fun DraggableImage(
                     if (image.isSelected) {
                         Modifier
                             .shadow(4.dp, RoundedCornerShape(8.dp))
-                            .border(1.5.dp, selectionColor, RoundedCornerShape(8.dp))
+                            .border(2.dp, selectionColor, RoundedCornerShape(8.dp))
                     } else {
                         Modifier.shadow(2.dp, RoundedCornerShape(8.dp))
                     }
@@ -88,66 +89,46 @@ fun DraggableImage(
             )
         }
 
-        // Tap overlay when unselected
-        if (!image.isSelected) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) {
-                        onSelect()
+        // Tap or Drag to Move directly:
+        // Users can drag the image anywhere to move smoothly at 120 FPS without parent recomposition!
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(image.id) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        var moved = false
+                        var overSlop = Offset.Zero
+                        val dragChange = awaitTouchSlopOrCancellation(down.id) { change, over ->
+                            change.consume()
+                            overSlop = over
+                            moved = true
+                        }
+                        if (dragChange != null && moved) {
+                            onSelect()
+                            offsetX += overSlop.x
+                            offsetY += overSlop.y
+                            drag(dragChange.id) { change ->
+                                change.consume()
+                                offsetX += change.positionChange().x
+                                offsetY += change.positionChange().y
+                            }
+                            onCommitMove(offsetX, offsetY)
+                        } else {
+                            onSelect()
+                        }
                     }
-            )
-        }
+                }
+        )
 
         if (image.isSelected) {
-            // Move Grip (Top-Center, 40dp clearance)
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .offset(y = (-40).dp)
-                    .size(width = 76.dp, height = 30.dp)
-                    .shadow(4.dp, RoundedCornerShape(15.dp))
-                    .clip(RoundedCornerShape(15.dp))
-                    .background(selectionColor)
-                    .pointerInput(Unit) {
-                        detectDragGestures { change, dragAmount ->
-                            change.consume()
-                            offsetX += dragAmount.x
-                            offsetY += dragAmount.y
-                            onMove(offsetX, offsetY)
-                        }
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.OpenWith,
-                        contentDescription = "Move Image",
-                        tint = Color.White,
-                        modifier = Modifier.size(15.dp)
-                    )
-                    Text(
-                        text = "Move",
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-
-            // Delete Button (Top-Right)
+            // Delete Button (Integrated top-right corner inside image)
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .offset(x = 8.dp, y = (-40).dp)
-                    .size(30.dp)
-                    .shadow(4.dp, CircleShape)
+                    .padding(6.dp)
+                    .size(26.dp)
+                    .shadow(3.dp, CircleShape)
                     .clip(CircleShape)
                     .background(Color(0xFFEF4444))
                     .clickable { onDelete() },
@@ -157,25 +138,28 @@ fun DraggableImage(
                     imageVector = Icons.Filled.Close,
                     contentDescription = "Delete Image",
                     tint = Color.White,
-                    modifier = Modifier.size(16.dp)
+                    modifier = Modifier.size(14.dp)
                 )
             }
 
-            // Bottom-Right Corner Resize Handle
+            // Bottom-Right Corner Resize Handle (Smooth diagonal resize, 44x44dp hit area)
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .offset(x = 16.dp, y = 16.dp)
+                    .offset(x = 14.dp, y = 14.dp)
                     .size(44.dp)
-                    .pointerInput(Unit) {
-                        detectDragGestures { change, dragAmount ->
-                            change.consume()
-                            val deltaX = dragAmount.x / density.density
-                            val deltaY = dragAmount.y / density.density
-                            widthDp = maxOf(120f, widthDp + deltaX)
-                            heightDp = maxOf(80f, heightDp + deltaY)
-                            onResize(widthDp, heightDp)
-                        }
+                    .pointerInput(image.id) {
+                        detectDragGestures(
+                            onDragEnd = { onCommitResize(widthDp, heightDp) },
+                            onDragCancel = { onCommitResize(widthDp, heightDp) },
+                            onDrag = { change, dragAmount ->
+                                change.consume()
+                                val deltaX = dragAmount.x / density.density
+                                val deltaY = dragAmount.y / density.density
+                                widthDp = maxOf(100f, widthDp + deltaX)
+                                heightDp = maxOf(60f, heightDp + deltaY)
+                            }
+                        )
                     },
                 contentAlignment = Alignment.Center
             ) {

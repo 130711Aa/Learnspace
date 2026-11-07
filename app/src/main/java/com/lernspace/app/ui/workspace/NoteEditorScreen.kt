@@ -168,12 +168,12 @@ fun NoteEditorScreen(
         imageElements.forEachIndexed { index, img ->
             DraggableImage(
                 image = img,
-                onMove = { newX, newY ->
+                onCommitMove = { newX, newY ->
                     if (index < imageElements.size) {
                         imageElements[index] = imageElements[index].copy(x = newX, y = newY)
                     }
                 },
-                onResize = { newW, newH ->
+                onCommitResize = { newW, newH ->
                     if (index < imageElements.size) {
                         imageElements[index] = imageElements[index].copy(width = newW, height = newH)
                     }
@@ -208,12 +208,12 @@ fun NoteEditorScreen(
         textBoxes.forEachIndexed { index, boxElement ->
             DraggableTextBox(
                 box = boxElement,
-                onMove = { newX, newY ->
+                onCommitMove = { newX, newY ->
                     if (index < textBoxes.size) {
                         textBoxes[index] = textBoxes[index].copy(x = newX, y = newY)
                     }
                 },
-                onResize = { newW, newH ->
+                onCommitResize = { newW, newH ->
                     if (index < textBoxes.size) {
                         textBoxes[index] = textBoxes[index].copy(width = newW, height = newH)
                     }
