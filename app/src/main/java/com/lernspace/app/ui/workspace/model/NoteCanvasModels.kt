@@ -23,9 +23,10 @@ data class TextBoxElement(
     val id: String = UUID.randomUUID().toString(),
     var x: Float,
     var y: Float,
+    var width: Float = 260f,  // width in dp
+    var height: Float = 110f, // height in dp
     var text: String = "",
-    var color: Color = Color(0xFF1E293B),
-    var isFocused: Boolean = false
+    var isSelected: Boolean = true
 )
 
 data class ImageElement(
@@ -34,7 +35,8 @@ data class ImageElement(
     var y: Float,
     val bitmap: ImageBitmap,
     var width: Float = 260f,
-    var height: Float = 200f
+    var height: Float = 200f,
+    var isSelected: Boolean = true
 )
 
 data class NoteUiModel(

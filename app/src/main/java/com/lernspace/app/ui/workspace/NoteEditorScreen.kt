@@ -4,8 +4,6 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
@@ -20,7 +18,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
@@ -36,9 +33,7 @@ import androidx.ink.brush.compose.createWithComposeColor
 import androidx.ink.rendering.android.canvas.CanvasStrokeRenderer
 import androidx.ink.strokes.Stroke
 import com.lernspace.app.ui.components.DrawingSurface
-import com.lernspace.app.ui.theme.LernspaceBorder
 import com.lernspace.app.ui.theme.LernspaceDark
-import com.lernspace.app.ui.theme.LernspaceSurfaceCard
 import com.lernspace.app.ui.workspace.components.DraggableImage
 import com.lernspace.app.ui.workspace.components.DraggableTextBox
 import com.lernspace.app.ui.workspace.components.NoteFloatingToolbar
@@ -60,7 +55,7 @@ fun NoteEditorScreen(
 
     // Tool State
     var activeTool by remember { mutableStateOf(NoteTool.PEN) }
-    var selectedColor by remember { mutableStateOf(Color(0xFF16A34A)) } // Green default like reference
+    var selectedColor by remember { mutableStateOf(Color(0xFF16A34A)) } // Green default
     var selectedThickness by remember { mutableFloatStateOf(7f) }
 
     // Inking State
@@ -72,6 +67,16 @@ fun NoteEditorScreen(
     val textBoxes = remember { mutableStateListOf<TextBoxElement>() }
     val imageElements = remember { mutableStateListOf<ImageElement>() }
 
+    // Helper: Deselect all objects
+    fun deselectAll() {
+        for (i in textBoxes.indices) {
+            textBoxes[i] = textBoxes[i].copy(isSelected = false)
+        }
+        for (i in imageElements.indices) {
+            imageElements[i] = imageElements[i].copy(isSelected = false)
+        }
+    }
+
     // Image Picker Launcher
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -81,11 +86,13 @@ fun NoteEditorScreen(
                 context.contentResolver.openInputStream(it)?.use { stream ->
                     val bitmap = BitmapFactory.decodeStream(stream)
                     if (bitmap != null) {
+                        deselectAll()
                         imageElements.add(
                             ImageElement(
                                 x = 120f,
                                 y = 140f,
-                                bitmap = bitmap.asImageBitmap()
+                                bitmap = bitmap.asImageBitmap(),
+                                isSelected = true
                             )
                         )
                     }
@@ -141,35 +148,50 @@ fun NoteEditorScreen(
     }
 
     Box(modifier = modifier.fillMaxSize()) {
-        // 1. Paper Background (Ruled, Grid, Blank)
+        // 1. Paper Background (Ruled, Grid, Dotted, Blank)
         PaperBackground(style = paperStyle)
 
-        // 2. Gesture Detector for Canvas (e.g. tap to place text box)
+        // 2. Gesture Detector for Canvas (Deselect or Place Text Box on Tap)
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .pointerInput(activeTool) {
-                    if (activeTool == NoteTool.TEXT) {
-                        detectTapGestures { offset ->
+                    detectTapGestures { offset ->
+                        if (activeTool == NoteTool.TEXT) {
+                            deselectAll()
                             textBoxes.add(
                                 TextBoxElement(
-                                    x = offset.x,
-                                    y = offset.y,
-                                    text = ""
+                                    x = offset.x - 80f,
+                                    y = offset.y - 30f,
+                                    width = 240f,
+                                    height = 100f,
+                                    text = "",
+                                    isSelected = true
                                 )
                             )
+                        } else {
+                            // Tapping blank canvas deselects any active text boxes/images
+                            deselectAll()
                         }
                     }
                 }
         )
 
         // 3. Placed Images Layer
-        imageElements.forEach { img ->
+        imageElements.forEachIndexed { index, img ->
             DraggableImage(
                 image = img,
                 onMove = { newX, newY ->
                     img.x = newX
                     img.y = newY
+                },
+                onResize = { newW, newH ->
+                    img.width = newW
+                    img.height = newH
+                },
+                onSelect = {
+                    deselectAll()
+                    imageElements[index] = img.copy(isSelected = true)
                 },
                 onDelete = { imageElements.remove(img) }
             )
@@ -191,16 +213,24 @@ fun NoteEditorScreen(
             modifier = Modifier.fillMaxSize()
         )
 
-        // 5. Placed Draggable Text Boxes Layer
-        textBoxes.forEach { boxElement ->
+        // 5. Placed Draggable Text Boxes Layer (MS Word Style)
+        textBoxes.forEachIndexed { index, boxElement ->
             DraggableTextBox(
                 box = boxElement,
                 onMove = { newX, newY ->
                     boxElement.x = newX
                     boxElement.y = newY
                 },
+                onResize = { newW, newH ->
+                    boxElement.width = newW
+                    boxElement.height = newH
+                },
                 onTextChange = { newText ->
                     boxElement.text = newText
+                },
+                onSelect = {
+                    deselectAll()
+                    textBoxes[index] = boxElement.copy(isSelected = true)
                 },
                 onDelete = { textBoxes.remove(boxElement) }
             )
@@ -260,33 +290,11 @@ fun NoteEditorScreen(
                 }
             }
 
-            // Right: Actions (Undo, Redo, Paper style, Clear)
+            // Right: Actions (Paper style, Undo, Redo, Clear)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // Add Quick Text Box Button
-                Button(
-                    onClick = {
-                        textBoxes.add(
-                            TextBoxElement(
-                                x = 160f,
-                                y = 200f,
-                                text = ""
-                            )
-                        )
-                        activeTool = NoteTool.TEXT
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = LernspaceDark),
-                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp),
-                    shape = RoundedCornerShape(8.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                ) {
-                    Icon(imageVector = Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Add Text", fontSize = 13.sp)
-                }
-
                 // Paper Style Selector
                 Box {
                     Surface(
@@ -400,7 +408,25 @@ fun NoteEditorScreen(
         // 7. Floating Pill Toolbar (Top Center)
         NoteFloatingToolbar(
             activeTool = activeTool,
-            onSelectTool = { activeTool = it },
+            onSelectTool = { tool ->
+                activeTool = tool
+                if (tool == NoteTool.TEXT) {
+                    // If no box is selected, create a new Word-style box in the visible workspace
+                    if (textBoxes.none { it.isSelected }) {
+                        deselectAll()
+                        textBoxes.add(
+                            TextBoxElement(
+                                x = 200f,
+                                y = 200f,
+                                width = 260f,
+                                height = 110f,
+                                text = "",
+                                isSelected = true
+                            )
+                        )
+                    }
+                }
+            },
             selectedColor = selectedColor,
             onSelectColor = {
                 selectedColor = it
