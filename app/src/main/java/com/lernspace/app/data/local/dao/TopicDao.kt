@@ -27,3 +27,4 @@ interface TopicDao {
     @Delete
     suspend fun deleteTopic(topic: TopicEntity)
 }
+

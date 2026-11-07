@@ -24,3 +24,4 @@ interface SubjectDao {
     @Delete
     suspend fun deleteSubject(subject: SubjectEntity)
 }
+

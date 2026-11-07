@@ -24,3 +24,4 @@ interface StudySessionDao {
     @Delete
     suspend fun deleteSession(session: StudySessionEntity)
 }
+

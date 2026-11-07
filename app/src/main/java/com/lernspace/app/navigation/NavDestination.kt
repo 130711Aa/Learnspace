@@ -23,3 +23,4 @@ sealed class Screen(
         val items = listOf(Home, Planner, Learning, Workspace, Insights)
     }
 }
+

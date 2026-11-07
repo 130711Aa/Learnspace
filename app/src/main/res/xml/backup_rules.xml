@@ -3,3 +3,4 @@
     <include domain="database" path="."/>
     <include domain="sharedpref" path="."/>
 </full-backup-content>
+

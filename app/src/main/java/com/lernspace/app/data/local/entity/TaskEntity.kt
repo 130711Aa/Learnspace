@@ -46,3 +46,4 @@ data class TaskEntity(
     val updatedAt: Long = System.currentTimeMillis(),
     val archivedAt: Long? = null
 )
+

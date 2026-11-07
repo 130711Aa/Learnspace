@@ -21,3 +21,4 @@ interface CalendarEventDao {
     @Delete
     suspend fun deleteEvent(event: CalendarEventEntity)
 }
+

@@ -51,3 +51,4 @@ abstract class LernspaceDatabase : RoomDatabase() {
         }
     }
 }
+

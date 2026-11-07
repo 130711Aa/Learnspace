@@ -15,3 +15,4 @@ data class UserSettingsEntity(
     val timeZoneId: String = "UTC",
     val updatedAt: Long = System.currentTimeMillis()
 )
+

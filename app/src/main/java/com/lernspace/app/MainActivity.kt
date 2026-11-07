@@ -3,6 +3,7 @@ package com.lernspace.app
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.viewModels
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -14,10 +15,17 @@ import androidx.navigation.compose.rememberNavController
 import com.lernspace.app.navigation.LernspaceNavHost
 import com.lernspace.app.navigation.Screen
 import com.lernspace.app.ui.components.TabletAppShell
+import com.lernspace.app.ui.home.HomeViewModel
 import com.lernspace.app.ui.theme.LernspaceDark
 import com.lernspace.app.ui.theme.LernspaceTheme
 
 class MainActivity : ComponentActivity() {
+
+    private val homeViewModel: HomeViewModel by viewModels {
+        val app = application as LernspaceApplication
+        HomeViewModel.provideFactory(app.taskRepository, app.subjectRepository)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
@@ -44,6 +52,7 @@ class MainActivity : ComponentActivity() {
                 ) {
                     LernspaceNavHost(
                         navController = navController,
+                        homeViewModel = homeViewModel,
                         onQuickAdd = { showQuickAddDialog = true }
                     )
                 }
@@ -51,7 +60,10 @@ class MainActivity : ComponentActivity() {
                 if (showQuickAddDialog) {
                     QuickAddTaskDialog(
                         onDismiss = { showQuickAddDialog = false },
-                        onConfirm = { /* Save task via ViewModel/Room */ showQuickAddDialog = false }
+                        onConfirm = { taskTitle ->
+                            homeViewModel.quickAddTask(taskTitle)
+                            showQuickAddDialog = false
+                        }
                     )
                 }
             }
@@ -96,3 +108,4 @@ fun QuickAddTaskDialog(
         }
     )
 }
+

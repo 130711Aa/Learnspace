@@ -37,3 +37,4 @@ data class NoteEntity(
     val updatedAt: Long = System.currentTimeMillis(),
     val archivedAt: Long? = null
 )
+
