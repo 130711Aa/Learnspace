@@ -172,6 +172,7 @@ fun NoteEditorScreen(
         target.textBoxes.addAll(textBoxes)
         target.imageElements.clear()
         target.imageElements.addAll(imageElements)
+        com.lernspace.app.data.local.AcademicDatabaseManager.persistNote(note)
     }
 
     fun loadActivePageData(index: Int) {

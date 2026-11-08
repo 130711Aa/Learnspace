@@ -38,6 +38,7 @@ object AcademicWorkspaceState {
     }
 
     fun closeNoteEditor() {
+        activeEditingNote?.let { com.lernspace.app.data.local.AcademicDatabaseManager.persistNote(it) }
         activeEditingNote = null
     }
 
@@ -262,6 +263,7 @@ object AcademicWorkspaceState {
             isScratchpad = false
         )
         notes.add(0, newNote)
+        com.lernspace.app.data.local.AcademicDatabaseManager.persistNote(newNote)
         return newNote
     }
 
@@ -275,13 +277,16 @@ object AcademicWorkspaceState {
             isScratchpad = true
         )
         notes.add(0, newNote)
+        com.lernspace.app.data.local.AcademicDatabaseManager.persistNote(newNote)
         return newNote
     }
 
     fun updateTopicStatus(topicId: String, newStatus: TopicStatus) {
         val idx = topics.indexOfFirst { it.id == topicId }
         if (idx != -1) {
-            topics[idx] = topics[idx].copy(status = newStatus)
+            val updated = topics[idx].copy(status = newStatus)
+            topics[idx] = updated
+            com.lernspace.app.data.local.AcademicDatabaseManager.persistTopic(updated)
         }
     }
 
@@ -342,17 +347,16 @@ object AcademicWorkspaceState {
                     // Focus phase reached 0: transition to BREAK
                     val completedMins = focusPreset.focusMinutes
                     totalFocusStudyMinutes += completedMins
-                    focusSessionHistory.add(
-                        0,
-                        FocusSessionRecord(
-                            subjectId = focusSelectedSubject?.id,
-                            subjectName = focusSelectedSubject?.name,
-                            topicId = focusSelectedTopic?.id,
-                            topicName = focusSelectedTopic?.title,
-                            durationMinutes = completedMins,
-                            completedAt = "Just now"
-                        )
+                    val record = FocusSessionRecord(
+                        subjectId = focusSelectedSubject?.id,
+                        subjectName = focusSelectedSubject?.name,
+                        topicId = focusSelectedTopic?.id,
+                        topicName = focusSelectedTopic?.title,
+                        durationMinutes = completedMins,
+                        completedAt = "Just now"
                     )
+                    focusSessionHistory.add(0, record)
+                    com.lernspace.app.data.local.AcademicDatabaseManager.persistFocusSession(record)
                     focusPhase = FocusSessionPhase.BREAK
                     focusTimeRemainingSeconds = focusPreset.breakMinutes * 60
                 }
@@ -371,17 +375,16 @@ object AcademicWorkspaceState {
     fun finishFocusSessionEarly() {
         val completedMinutes = (focusTimeElapsedSeconds / 60).coerceAtLeast(1)
         totalFocusStudyMinutes += completedMinutes
-        focusSessionHistory.add(
-            0,
-            FocusSessionRecord(
-                subjectId = focusSelectedSubject?.id,
-                subjectName = focusSelectedSubject?.name,
-                topicId = focusSelectedTopic?.id,
-                topicName = focusSelectedTopic?.title,
-                durationMinutes = completedMinutes,
-                completedAt = "Just now"
-            )
+        val record = FocusSessionRecord(
+            subjectId = focusSelectedSubject?.id,
+            subjectName = focusSelectedSubject?.name,
+            topicId = focusSelectedTopic?.id,
+            topicName = focusSelectedTopic?.title,
+            durationMinutes = completedMinutes,
+            completedAt = "Just now"
         )
+        focusSessionHistory.add(0, record)
+        com.lernspace.app.data.local.AcademicDatabaseManager.persistFocusSession(record)
         isFocusTimerRunning = false
         showFocusCompletionDialog = true
     }
@@ -666,18 +669,37 @@ object AcademicWorkspaceState {
     fun toggleTaskCompletion(taskId: String) {
         val idx = tasks.indexOfFirst { it.id == taskId }
         if (idx != -1) {
-            tasks[idx] = tasks[idx].copy(isCompleted = !tasks[idx].isCompleted)
+            val updated = tasks[idx].copy(isCompleted = !tasks[idx].isCompleted)
+            tasks[idx] = updated
+            com.lernspace.app.data.local.AcademicDatabaseManager.updateTaskCompletion(taskId, updated.isCompleted)
         }
+    }
+
+    fun addTask(task: TaskUiModel) {
+        tasks.add(0, task)
+        com.lernspace.app.data.local.AcademicDatabaseManager.persistTask(task)
+    }
+
+    fun deleteTask(taskId: String) {
+        tasks.removeAll { it.id == taskId }
+        com.lernspace.app.data.local.AcademicDatabaseManager.deleteTask(taskId)
+    }
+
+    fun deleteNote(noteId: String) {
+        notes.removeAll { it.id == noteId }
+        com.lernspace.app.data.local.AcademicDatabaseManager.deleteNote(noteId)
     }
 
     fun acceptHybridSuggestion(suggestionId: String) {
         val idx = scheduleItems.indexOfFirst { it.id == suggestionId }
         if (idx != -1) {
             val item = scheduleItems[idx]
-            scheduleItems[idx] = item.copy(
+            val updated = item.copy(
                 type = ScheduleType.STUDY_SESSION,
                 title = item.title.replace("Hybrid Review:", "Study Session:")
             )
+            scheduleItems[idx] = updated
+            com.lernspace.app.data.local.AcademicDatabaseManager.persistPlannerItem(updated)
         }
     }
 }

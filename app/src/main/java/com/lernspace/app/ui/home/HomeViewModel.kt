@@ -48,15 +48,18 @@ class HomeViewModel(
     }
 
     fun quickAddTask(title: String) {
-        viewModelScope.launch {
-            taskRepository.createTask(title = title)
-        }
+        val newTask = com.lernspace.app.data.repository.TaskUiModel(
+            title = title,
+            dueDate = "Today",
+            dueDayNumber = 8,
+            priority = "MEDIUM",
+            isCompleted = false
+        )
+        com.lernspace.app.data.repository.AcademicWorkspaceState.addTask(newTask)
     }
 
     fun completeTask(taskId: String) {
-        viewModelScope.launch {
-            taskRepository.completeTask(taskId)
-        }
+        com.lernspace.app.data.repository.AcademicWorkspaceState.toggleTaskCompletion(taskId)
     }
 
     companion object {

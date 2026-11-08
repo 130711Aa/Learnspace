@@ -9,10 +9,7 @@ import androidx.room.PrimaryKey
     tableName = "study_sessions",
     indices = [
         Index("subjectId"),
-        Index("topicId"),
-        Index("taskId"),
-        Index("plannedStartAt"),
-        Index("status")
+        Index("topicId")
     ],
     foreignKeys = [
         ForeignKey(
@@ -26,30 +23,18 @@ import androidx.room.PrimaryKey
             parentColumns = ["id"],
             childColumns = ["topicId"],
             onDelete = ForeignKey.SET_NULL
-        ),
-        ForeignKey(
-            entity = TaskEntity::class,
-            parentColumns = ["id"],
-            childColumns = ["taskId"],
-            onDelete = ForeignKey.SET_NULL
         )
     ]
 )
 data class StudySessionEntity(
     @PrimaryKey
     val id: String,
-    val title: String,
+    val title: String = "Focus Session",
     val subjectId: String? = null,
+    val subjectName: String? = null,
     val topicId: String? = null,
-    val taskId: String? = null,
-    val plannedStartAt: Long? = null,
-    val plannedEndAt: Long? = null,
-    val actualStartAt: Long? = null,
-    val actualEndAt: Long? = null,
-    val status: String = "PLANNED", // PLANNED, IN_PROGRESS, COMPLETED, SKIPPED
-    val origin: String = "MANUAL", // MANUAL, SCHEDULER
-    val notes: String? = null,
-    val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis()
+    val topicName: String? = null,
+    val durationMinutes: Int = 25,
+    val completedAt: String = "Just now",
+    val timestamp: Long = System.currentTimeMillis()
 )
-

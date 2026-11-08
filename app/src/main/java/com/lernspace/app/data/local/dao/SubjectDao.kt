@@ -15,6 +15,9 @@ interface SubjectDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSubject(subject: SubjectEntity)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSubjects(subjects: List<SubjectEntity>)
+
     @Update
     suspend fun updateSubject(subject: SubjectEntity)
 

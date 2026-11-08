@@ -36,14 +36,18 @@ data class TaskEntity(
     val description: String? = null,
     val subjectId: String? = null,
     val topicId: String? = null,
+    val subjectName: String? = null,
+    val topicName: String? = null,
     val status: String = "TODO", // TODO, IN_PROGRESS, COMPLETED, CANCELLED
     val priority: String = "MEDIUM", // LOW, MEDIUM, HIGH
-    val dueDate: String? = null, // ISO YYYY-MM-DD
+    val dueDate: String? = null, // e.g. "Nov 12, 2026"
+    val dueTime: String = "23:59",
+    val dueDayNumber: Int = 1,
     val dueAt: Long? = null, // epoch millis
     val estimatedMinutes: Int? = null,
+    val notes: String = "",
     val completedAt: Long? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
     val archivedAt: Long? = null
 )
-

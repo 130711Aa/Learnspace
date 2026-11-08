@@ -187,7 +187,7 @@ fun PlannerScreen(
                     topics = topics,
                     notes = notes,
                     onToggleTask = { taskId -> AcademicWorkspaceState.toggleTaskCompletion(taskId) },
-                    onDeleteTask = { task -> tasks.remove(task) },
+                    onDeleteTask = { task -> AcademicWorkspaceState.deleteTask(task.id) },
                     onAddNewTask = { showAddTaskDialog = true },
                     onOpenNoteForTopic = { topicId, topicTitle, subjectId, subjectName ->
                         val existingNote = notes.find { it.topicId == topicId }
@@ -212,7 +212,10 @@ fun PlannerScreen(
                     weeklyClasses = weeklyClasses,
                     subjects = subjects,
                     onAddClass = { showAddWeeklyClassDialog = true },
-                    onDeleteClass = { weeklyClasses.remove(it) }
+                    onDeleteClass = {
+                        weeklyClasses.remove(it)
+                        com.lernspace.app.data.local.AcademicDatabaseManager.deleteCalendarEvent(it.id)
+                    }
                 )
 
                 3 -> DayAgendaView(
@@ -224,7 +227,9 @@ fun PlannerScreen(
                     onToggleComplete = { item ->
                         val idx = scheduleItems.indexOfFirst { it.id == item.id }
                         if (idx != -1) {
-                            scheduleItems[idx] = item.copy(isCompleted = !item.isCompleted)
+                            val updated = item.copy(isCompleted = !item.isCompleted)
+                            scheduleItems[idx] = updated
+                            com.lernspace.app.data.local.AcademicDatabaseManager.persistPlannerItem(updated)
                         }
                     },
                     onOpenNoteForTopic = { topicId, topicTitle, subjectId, subjectName ->
@@ -249,7 +254,10 @@ fun PlannerScreen(
                         }
                     },
                     onAutoSchedule = { showHybridSuggestDialog = true },
-                    onDeleteItem = { scheduleItems.remove(it) }
+                    onDeleteItem = {
+                        scheduleItems.remove(it)
+                        com.lernspace.app.data.local.AcademicDatabaseManager.deleteCalendarEvent(it.id)
+                    }
                 )
             }
         }
@@ -263,23 +271,22 @@ fun PlannerScreen(
             initialDayNumber = selectedCalendarDay,
             onDismiss = { showAddTaskDialog = false },
             onConfirm = { title, subject, topic, dueDayNumber, dueTime, priority, estMins, notesStr ->
-                tasks.add(
-                    TaskUiModel(
-                        id = UUID.randomUUID().toString(),
-                        title = title,
-                        subjectId = subject?.id,
-                        subjectName = subject?.name,
-                        topicId = topic?.id,
-                        topicName = topic?.title,
-                        dueDate = "Nov $dueDayNumber, 2026",
-                        dueDayNumber = dueDayNumber,
-                        dueTime = dueTime,
-                        priority = priority,
-                        estimatedMinutes = estMins,
-                        isCompleted = false,
-                        notes = notesStr
-                    )
+                val newTask = TaskUiModel(
+                    id = UUID.randomUUID().toString(),
+                    title = title,
+                    subjectId = subject?.id,
+                    subjectName = subject?.name,
+                    topicId = topic?.id,
+                    topicName = topic?.title,
+                    dueDate = "Nov $dueDayNumber, 2026",
+                    dueDayNumber = dueDayNumber,
+                    dueTime = dueTime,
+                    priority = priority,
+                    estimatedMinutes = estMins,
+                    isCompleted = false,
+                    notes = notesStr
                 )
+                AcademicWorkspaceState.addTask(newTask)
                 showAddTaskDialog = false
             }
         )
@@ -291,20 +298,20 @@ fun PlannerScreen(
             subjects = subjects,
             onDismiss = { showAddWeeklyClassDialog = false },
             onConfirm = { subject, dayOfWeek, startTime, endTime, room, lecturer, type ->
-                weeklyClasses.add(
-                    WeeklyClassUi(
-                        id = UUID.randomUUID().toString(),
-                        subjectId = subject.id,
-                        subjectName = subject.name,
-                        subjectCode = subject.code,
-                        dayOfWeek = dayOfWeek,
-                        startTime = startTime,
-                        endTime = endTime,
-                        room = room.ifBlank { null },
-                        lecturer = lecturer.ifBlank { null },
-                        type = type
-                    )
+                val newClass = WeeklyClassUi(
+                    id = UUID.randomUUID().toString(),
+                    subjectId = subject.id,
+                    subjectName = subject.name,
+                    subjectCode = subject.code,
+                    dayOfWeek = dayOfWeek,
+                    startTime = startTime,
+                    endTime = endTime,
+                    room = room.ifBlank { null },
+                    lecturer = lecturer.ifBlank { null },
+                    type = type
                 )
+                weeklyClasses.add(newClass)
+                com.lernspace.app.data.local.AcademicDatabaseManager.persistWeeklyClass(newClass)
                 showAddWeeklyClassDialog = false
             }
         )

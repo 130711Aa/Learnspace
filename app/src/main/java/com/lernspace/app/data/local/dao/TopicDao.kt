@@ -6,6 +6,9 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface TopicDao {
+    @Query("SELECT * FROM topics WHERE isArchived = 0 ORDER BY sortOrder ASC, name ASC")
+    fun getAllActiveTopics(): Flow<List<TopicEntity>>
+
     @Query("SELECT * FROM topics WHERE subjectId = :subjectId AND isArchived = 0 ORDER BY sortOrder ASC, name ASC")
     fun getTopicsForSubject(subjectId: String): Flow<List<TopicEntity>>
 
@@ -14,6 +17,9 @@ interface TopicDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertTopic(topic: TopicEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertTopics(topics: List<TopicEntity>)
 
     @Update
     suspend fun updateTopic(topic: TopicEntity)

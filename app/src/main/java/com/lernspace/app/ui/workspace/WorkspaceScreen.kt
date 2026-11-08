@@ -73,6 +73,7 @@ fun WorkspaceScreen(
                 pages = mutableListOf(NotePageData(pageIndex = 0))
             )
             notes.add(0, newNote)
+            com.lernspace.app.data.local.AcademicDatabaseManager.persistNote(newNote)
             AcademicWorkspaceState.openNoteEditor(newNote)
         }
     }
@@ -328,7 +329,7 @@ fun WorkspaceScreen(
                             }
                         },
                         onDelete = {
-                            notes.remove(note)
+                            AcademicWorkspaceState.deleteNote(note.id)
                         }
                     )
                 }
@@ -361,6 +362,7 @@ fun WorkspaceScreen(
                     isScratchpad = (canvasType == NoteCanvasType.INFINITE_SCRATCHPAD)
                 )
                 notes.add(0, newNote)
+                com.lernspace.app.data.local.AcademicDatabaseManager.persistNote(newNote)
                 showNewNoteDialog = false
                 AcademicWorkspaceState.openNoteEditor(newNote)
             }

@@ -30,11 +30,16 @@ data class NoteEntity(
     @PrimaryKey
     val id: String,
     val title: String,
-    val content: String = "",
+    val snippet: String = "",
+    val subject: String = "",
     val subjectId: String? = null,
     val topicId: String? = null,
+    val topicName: String? = null,
+    val isScratchpad: Boolean = false,
+    val paperStyle: String = "RULED",
+    val pdfUri: String? = null,
+    val pdfTotalPages: Int = 1,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
     val archivedAt: Long? = null
 )
-

@@ -836,23 +836,22 @@ fun HomeScreen(
             initialDayNumber = 8,
             onDismiss = { showAddTaskDialog = false },
             onConfirm = { title, subject, topic, dueDayNumber, dueTime, priority, estMins, notesStr ->
-                tasks.add(
-                    TaskUiModel(
-                        id = UUID.randomUUID().toString(),
-                        title = title,
-                        subjectId = subject?.id,
-                        subjectName = subject?.name,
-                        topicId = topic?.id,
-                        topicName = topic?.title,
-                        dueDate = "Nov $dueDayNumber, 2026",
-                        dueDayNumber = dueDayNumber,
-                        dueTime = dueTime,
-                        priority = priority,
-                        estimatedMinutes = estMins,
-                        isCompleted = false,
-                        notes = notesStr
-                    )
+                val newTask = TaskUiModel(
+                    id = UUID.randomUUID().toString(),
+                    title = title,
+                    subjectId = subject?.id,
+                    subjectName = subject?.name,
+                    topicId = topic?.id,
+                    topicName = topic?.title,
+                    dueDate = "Nov $dueDayNumber, 2026",
+                    dueDayNumber = dueDayNumber,
+                    dueTime = dueTime,
+                    priority = priority,
+                    estimatedMinutes = estMins,
+                    isCompleted = false,
+                    notes = notesStr
                 )
+                AcademicWorkspaceState.addTask(newTask)
                 showAddTaskDialog = false
             }
         )

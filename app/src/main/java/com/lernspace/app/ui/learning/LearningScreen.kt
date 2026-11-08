@@ -451,15 +451,15 @@ fun LearningScreen(
             onDismiss = { showAddSubjectDialog = false },
             onConfirm = { name, code, desc, color ->
                 val newId = UUID.randomUUID().toString()
-                subjects.add(
-                    SubjectUi(
-                        id = newId,
-                        name = name,
-                        code = code,
-                        description = desc,
-                        color = color
-                    )
+                val newSubject = SubjectUi(
+                    id = newId,
+                    name = name,
+                    code = code,
+                    description = desc,
+                    color = color
                 )
+                subjects.add(newSubject)
+                com.lernspace.app.data.local.AcademicDatabaseManager.persistSubject(newSubject)
                 selectedSubjectId = newId
                 showAddSubjectDialog = false
             }
@@ -472,16 +472,16 @@ fun LearningScreen(
             subjectName = activeSubject.name,
             onDismiss = { showAddTopicDialog = false },
             onConfirm = { title, desc, status, targetDate ->
-                topics.add(
-                    TopicUi(
-                        id = UUID.randomUUID().toString(),
-                        subjectId = activeSubject.id,
-                        title = title,
-                        description = desc,
-                        status = status,
-                        targetDate = targetDate.ifBlank { null }
-                    )
+                val newTopic = TopicUi(
+                    id = UUID.randomUUID().toString(),
+                    subjectId = activeSubject.id,
+                    title = title,
+                    description = desc,
+                    status = status,
+                    targetDate = targetDate.ifBlank { null }
                 )
+                topics.add(newTopic)
+                com.lernspace.app.data.local.AcademicDatabaseManager.persistTopic(newTopic)
                 showAddTopicDialog = false
             }
         )
@@ -495,12 +495,14 @@ fun LearningScreen(
             onConfirm = { updatedTitle, updatedDesc, updatedStatus, updatedTargetDate ->
                 val idx = topics.indexOfFirst { it.id == topic.id }
                 if (idx != -1) {
-                    topics[idx] = topics[idx].copy(
+                    val updated = topics[idx].copy(
                         title = updatedTitle,
                         description = updatedDesc,
                         status = updatedStatus,
                         targetDate = updatedTargetDate.ifBlank { null }
                     )
+                    topics[idx] = updated
+                    com.lernspace.app.data.local.AcademicDatabaseManager.persistTopic(updated)
                 }
                 topicToEdit = null
             }

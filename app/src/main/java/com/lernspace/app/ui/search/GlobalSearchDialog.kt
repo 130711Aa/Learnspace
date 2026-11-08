@@ -12,6 +12,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.MenuBook
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -42,7 +44,7 @@ import kotlinx.coroutines.delay
 
 /**
  * Top bar Search Pill strictly following the Stitch design system
- * (lernspace_home_dashboard_landscape).
+ * (lernspace_home_dashboard_landscape), optimized for touch/tablet (no desktop keyboard shortcuts).
  */
 @Composable
 fun GlobalSearchPill(
@@ -71,7 +73,7 @@ fun GlobalSearchPill(
                 modifier = Modifier.size(18.dp)
             )
 
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(10.dp))
 
             Text(
                 text = "Search concepts, citations, syllabi...",
@@ -81,22 +83,6 @@ fun GlobalSearchPill(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
             )
-
-            Spacer(modifier = Modifier.width(8.dp))
-
-            // Stitch keyboard shortcut badge (⌘K)
-            Surface(
-                shape = RoundedCornerShape(4.dp),
-                color = Color(0xFFE0E3E5)
-            ) {
-                Text(
-                    text = "⌘K",
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color(0xFF45474C),
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                )
-            }
         }
     }
 }
@@ -104,7 +90,7 @@ fun GlobalSearchPill(
 enum class SearchCategory(val label: String, val icon: ImageVector) {
     ALL("Semua", Icons.Filled.Search),
     NOTES("Catatan", Icons.Filled.EditNote),
-    TOPICS("Silabus", Icons.Filled.MenuBook),
+    TOPICS("Silabus", Icons.AutoMirrored.Filled.MenuBook),
     TASKS("Tugas", Icons.Filled.CheckCircleOutline),
     SUBJECTS("Mata Kuliah", Icons.Filled.School),
     SCHEDULE("Jadwal", Icons.Filled.AccessTime)
@@ -141,8 +127,8 @@ fun GlobalSearchDialog(
     // Compute search matches
     val trimmedQuery = searchQuery.trim().lowercase()
 
-    val matchedNotes = remember(trimmedQuery, allNotes.size) {
-        if (trimmedQuery.isBlank()) emptyList()
+    val matchedNotes = remember(trimmedQuery, allNotes.size, allNotes.toList()) {
+        if (trimmedQuery.isBlank()) allNotes.toList()
         else allNotes.filter {
             it.title.lowercase().contains(trimmedQuery) ||
                     it.snippet.lowercase().contains(trimmedQuery) ||
@@ -151,16 +137,16 @@ fun GlobalSearchDialog(
         }
     }
 
-    val matchedTopics = remember(trimmedQuery, allTopics.size) {
-        if (trimmedQuery.isBlank()) emptyList()
+    val matchedTopics = remember(trimmedQuery, allTopics.size, allTopics.toList()) {
+        if (trimmedQuery.isBlank()) allTopics.toList()
         else allTopics.filter {
             it.title.lowercase().contains(trimmedQuery) ||
                     it.description.lowercase().contains(trimmedQuery)
         }
     }
 
-    val matchedTasks = remember(trimmedQuery, allTasks.size) {
-        if (trimmedQuery.isBlank()) emptyList()
+    val matchedTasks = remember(trimmedQuery, allTasks.size, allTasks.toList()) {
+        if (trimmedQuery.isBlank()) allTasks.toList()
         else allTasks.filter {
             it.title.lowercase().contains(trimmedQuery) ||
                     it.notes.lowercase().contains(trimmedQuery) ||
@@ -169,8 +155,8 @@ fun GlobalSearchDialog(
         }
     }
 
-    val matchedSubjects = remember(trimmedQuery, allSubjects.size) {
-        if (trimmedQuery.isBlank()) emptyList()
+    val matchedSubjects = remember(trimmedQuery, allSubjects.size, allSubjects.toList()) {
+        if (trimmedQuery.isBlank()) allSubjects.toList()
         else allSubjects.filter {
             it.name.lowercase().contains(trimmedQuery) ||
                     it.code.lowercase().contains(trimmedQuery) ||
@@ -178,8 +164,8 @@ fun GlobalSearchDialog(
         }
     }
 
-    val matchedSchedule = remember(trimmedQuery, allSchedule.size) {
-        if (trimmedQuery.isBlank()) emptyList()
+    val matchedSchedule = remember(trimmedQuery, allSchedule.size, allSchedule.toList()) {
+        if (trimmedQuery.isBlank()) allSchedule.toList()
         else allSchedule.filter {
             it.title.lowercase().contains(trimmedQuery) ||
                     (it.subjectName?.lowercase()?.contains(trimmedQuery) == true) ||
@@ -286,35 +272,32 @@ fun GlobalSearchDialog(
                             modifier = Modifier.size(28.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Filled.Close,
+                                imageVector = Icons.Filled.Clear,
                                 contentDescription = "Clear",
                                 tint = Color(0xFF64748B),
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(18.dp)
                             )
                         }
+                        Spacer(modifier = Modifier.width(4.dp))
                     }
 
-                    Spacer(modifier = Modifier.width(4.dp))
-
-                    // Close Dialog button
-                    Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = Color(0xFFE0E3E5),
-                        modifier = Modifier.clickable { onDismiss() }
+                    // Touch-friendly Close Icon Button (No ESC shortcut label)
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.size(28.dp)
                     ) {
-                        Text(
-                            text = "ESC",
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF45474C),
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Close",
+                            tint = Color(0xFF45474C),
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // ── Category Filter Pills ─────────────────────────────────────
+                // ── Category Filter Pills (Fully responsive to taps) ──────────
                 LazyRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -355,20 +338,18 @@ fun GlobalSearchDialog(
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                                     color = if (isSelected) Color.White else Color(0xFF45474C)
                                 )
-                                if (searchQuery.isNotBlank() && count > 0) {
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Surface(
-                                        shape = CircleShape,
-                                        color = if (isSelected) Color.White.copy(alpha = 0.25f) else Color(0xFFE0E3E5)
-                                    ) {
-                                        Text(
-                                            text = "$count",
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (isSelected) Color.White else Color(0xFF1E293B),
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
-                                        )
-                                    }
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Surface(
+                                    shape = CircleShape,
+                                    color = if (isSelected) Color.White.copy(alpha = 0.25f) else Color(0xFFE0E3E5)
+                                ) {
+                                    Text(
+                                        text = "$count",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSelected) Color.White else Color(0xFF1E293B),
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+                                    )
                                 }
                             }
                         }
@@ -381,8 +362,8 @@ fun GlobalSearchDialog(
                 )
 
                 // ── Results Area ──────────────────────────────────────────────
-                if (searchQuery.isBlank()) {
-                    // Empty query: Show Popular Academic Concepts & Quick Suggestions
+                if (selectedCategory == SearchCategory.ALL && searchQuery.isBlank()) {
+                    // "Semua" + Empty query: Show Popular Academic Concepts & Quick Access Overview
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -429,7 +410,7 @@ fun GlobalSearchDialog(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Icon(
-                                            imageVector = Icons.Filled.TrendingUp,
+                                            imageVector = Icons.AutoMirrored.Filled.TrendingUp,
                                             contentDescription = null,
                                             tint = AccentTeal,
                                             modifier = Modifier.size(13.dp)
@@ -500,78 +481,95 @@ fun GlobalSearchDialog(
                             )
                             Spacer(modifier = Modifier.height(10.dp))
                             Text(
-                                text = "Tidak ada hasil untuk \"$searchQuery\"",
+                                text = if (searchQuery.isNotBlank()) "Tidak ada hasil untuk \"$searchQuery\"" else "Tidak ada item di kategori ${selectedCategory.label}",
                                 fontSize = 15.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = LernspaceDark
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Coba kata kunci lain seperti 'Neurobiology', 'MCMC', 'Nernst', atau nama mata kuliah.",
+                                text = "Coba kata kunci lain atau pilih kategori yang berbeda.",
                                 fontSize = 12.sp,
                                 color = Color(0xFF64748B)
                             )
                         }
                     }
                 } else {
-                    // Results list
-                    LazyColumn(
+                    // Direct category listing & filtered search results
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                            .weight(1f)
                     ) {
-                        items(results) { item ->
-                            when (item) {
-                                is SearchResultItem.NoteResult -> {
-                                    NoteResultCard(
-                                        note = item.note,
-                                        onClick = {
-                                            AcademicWorkspaceState.openNoteEditor(item.note)
-                                            onDismiss()
-                                        }
-                                    )
-                                }
-                                is SearchResultItem.TopicResult -> {
-                                    TopicResultCard(
-                                        topic = item.topic,
-                                        subject = item.subject,
-                                        onClick = {
-                                            AcademicWorkspaceState.selectedLearningSubjectId = item.topic.subjectId
-                                            onNavigate(Screen.Learning.route)
-                                            onDismiss()
-                                        }
-                                    )
-                                }
-                                is SearchResultItem.TaskResult -> {
-                                    TaskResultCard(
-                                        task = item.task,
-                                        onClick = {
-                                            AcademicWorkspaceState.selectedPlannerTab = 1
-                                            onNavigate(Screen.Planner.route)
-                                            onDismiss()
-                                        }
-                                    )
-                                }
-                                is SearchResultItem.SubjectResult -> {
-                                    SubjectResultCard(
-                                        subject = item.subject,
-                                        onClick = {
-                                            AcademicWorkspaceState.selectedLearningSubjectId = item.subject.id
-                                            onNavigate(Screen.Learning.route)
-                                            onDismiss()
-                                        }
-                                    )
-                                }
-                                is SearchResultItem.ScheduleResult -> {
-                                    ScheduleResultCard(
-                                        item = item.item,
-                                        onClick = {
-                                            AcademicWorkspaceState.selectedPlannerTab = 0
-                                            onNavigate(Screen.Planner.route)
-                                            onDismiss()
-                                        }
-                                    )
+                        if (searchQuery.isBlank()) {
+                            Text(
+                                text = "DAFTAR ${selectedCategory.label.uppercase()} (${results.size})",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF94A3B8),
+                                letterSpacing = 0.8.sp,
+                                modifier = Modifier.padding(bottom = 8.dp)
+                            )
+                        }
+
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(results) { item ->
+                                when (item) {
+                                    is SearchResultItem.NoteResult -> {
+                                        NoteResultCard(
+                                            note = item.note,
+                                            onClick = {
+                                                AcademicWorkspaceState.openNoteEditor(item.note)
+                                                onDismiss()
+                                            }
+                                        )
+                                    }
+                                    is SearchResultItem.TopicResult -> {
+                                        TopicResultCard(
+                                            topic = item.topic,
+                                            subject = item.subject,
+                                            onClick = {
+                                                AcademicWorkspaceState.selectedLearningSubjectId = item.topic.subjectId
+                                                onNavigate(Screen.Learning.route)
+                                                onDismiss()
+                                            }
+                                        )
+                                    }
+                                    is SearchResultItem.TaskResult -> {
+                                        TaskResultCard(
+                                            task = item.task,
+                                            onClick = {
+                                                AcademicWorkspaceState.selectedPlannerTab = 1
+                                                onNavigate(Screen.Planner.route)
+                                                onDismiss()
+                                            }
+                                        )
+                                    }
+                                    is SearchResultItem.SubjectResult -> {
+                                        SubjectResultCard(
+                                            subject = item.subject,
+                                            onClick = {
+                                                AcademicWorkspaceState.selectedLearningSubjectId = item.subject.id
+                                                onNavigate(Screen.Learning.route)
+                                                onDismiss()
+                                            }
+                                        )
+                                    }
+                                    is SearchResultItem.ScheduleResult -> {
+                                        ScheduleResultCard(
+                                            item = item.item,
+                                            onClick = {
+                                                AcademicWorkspaceState.selectedPlannerTab = 0
+                                                onNavigate(Screen.Planner.route)
+                                                onDismiss()
+                                            }
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -688,7 +686,7 @@ private fun TopicResultCard(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.Filled.MenuBook,
+                    imageVector = Icons.AutoMirrored.Filled.MenuBook,
                     contentDescription = null,
                     tint = AccentTeal,
                     modifier = Modifier.size(18.dp)
@@ -977,4 +975,3 @@ private fun ScheduleResultCard(
         }
     }
 }
-

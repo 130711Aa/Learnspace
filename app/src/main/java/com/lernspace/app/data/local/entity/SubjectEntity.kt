@@ -8,6 +8,7 @@ data class SubjectEntity(
     @PrimaryKey
     val id: String,
     val name: String,
+    val code: String = "",
     val description: String? = null,
     val colorArgb: Long? = null,
     val iconKey: String? = null,
@@ -16,4 +17,3 @@ data class SubjectEntity(
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )
-

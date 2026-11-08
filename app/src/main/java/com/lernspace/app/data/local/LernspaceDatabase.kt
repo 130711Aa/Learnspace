@@ -19,7 +19,7 @@ import com.lernspace.app.data.local.entity.*
         NoteEntity::class,
         UserSettingsEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class LernspaceDatabase : RoomDatabase() {
