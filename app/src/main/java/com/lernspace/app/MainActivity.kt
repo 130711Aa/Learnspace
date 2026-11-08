@@ -10,6 +10,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.lernspace.app.navigation.LernspaceNavHost
@@ -39,12 +40,25 @@ class MainActivity : ComponentActivity() {
                 TabletAppShell(
                     currentRoute = currentRoute,
                     onNavigate = { route ->
-                        navController.navigate(route) {
-                            popUpTo(Screen.Home.route) {
-                                saveState = true
+                        if (route == currentRoute) return@TabletAppShell
+                        if (route == Screen.Home.route) {
+                            val popped = navController.popBackStack(Screen.Home.route, inclusive = false)
+                            if (!popped) {
+                                navController.navigate(Screen.Home.route) {
+                                    popUpTo(navController.graph.findStartDestination().id) {
+                                        inclusive = false
+                                    }
+                                    launchSingleTop = true
+                                }
                             }
-                            launchSingleTop = true
-                            restoreState = true
+                        } else {
+                            navController.navigate(route) {
+                                popUpTo(navController.graph.findStartDestination().id) {
+                                    saveState = true
+                                }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
                         }
                     },
                     onQuickAdd = { showQuickAddDialog = true },

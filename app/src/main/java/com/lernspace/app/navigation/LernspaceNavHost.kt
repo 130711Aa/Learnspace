@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -23,6 +24,28 @@ fun LernspaceNavHost(
 ) {
     val homeUiState by homeViewModel.uiState.collectAsState()
 
+    fun navigateToTab(route: String) {
+        if (route == Screen.Home.route) {
+            val popped = navController.popBackStack(Screen.Home.route, inclusive = false)
+            if (!popped) {
+                navController.navigate(Screen.Home.route) {
+                    popUpTo(navController.graph.findStartDestination().id) {
+                        inclusive = false
+                    }
+                    launchSingleTop = true
+                }
+            }
+        } else {
+            navController.navigate(route) {
+                popUpTo(navController.graph.findStartDestination().id) {
+                    saveState = true
+                }
+                launchSingleTop = true
+                restoreState = true
+            }
+        }
+    }
+
     NavHost(
         navController = navController,
         startDestination = Screen.Home.route,
@@ -30,38 +53,28 @@ fun LernspaceNavHost(
     ) {
         composable(Screen.Home.route) {
             HomeScreen(
-                onNavigateToScreen = { route ->
-                    navController.navigate(route) {
-                        launchSingleTop = true
-                    }
-                },
+                onNavigateToScreen = { route -> navigateToTab(route) },
                 onQuickAddTask = onQuickAdd
             )
         }
         composable(Screen.Planner.route) {
             PlannerScreen(
                 onNavigateToSyllabus = { subjectId ->
-                    navController.navigate(Screen.Learning.route) {
-                        launchSingleTop = true
-                    }
+                    navigateToTab(Screen.Learning.route)
                 }
             )
         }
         composable(Screen.Learning.route) {
             LearningScreen(
                 onNavigateToWorkspace = { subjectId ->
-                    navController.navigate(Screen.Workspace.route) {
-                        launchSingleTop = true
-                    }
+                    navigateToTab(Screen.Workspace.route)
                 }
             )
         }
         composable(Screen.Workspace.route) {
             WorkspaceScreen(
                 onNavigateToSyllabus = { subjectId ->
-                    navController.navigate(Screen.Learning.route) {
-                        launchSingleTop = true
-                    }
+                    navigateToTab(Screen.Learning.route)
                 }
             )
         }
