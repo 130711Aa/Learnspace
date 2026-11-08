@@ -35,6 +35,9 @@ import kotlin.math.roundToInt
 @Composable
 fun DraggableImage(
     image: ImageElement,
+    scale: Float = 1f,
+    panX: Float = 0f,
+    panY: Float = 0f,
     onCommitMove: (Float, Float) -> Unit,
     onCommitResize: (Float, Float) -> Unit,
     onSelect: () -> Unit,
@@ -42,27 +45,31 @@ fun DraggableImage(
     modifier: Modifier = Modifier
 ) {
     val density = LocalDensity.current
-    var offsetX by remember(image.id) { mutableFloatStateOf(image.x) }
-    var offsetY by remember(image.id) { mutableFloatStateOf(image.y) }
-    var widthDp by remember(image.id) { mutableFloatStateOf(image.width) }
-    var heightDp by remember(image.id) { mutableFloatStateOf(image.height) }
+    var worldX by remember(image.id) { mutableFloatStateOf(image.x) }
+    var worldY by remember(image.id) { mutableFloatStateOf(image.y) }
+    var worldWidth by remember(image.id) { mutableFloatStateOf(image.width) }
+    var worldHeight by remember(image.id) { mutableFloatStateOf(image.height) }
 
     LaunchedEffect(image.x, image.y) {
-        offsetX = image.x
-        offsetY = image.y
+        worldX = image.x
+        worldY = image.y
     }
     LaunchedEffect(image.width, image.height) {
-        widthDp = image.width
-        heightDp = image.height
+        worldWidth = image.width
+        worldHeight = image.height
     }
 
     val selectionColor = Color(0xFF2563EB)
 
     Box(
         modifier = modifier
-            .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
-            .width(widthDp.dp)
-            .height(heightDp.dp)
+            .offset {
+                val screenX = worldX * scale + panX
+                val screenY = worldY * scale + panY
+                IntOffset(screenX.roundToInt(), screenY.roundToInt())
+            }
+            .width((worldWidth * scale).dp)
+            .height((worldHeight * scale).dp)
     ) {
         Surface(
             modifier = Modifier
@@ -90,11 +97,10 @@ fun DraggableImage(
         }
 
         // Tap or Drag to Move directly:
-        // Users can drag the image anywhere to move smoothly at 120 FPS without parent recomposition!
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(image.id) {
+                .pointerInput(image.id, scale) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         var moved = false
@@ -106,14 +112,14 @@ fun DraggableImage(
                         }
                         if (dragChange != null && moved) {
                             onSelect()
-                            offsetX += overSlop.x
-                            offsetY += overSlop.y
+                            worldX += overSlop.x / scale
+                            worldY += overSlop.y / scale
                             drag(dragChange.id) { change ->
                                 change.consume()
-                                offsetX += change.positionChange().x
-                                offsetY += change.positionChange().y
+                                worldX += change.positionChange().x / scale
+                                worldY += change.positionChange().y / scale
                             }
-                            onCommitMove(offsetX, offsetY)
+                            onCommitMove(worldX, worldY)
                         } else {
                             onSelect()
                         }
@@ -142,22 +148,22 @@ fun DraggableImage(
                 )
             }
 
-            // Bottom-Right Corner Resize Handle (Smooth diagonal resize, 44x44dp hit area)
+            // Bottom-Right Corner Resize Handle
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .offset(x = 14.dp, y = 14.dp)
                     .size(44.dp)
-                    .pointerInput(image.id) {
+                    .pointerInput(image.id, scale) {
                         detectDragGestures(
-                            onDragEnd = { onCommitResize(widthDp, heightDp) },
-                            onDragCancel = { onCommitResize(widthDp, heightDp) },
+                            onDragEnd = { onCommitResize(worldWidth, worldHeight) },
+                            onDragCancel = { onCommitResize(worldWidth, worldHeight) },
                             onDrag = { change, dragAmount ->
                                 change.consume()
-                                val deltaX = dragAmount.x / density.density
-                                val deltaY = dragAmount.y / density.density
-                                widthDp = maxOf(100f, widthDp + deltaX)
-                                heightDp = maxOf(60f, heightDp + deltaY)
+                                val deltaX = (dragAmount.x / density.density) / scale
+                                val deltaY = (dragAmount.y / density.density) / scale
+                                worldWidth = maxOf(100f, worldWidth + deltaX)
+                                worldHeight = maxOf(60f, worldHeight + deltaY)
                             }
                         )
                     },

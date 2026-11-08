@@ -160,37 +160,32 @@ fun NoteEditorScreen(
     }
 
     Box(modifier = modifier.fillMaxSize()) {
-        // 1. Infinite Note Canvas Viewport with GPU Pan & Zoom Layer
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .clipToBounds()
-                .graphicsLayer {
-                    scaleX = scale
-                    scaleY = scale
-                    translationX = panX
-                    translationY = panY
-                    transformOrigin = TransformOrigin(0f, 0f)
-                }
-        ) {
-            // Paper Background
+        // 1. Vector Note Canvas Viewport (100% Vector Rendering - Zero Blur at Any Zoom Level!)
+        Box(modifier = Modifier.fillMaxSize()) {
+            // Paper Background (Rendered at full native tablet display resolution)
             PaperBackground(
                 style = paperStyle,
-                modifier = Modifier.size(3200.dp, 4800.dp)
+                scale = scale,
+                panX = panX,
+                panY = panY,
+                modifier = Modifier.fillMaxSize()
             )
 
             // Placed Images Layer
             imageElements.forEachIndexed { index, img ->
                 DraggableImage(
                     image = img,
-                    onCommitMove = { newX, newY ->
+                    scale = scale,
+                    panX = panX,
+                    panY = panY,
+                    onCommitMove = { newWorldX, newWorldY ->
                         if (index < imageElements.size) {
-                            imageElements[index] = imageElements[index].copy(x = newX, y = newY)
+                            imageElements[index] = imageElements[index].copy(x = newWorldX, y = newWorldY)
                         }
                     },
-                    onCommitResize = { newW, newH ->
+                    onCommitResize = { newWorldW, newWorldH ->
                         if (index < imageElements.size) {
-                            imageElements[index] = imageElements[index].copy(width = newW, height = newH)
+                            imageElements[index] = imageElements[index].copy(width = newWorldW, height = newWorldH)
                         }
                     },
                     onSelect = {
@@ -203,7 +198,7 @@ fun NoteEditorScreen(
                 )
             }
 
-            // Inking Layer (AndroidX Ink - STYLUS ONLY for Inking, FINGER for Pan & Zoom)
+            // Inking Layer (AndroidX Ink Native Vector Tessellation - STYLUS ONLY for Inking, FINGER for Pan & Zoom)
             DrawingSurface(
                 strokes = strokes,
                 canvasStrokeRenderer = canvasStrokeRenderer,
@@ -215,7 +210,10 @@ fun NoteEditorScreen(
                 },
                 isEraserMode = activeTool == NoteTool.ERASER,
                 isDrawingEnabled = activeTool == NoteTool.PEN || activeTool == NoteTool.HIGHLIGHTER || activeTool == NoteTool.ERASER,
-                onErase = { x, y -> eraseNear(x, y) },
+                scale = scale,
+                panX = panX,
+                panY = panY,
+                onErase = { worldX, worldY -> eraseNear(worldX, worldY) },
                 onTransform = { centroid, pan, zoom ->
                     val newScale = (scale * zoom).coerceIn(0.5f, 3.5f)
                     val effectiveZoom = newScale / scale
@@ -226,21 +224,24 @@ fun NoteEditorScreen(
                 onCanvasTap = {
                     deselectAll()
                 },
-                modifier = Modifier.size(3200.dp, 4800.dp)
+                modifier = Modifier.fillMaxSize()
             )
 
-            // Placed Draggable Text Boxes Layer (MS Word Style)
+            // Placed Draggable Text Boxes Layer (MS Word Style - Crisp Vector Fonts)
             textBoxes.forEachIndexed { index, boxElement ->
                 DraggableTextBox(
                     box = boxElement,
-                    onCommitMove = { newX, newY ->
+                    scale = scale,
+                    panX = panX,
+                    panY = panY,
+                    onCommitMove = { newWorldX, newWorldY ->
                         if (index < textBoxes.size) {
-                            textBoxes[index] = textBoxes[index].copy(x = newX, y = newY)
+                            textBoxes[index] = textBoxes[index].copy(x = newWorldX, y = newWorldY)
                         }
                     },
-                    onCommitResize = { newW, newH ->
+                    onCommitResize = { newWorldW, newWorldH ->
                         if (index < textBoxes.size) {
-                            textBoxes[index] = textBoxes[index].copy(width = newW, height = newH)
+                            textBoxes[index] = textBoxes[index].copy(width = newWorldW, height = newWorldH)
                         }
                     },
                     onTextChange = { newText ->

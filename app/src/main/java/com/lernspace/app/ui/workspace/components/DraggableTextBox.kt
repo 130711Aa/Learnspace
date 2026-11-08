@@ -45,6 +45,9 @@ import kotlin.math.roundToInt
 @Composable
 fun DraggableTextBox(
     box: TextBoxElement,
+    scale: Float = 1f,
+    panX: Float = 0f,
+    panY: Float = 0f,
     onCommitMove: (Float, Float) -> Unit,
     onCommitResize: (Float, Float) -> Unit,
     onTextChange: (String) -> Unit,
@@ -57,22 +60,20 @@ fun DraggableTextBox(
     val focusManager = LocalFocusManager.current
     val focusRequester = remember { FocusRequester() }
 
-    // 120 FPS Local Gesture State:
-    // Kept strictly local during active touch drags so the parent screen does not recompose every frame!
-    var offsetX by remember(box.id) { mutableFloatStateOf(box.x) }
-    var offsetY by remember(box.id) { mutableFloatStateOf(box.y) }
-    var widthDp by remember(box.id) { mutableFloatStateOf(box.width) }
-    var heightDp by remember(box.id) { mutableFloatStateOf(box.height) }
+    // World coordinates (stored in TextBoxElement)
+    var worldX by remember(box.id) { mutableFloatStateOf(box.x) }
+    var worldY by remember(box.id) { mutableFloatStateOf(box.y) }
+    var worldWidth by remember(box.id) { mutableFloatStateOf(box.width) }
+    var worldHeight by remember(box.id) { mutableFloatStateOf(box.height) }
     var textContent by remember(box.id) { mutableStateOf(box.text) }
 
-    // Synchronize if external data changes (e.g. initial load or undo)
     LaunchedEffect(box.x, box.y) {
-        offsetX = box.x
-        offsetY = box.y
+        worldX = box.x
+        worldY = box.y
     }
     LaunchedEffect(box.width, box.height) {
-        widthDp = box.width
-        heightDp = box.height
+        worldWidth = box.width
+        worldHeight = box.height
     }
     LaunchedEffect(box.text) {
         if (textContent != box.text) {
@@ -97,11 +98,18 @@ fun DraggableTextBox(
 
     val selectionColor = Color(0xFF2563EB) // MS Word Selection Blue
 
+    val dynamicFontSize = (16 * scale.coerceIn(0.7f, 2.2f)).sp
+    val dynamicLineHeight = (24 * scale.coerceIn(0.7f, 2.2f)).sp
+
     Box(
         modifier = modifier
-            .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
-            .width(widthDp.dp)
-            .height(heightDp.dp)
+            .offset {
+                val screenX = worldX * scale + panX
+                val screenY = worldY * scale + panY
+                IntOffset(screenX.roundToInt(), screenY.roundToInt())
+            }
+            .width((worldWidth * scale).dp)
+            .height((worldHeight * scale).dp)
     ) {
         // Main Box Container
         Surface(
@@ -123,21 +131,20 @@ fun DraggableTextBox(
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 // MS Word Style Top Drag Header (Visible only when selected)
-                // Users move the box smoothly by dragging this top header!
                 if (box.isSelected) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(28.dp)
-                            .background(Color(0xFFEFF6FF)) // Light Word Header tint
-                            .pointerInput(box.id) {
+                            .background(Color(0xFFEFF6FF))
+                            .pointerInput(box.id, scale) {
                                 detectDragGestures(
-                                    onDragEnd = { onCommitMove(offsetX, offsetY) },
-                                    onDragCancel = { onCommitMove(offsetX, offsetY) },
+                                    onDragEnd = { onCommitMove(worldX, worldY) },
+                                    onDragCancel = { onCommitMove(worldX, worldY) },
                                     onDrag = { change, dragAmount ->
                                         change.consume()
-                                        offsetX += dragAmount.x
-                                        offsetY += dragAmount.y
+                                        worldX += dragAmount.x / scale
+                                        worldY += dragAmount.y / scale
                                     }
                                 )
                             }
@@ -145,7 +152,6 @@ fun DraggableTextBox(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        // Title / Drag handle label
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -164,7 +170,6 @@ fun DraggableTextBox(
                             )
                         }
 
-                        // Compact Delete 'x' Button
                         Box(
                             modifier = Modifier
                                 .size(20.dp)
@@ -183,7 +188,7 @@ fun DraggableTextBox(
                     }
                 }
 
-                // Inner Text Display / Input Area
+                // Inner Text Display / Input Area (Vector FreeType fonts - Zero Blur)
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -196,8 +201,8 @@ fun DraggableTextBox(
                             Text(
                                 text = "Type notes here...",
                                 color = Color(0xFF94A3B8),
-                                fontSize = 16.sp,
-                                lineHeight = 24.sp
+                                fontSize = dynamicFontSize,
+                                lineHeight = dynamicLineHeight
                             )
                         }
 
@@ -209,8 +214,8 @@ fun DraggableTextBox(
                             },
                             textStyle = TextStyle(
                                 color = LernspaceDark,
-                                fontSize = 16.sp,
-                                lineHeight = 24.sp
+                                fontSize = dynamicFontSize,
+                                lineHeight = dynamicLineHeight
                             ),
                             cursorBrush = SolidColor(selectionColor),
                             modifier = Modifier
@@ -224,8 +229,8 @@ fun DraggableTextBox(
                                 text = textContent,
                                 style = TextStyle(
                                     color = LernspaceDark,
-                                    fontSize = 16.sp,
-                                    lineHeight = 24.sp
+                                    fontSize = dynamicFontSize,
+                                    lineHeight = dynamicLineHeight
                                 ),
                                 modifier = Modifier.fillMaxSize()
                             )
@@ -233,8 +238,8 @@ fun DraggableTextBox(
                             Text(
                                 text = "Empty note",
                                 color = Color(0xFF94A3B8),
-                                fontSize = 16.sp,
-                                lineHeight = 24.sp
+                                fontSize = dynamicFontSize,
+                                lineHeight = dynamicLineHeight
                             )
                         }
                     }
@@ -243,12 +248,11 @@ fun DraggableTextBox(
         }
 
         // Tap or Drag to Move when UNSELECTED:
-        // Users can tap anywhere to select, OR drag anywhere to move immediately!
         if (!box.isSelected) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .pointerInput(box.id) {
+                    .pointerInput(box.id, scale) {
                         awaitEachGesture {
                             val down = awaitFirstDown(requireUnconsumed = false)
                             var moved = false
@@ -260,16 +264,15 @@ fun DraggableTextBox(
                             }
                             if (dragChange != null && moved) {
                                 onSelect()
-                                offsetX += overSlop.x
-                                offsetY += overSlop.y
+                                worldX += overSlop.x / scale
+                                worldY += overSlop.y / scale
                                 drag(dragChange.id) { change ->
                                     change.consume()
-                                    offsetX += change.positionChange().x
-                                    offsetY += change.positionChange().y
+                                    worldX += change.positionChange().x / scale
+                                    worldY += change.positionChange().y / scale
                                 }
-                                onCommitMove(offsetX, offsetY)
+                                onCommitMove(worldX, worldY)
                             } else {
-                                // Simple tap -> Select!
                                 onSelect()
                             }
                         }
@@ -285,33 +288,33 @@ fun DraggableTextBox(
                     .align(Alignment.CenterStart)
                     .fillMaxHeight()
                     .width(12.dp)
-                    .pointerInput(box.id) {
+                    .pointerInput(box.id, scale) {
                         detectDragGestures(
-                            onDragEnd = { onCommitMove(offsetX, offsetY) },
-                            onDragCancel = { onCommitMove(offsetX, offsetY) },
+                            onDragEnd = { onCommitMove(worldX, worldY) },
+                            onDragCancel = { onCommitMove(worldX, worldY) },
                             onDrag = { change, dragAmount ->
                                 change.consume()
-                                offsetX += dragAmount.x
-                                offsetY += dragAmount.y
+                                worldX += dragAmount.x / scale
+                                worldY += dragAmount.y / scale
                             }
                         )
                     }
             )
 
-            // Right-Edge Horizontal Resize Handle (Smooth local update)
+            // Right-Edge Horizontal Resize Handle
             Box(
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
                     .offset(x = 16.dp)
                     .size(width = 36.dp, height = 48.dp)
-                    .pointerInput(box.id) {
+                    .pointerInput(box.id, scale) {
                         detectDragGestures(
-                            onDragEnd = { onCommitResize(widthDp, heightDp) },
-                            onDragCancel = { onCommitResize(widthDp, heightDp) },
+                            onDragEnd = { onCommitResize(worldWidth, worldHeight) },
+                            onDragCancel = { onCommitResize(worldWidth, worldHeight) },
                             onDrag = { change, dragAmount ->
                                 change.consume()
-                                val deltaDp = dragAmount.x / density.density
-                                widthDp = maxOf(100f, widthDp + deltaDp)
+                                val deltaDp = (dragAmount.x / density.density) / scale
+                                worldWidth = maxOf(100f, worldWidth + deltaDp)
                             }
                         )
                     },
@@ -327,20 +330,20 @@ fun DraggableTextBox(
                 )
             }
 
-            // Bottom-Edge Vertical Resize Handle (Smooth local update)
+            // Bottom-Edge Vertical Resize Handle
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .offset(y = 16.dp)
                     .size(width = 48.dp, height = 36.dp)
-                    .pointerInput(box.id) {
+                    .pointerInput(box.id, scale) {
                         detectDragGestures(
-                            onDragEnd = { onCommitResize(widthDp, heightDp) },
-                            onDragCancel = { onCommitResize(widthDp, heightDp) },
+                            onDragEnd = { onCommitResize(worldWidth, worldHeight) },
+                            onDragCancel = { onCommitResize(worldWidth, worldHeight) },
                             onDrag = { change, dragAmount ->
                                 change.consume()
-                                val deltaDp = dragAmount.y / density.density
-                                heightDp = maxOf(48f, heightDp + deltaDp)
+                                val deltaDp = (dragAmount.y / density.density) / scale
+                                worldHeight = maxOf(48f, worldHeight + deltaDp)
                             }
                         )
                     },
@@ -356,22 +359,22 @@ fun DraggableTextBox(
                 )
             }
 
-            // Bottom-Right Corner Resize Handle (Smooth diagonal resize, 44x44dp hit area)
+            // Bottom-Right Corner Resize Handle
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .offset(x = 14.dp, y = 14.dp)
                     .size(44.dp)
-                    .pointerInput(box.id) {
+                    .pointerInput(box.id, scale) {
                         detectDragGestures(
-                            onDragEnd = { onCommitResize(widthDp, heightDp) },
-                            onDragCancel = { onCommitResize(widthDp, heightDp) },
+                            onDragEnd = { onCommitResize(worldWidth, worldHeight) },
+                            onDragCancel = { onCommitResize(worldWidth, worldHeight) },
                             onDrag = { change, dragAmount ->
                                 change.consume()
-                                val deltaX = dragAmount.x / density.density
-                                val deltaY = dragAmount.y / density.density
-                                widthDp = maxOf(100f, widthDp + deltaX)
-                                heightDp = maxOf(48f, heightDp + deltaY)
+                                val deltaX = (dragAmount.x / density.density) / scale
+                                val deltaY = (dragAmount.y / density.density) / scale
+                                worldWidth = maxOf(100f, worldWidth + deltaX)
+                                worldHeight = maxOf(48f, worldHeight + deltaY)
                             }
                         )
                     },
