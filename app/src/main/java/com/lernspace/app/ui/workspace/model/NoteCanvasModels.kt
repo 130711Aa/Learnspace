@@ -29,6 +29,22 @@ enum class NoteCanvasType(val title: String, val description: String) {
     INFINITE_SCRATCHPAD("Scratchpad Bebas", "Papan kanvas tak terbatas untuk coretan cepat & mind mapping")
 }
 
+object CanvasConstants {
+    const val PAGE_WIDTH = 1800f
+    const val PAGE_HEIGHT = 2545f // Standard ISO 216 A4 ratio: 1800 * 1.414 ≈ 2545f
+
+    // Standard Ruled Paper Metrics (exact 1:1 synchronization between Compose & PdfRenderer)
+    const val RULED_MARGIN_X = 140f
+    const val RULED_FIRST_LINE_Y = 160f
+    const val RULED_LINE_SPACING = 60f
+
+    // Standard Grid Paper Metrics
+    const val GRID_SPACING = 60f
+
+    // Standard Dot Paper Metrics
+    const val DOT_SPACING = 60f
+}
+
 data class TextBoxElement(
     val id: String = UUID.randomUUID().toString(),
     var x: Float,

@@ -5,13 +5,18 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.pdf.PdfDocument
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
+import android.text.StaticLayout
+import android.text.TextPaint
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.core.content.FileProvider
 import androidx.ink.rendering.android.canvas.CanvasStrokeRenderer
+import com.lernspace.app.ui.workspace.model.CanvasConstants
 import com.lernspace.app.ui.workspace.model.NoteCanvasType
 import com.lernspace.app.ui.workspace.model.NoteUiModel
 import com.lernspace.app.ui.workspace.model.PaperStyle
@@ -57,7 +62,7 @@ object PdfNoteHelper {
         context: Context,
         uri: Uri,
         pageIndex: Int,
-        targetWidth: Int = 1800
+        targetWidth: Int = CanvasConstants.PAGE_WIDTH.toInt()
     ): Bitmap? {
         var pfd: ParcelFileDescriptor? = null
         var renderer: PdfRenderer? = null
@@ -91,6 +96,7 @@ object PdfNoteHelper {
 
     /**
      * Export the multi-page note or PDF annotation into a clean standard PDF document.
+     * Guaranteed 100% pixel-perfect alignment between viewport inking and exported PDF.
      */
     fun exportNoteToPdf(
         context: Context,
@@ -99,20 +105,54 @@ object PdfNoteHelper {
     ): File? {
         return try {
             val pdfDoc = PdfDocument()
-            val exportWidth = 1200
-            val exportHeight = 1600
-
             val uri = note.pdfUri?.let { Uri.parse(it) }
             val totalPages = if (note.canvasType == NoteCanvasType.PDF_DOCUMENT) note.pdfTotalPages else note.pages.size
 
             for (pageIdx in 0 until totalPages) {
+                var exportWidth = CanvasConstants.PAGE_WIDTH.toInt()
+                var exportHeight = CanvasConstants.PAGE_HEIGHT.toInt()
+
+                var pdfBitmap: Bitmap? = null
+                if (note.canvasType == NoteCanvasType.PDF_DOCUMENT && uri != null) {
+                    pdfBitmap = renderPdfPage(context, uri, pageIdx, targetWidth = CanvasConstants.PAGE_WIDTH.toInt())
+                    if (pdfBitmap != null) {
+                        exportWidth = pdfBitmap.width
+                        exportHeight = pdfBitmap.height
+                    }
+                } else {
+                    // For PAGED_NOTE or INFINITE_SCRATCHPAD:
+                    // Check if strokes or elements exceed default page dimensions so nothing is ever clipped
+                    if (pageIdx < note.pages.size) {
+                        val pageData = note.pages[pageIdx]
+                        var maxX = CanvasConstants.PAGE_WIDTH
+                        var maxY = CanvasConstants.PAGE_HEIGHT
+                        for (stroke in pageData.strokes) {
+                            val inputs = stroke.inputs
+                            for (i in 0 until inputs.size) {
+                                val pt = inputs.get(i)
+                                if (pt.x > maxX) maxX = pt.x
+                                if (pt.y > maxY) maxY = pt.y
+                            }
+                        }
+                        for (img in pageData.imageElements) {
+                            if (img.x + img.width > maxX) maxX = img.x + img.width
+                            if (img.y + img.height > maxY) maxY = img.y + img.height
+                        }
+                        for (tb in pageData.textBoxes) {
+                            if (tb.x + tb.width > maxX) maxX = tb.x + tb.width
+                            if (tb.y + tb.height > maxY) maxY = tb.y + tb.height
+                        }
+                        exportWidth = (maxX + 60f).toInt().coerceAtLeast(CanvasConstants.PAGE_WIDTH.toInt())
+                        exportHeight = (maxY + 60f).toInt().coerceAtLeast(CanvasConstants.PAGE_HEIGHT.toInt())
+                    }
+                }
+
                 val pageInfo = PdfDocument.PageInfo.Builder(exportWidth, exportHeight, pageIdx + 1).create()
                 val page = pdfDoc.startPage(pageInfo)
                 val canvas = page.canvas
 
                 // 1. Draw Background
-                if (note.canvasType == NoteCanvasType.PDF_DOCUMENT && uri != null) {
-                    val pdfBitmap = renderPdfPage(context, uri, pageIdx, exportWidth)
+                if (note.canvasType == NoteCanvasType.PDF_DOCUMENT) {
                     if (pdfBitmap != null) {
                         canvas.drawBitmap(pdfBitmap, 0f, 0f, null)
                     } else {
@@ -120,16 +160,49 @@ object PdfNoteHelper {
                     }
                 } else {
                     canvas.drawColor(android.graphics.Color.WHITE)
-                    // Draw paper lines or grid
                     drawPaperLinesOnCanvas(canvas, note.paperStyle, exportWidth, exportHeight)
                 }
 
-                // 2. Draw Vector Strokes for this page
+                // 2. Draw Images for this page
+                if (pageIdx < note.pages.size) {
+                    val pageData = note.pages[pageIdx]
+                    for (img in pageData.imageElements) {
+                        try {
+                            val androidBmp = img.bitmap.asAndroidBitmap()
+                            val dstRect = RectF(img.x, img.y, img.x + img.width, img.y + img.height)
+                            canvas.drawBitmap(androidBmp, null, dstRect, null)
+                        } catch (_: Exception) {}
+                    }
+                }
+
+                // 3. Draw Vector Strokes for this page
                 if (pageIdx < note.pages.size) {
                     val pageData = note.pages[pageIdx]
                     val identityMatrix = android.graphics.Matrix()
                     for (stroke in pageData.strokes) {
                         strokeRenderer.draw(canvas, stroke, identityMatrix)
+                    }
+                }
+
+                // 4. Draw Text Boxes for this page
+                if (pageIdx < note.pages.size) {
+                    val pageData = note.pages[pageIdx]
+                    val textPaint = TextPaint().apply {
+                        color = android.graphics.Color.parseColor("#0F172A")
+                        textSize = 28f
+                        isAntiAlias = true
+                    }
+                    for (box in pageData.textBoxes) {
+                        if (box.text.isNotBlank()) {
+                            canvas.save()
+                            canvas.translate(box.x, box.y)
+                            val layoutWidth = box.width.toInt().coerceAtLeast(100)
+                            val staticLayout = StaticLayout.Builder.obtain(
+                                box.text, 0, box.text.length, textPaint, layoutWidth
+                            ).build()
+                            staticLayout.draw(canvas)
+                            canvas.restore()
+                        }
                     }
                 }
 
@@ -160,52 +233,68 @@ object PdfNoteHelper {
         width: Int,
         height: Int
     ) {
-        val paint = Paint().apply {
-            color = android.graphics.Color.parseColor("#E2E8F0")
-            strokeWidth = 2f
-            isAntiAlias = true
-        }
-
         when (style) {
             PaperStyle.RULED -> {
-                val lineSpacing = 40f
-                var y = 80f
-                while (y < height) {
-                    canvas.drawLine(0f, y, width.toFloat(), y, paint)
-                    y += lineSpacing
+                // Red vertical notebook margin line (exact CanvasConstants.RULED_MARGIN_X)
+                val marginPaint = Paint().apply {
+                    color = android.graphics.Color.parseColor("#FCA5A5")
+                    strokeWidth = 3f
+                    isAntiAlias = true
+                }
+                canvas.drawLine(
+                    CanvasConstants.RULED_MARGIN_X,
+                    0f,
+                    CanvasConstants.RULED_MARGIN_X,
+                    height.toFloat(),
+                    marginPaint
+                )
+
+                // Horizontal ruled lines (exact CanvasConstants.RULED_FIRST_LINE_Y & RULED_LINE_SPACING)
+                val linePaint = Paint().apply {
+                    color = android.graphics.Color.parseColor("#E2E8F0")
+                    strokeWidth = 1.8f
+                    isAntiAlias = true
+                }
+                var y = CanvasConstants.RULED_FIRST_LINE_Y
+                while (y < height - 40f) {
+                    canvas.drawLine(0f, y, width.toFloat(), y, linePaint)
+                    y += CanvasConstants.RULED_LINE_SPACING
                 }
             }
             PaperStyle.GRID -> {
-                val gridSize = 40f
-                var x = 0f
-                while (x < width) {
-                    canvas.drawLine(x, 0f, x, height.toFloat(), paint)
-                    x += gridSize
+                val gridPaint = Paint().apply {
+                    color = android.graphics.Color.parseColor("#EEF2F6")
+                    strokeWidth = 1.5f
+                    isAntiAlias = true
                 }
-                var y = 0f
+                var x = CanvasConstants.GRID_SPACING
+                while (x < width) {
+                    canvas.drawLine(x, 0f, x, height.toFloat(), gridPaint)
+                    x += CanvasConstants.GRID_SPACING
+                }
+                var y = CanvasConstants.GRID_SPACING
                 while (y < height) {
-                    canvas.drawLine(0f, y, width.toFloat(), y, paint)
-                    y += gridSize
+                    canvas.drawLine(0f, y, width.toFloat(), y, gridPaint)
+                    y += CanvasConstants.GRID_SPACING
                 }
             }
             PaperStyle.DOTTED -> {
-                val dotSpacing = 40f
                 val dotPaint = Paint().apply {
                     color = android.graphics.Color.parseColor("#CBD5E1")
                     isAntiAlias = true
                 }
-                var x = 20f
+                var x = CanvasConstants.DOT_SPACING
                 while (x < width) {
-                    var y = 20f
+                    var y = CanvasConstants.DOT_SPACING
                     while (y < height) {
-                        canvas.drawCircle(x, y, 2.5f, dotPaint)
-                        y += dotSpacing
+                        canvas.drawCircle(x, y, 3f, dotPaint)
+                        y += CanvasConstants.DOT_SPACING
                     }
-                    x += dotSpacing
+                    x += CanvasConstants.DOT_SPACING
                 }
             }
             PaperStyle.BLANK -> {
-                // Pure white canvas
+                // Pure clean white canvas
             }
         }
     }

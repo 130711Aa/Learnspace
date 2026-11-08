@@ -24,6 +24,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
@@ -318,6 +321,15 @@ fun NoteEditorScreen(
                         val bmp = pdfPageBitmap!!
                         val dstW = bmp.width * scale
                         val dstH = bmp.height * scale
+
+                        // Drop shadow behind PDF page sheet
+                        drawRoundRect(
+                            color = Color(0x1F0F172A),
+                            topLeft = Offset(panX + 4f, panY + 6f),
+                            size = Size(dstW, dstH),
+                            cornerRadius = CornerRadius(6f, 6f)
+                        )
+
                         drawImage(
                             image = bmp,
                             dstOffset = IntOffset(panX.toInt(), panY.toInt()),
@@ -331,6 +343,7 @@ fun NoteEditorScreen(
                     scale = scale,
                     panX = panX,
                     panY = panY,
+                    isPaged = note.canvasType == NoteCanvasType.PAGED_NOTE,
                     modifier = Modifier.fillMaxSize()
                 )
             }
