@@ -53,15 +53,25 @@ fun HomeScreen(
         return
     }
 
-    // Computed values
-    val mondayClasses = weeklyClasses.filter { it.dayOfWeek == 1 }.sortedBy { it.startTime }
-    val pendingTasks = tasks.filter { !it.isCompleted }.sortedBy { it.dueDayNumber }
-    val masteredTopicsCount = topics.count { it.status == TopicStatus.COMFORTABLE || it.status == TopicStatus.MASTERED }
-    val recentNotes = notes.take(4)
+    // Computed values (memoized to avoid redundant re-filtering)
+    val mondayClasses = remember(weeklyClasses.size) {
+        weeklyClasses.filter { it.dayOfWeek == 1 }.sortedBy { it.startTime }
+    }
+    val pendingTasks = remember(tasks.size, tasks.map { it.isCompleted }) {
+        tasks.filter { !it.isCompleted }.sortedBy { it.dueDayNumber }
+    }
+    val masteredTopicsCount = remember(topics.size, topics.map { it.status }) {
+        topics.count { it.status == TopicStatus.COMFORTABLE || it.status == TopicStatus.MASTERED }
+    }
+    val recentNotes = remember(notes.size) {
+        notes.take(4)
+    }
 
     // Next Up hero schedule item
-    val nextUpClass = mondayClasses.firstOrNull()
-    val nextUpTopic = topics.find { it.subjectId == nextUpClass?.subjectId } ?: topics.firstOrNull()
+    val nextUpClass = remember(mondayClasses) { mondayClasses.firstOrNull() }
+    val nextUpTopic = remember(nextUpClass, topics.size) {
+        topics.find { it.subjectId == nextUpClass?.subjectId } ?: topics.firstOrNull()
+    }
 
     Column(
         modifier = Modifier.fillMaxSize(),

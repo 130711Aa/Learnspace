@@ -1,5 +1,8 @@
 package com.lernspace.app.navigation
 
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -38,10 +41,10 @@ fun LernspaceNavHost(
         } else {
             navController.navigate(route) {
                 popUpTo(navController.graph.findStartDestination().id) {
-                    saveState = true
+                    saveState = false
                 }
                 launchSingleTop = true
-                restoreState = true
+                restoreState = false
             }
         }
     }
@@ -49,7 +52,11 @@ fun LernspaceNavHost(
     NavHost(
         navController = navController,
         startDestination = Screen.Home.route,
-        modifier = modifier
+        modifier = modifier,
+        enterTransition = { fadeIn(animationSpec = tween(150)) },
+        exitTransition = { fadeOut(animationSpec = tween(150)) },
+        popEnterTransition = { fadeIn(animationSpec = tween(150)) },
+        popExitTransition = { fadeOut(animationSpec = tween(150)) }
     ) {
         composable(Screen.Home.route) {
             HomeScreen(
