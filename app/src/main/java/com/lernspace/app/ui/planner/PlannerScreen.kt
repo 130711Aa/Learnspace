@@ -1906,7 +1906,7 @@ private fun AgendaTimelineCard(
 // DIALOG: Input Tugas & Set Deadline
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
-private fun InputTaskDialog(
+internal fun InputTaskDialog(
     subjects: List<com.lernspace.app.ui.learning.SubjectUi>,
     topics: List<com.lernspace.app.ui.learning.TopicUi>,
     initialDayNumber: Int,

@@ -30,9 +30,11 @@ fun LernspaceNavHost(
     ) {
         composable(Screen.Home.route) {
             HomeScreen(
-                tasksDueToday = homeUiState.tasksDueToday,
-                overdueTasks = homeUiState.overdueTasks,
-                onCompleteTask = { taskId -> homeViewModel.completeTask(taskId) },
+                onNavigateToScreen = { route ->
+                    navController.navigate(route) {
+                        launchSingleTop = true
+                    }
+                },
                 onQuickAddTask = onQuickAdd
             )
         }
