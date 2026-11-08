@@ -168,6 +168,19 @@ fun NoteEditorScreen(
         loadActivePageData(currentPageIndex)
     }
 
+    var showDeletePageDialog by remember { mutableStateOf(false) }
+
+    fun deleteCurrentPage() {
+        if (note.pages.size > 1) {
+            note.pages.removeAt(currentPageIndex)
+            note.pages.forEachIndexed { idx, page -> page.pageIndex = idx }
+            val newIdx = if (currentPageIndex >= note.pages.size) note.pages.size - 1 else currentPageIndex
+            currentPageIndex = newIdx
+            totalPages = note.pages.size
+            loadActivePageData(newIdx)
+        }
+    }
+
     fun handleBack() {
         saveActivePageData()
         onBack()
@@ -494,12 +507,54 @@ fun NoteEditorScreen(
                 currentPage = currentPageIndex + 1,
                 totalPages = totalPages,
                 canAddPage = note.canvasType == NoteCanvasType.PAGED_NOTE,
+                canDeletePage = note.canvasType == NoteCanvasType.PAGED_NOTE && totalPages > 1,
                 onPrevPage = { goToPage(currentPageIndex - 1) },
                 onNextPage = { goToPage(currentPageIndex + 1) },
                 onAddPage = { addNewPage() },
+                onDeletePage = { showDeletePageDialog = true },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(bottom = 16.dp)
+            )
+        }
+
+        // Dialog: Confirm Delete Current Page
+        if (showDeletePageDialog) {
+            AlertDialog(
+                onDismissRequest = { showDeletePageDialog = false },
+                title = {
+                    Text(
+                        text = "Hapus Halaman ${currentPageIndex + 1}?",
+                        fontWeight = FontWeight.Bold,
+                        color = LernspaceDark
+                    )
+                },
+                text = {
+                    Text(
+                        text = "Seluruh coretan dan konten pada halaman ${currentPageIndex + 1} akan dihapus secara permanen. Tindakan ini tidak dapat dibatalkan.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(0xFF64748B)
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            deleteCurrentPage()
+                            showDeletePageDialog = false
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Hapus Halaman", color = Color.White)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDeletePageDialog = false }) {
+                        Text("Batal")
+                    }
+                },
+                shape = RoundedCornerShape(16.dp),
+                containerColor = Color.White
             )
         }
 
@@ -729,9 +784,11 @@ private fun PageNavigatorBar(
     currentPage: Int,
     totalPages: Int,
     canAddPage: Boolean,
+    canDeletePage: Boolean,
     onPrevPage: () -> Unit,
     onNextPage: () -> Unit,
     onAddPage: () -> Unit,
+    onDeletePage: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -825,6 +882,34 @@ private fun PageNavigatorBar(
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White
+                        )
+                    }
+                }
+            }
+
+            // Delete Page Button (for Paged Notes when totalPages > 1)
+            if (canDeletePage) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFFFEE2E2),
+                    modifier = Modifier.clickable(onClick = onDeletePage)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            Icons.Filled.Delete,
+                            contentDescription = "Hapus Halaman",
+                            tint = Color(0xFFDC2626),
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Text(
+                            text = "Hapus Hal",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFDC2626)
                         )
                     }
                 }
