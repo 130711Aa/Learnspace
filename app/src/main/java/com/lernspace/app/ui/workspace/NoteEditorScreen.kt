@@ -7,7 +7,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -26,14 +29,20 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Fill
+import androidx.compose.ui.graphics.drawscope.Stroke as DrawStroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -55,8 +64,11 @@ import com.lernspace.app.ui.workspace.components.DraggableImage
 import com.lernspace.app.ui.workspace.components.DraggableTextBox
 import com.lernspace.app.ui.workspace.components.NoteFloatingToolbar
 import com.lernspace.app.ui.workspace.components.PaperBackground
+import com.lernspace.app.ui.workspace.lasso.LassoHelper
+import com.lernspace.app.ui.workspace.lasso.LassoSelectionState
 import com.lernspace.app.ui.workspace.model.*
 import com.lernspace.app.ui.workspace.pdf.PdfNoteHelper
+import com.lernspace.app.ui.workspace.shape.ShapeRecognizer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -88,6 +100,16 @@ fun NoteEditorScreen(
     var activeTool by remember { mutableStateOf(NoteTool.PEN) }
     var selectedColor by remember { mutableStateOf(Color(0xFF16A34A)) } // Green default
     var selectedThickness by remember { mutableFloatStateOf(7f) }
+    var selectedShapeType by remember { mutableStateOf(GeometricShapeType.RECTANGLE) }
+    var isAutoRefineEnabled by remember { mutableStateOf(false) }
+
+    // Live preview coordinates for Shape Tool
+    var shapeDrawStart by remember { mutableStateOf<Offset?>(null) }
+    var shapeDrawCurrent by remember { mutableStateOf<Offset?>(null) }
+
+    // Lasso Selection State
+    var lassoSelection by remember { mutableStateOf<LassoSelectionState?>(null) }
+    val currentLassoLoop = remember { mutableStateListOf<Offset>() }
 
     // Inking State for the active page
     val strokes = remember { mutableStateListOf<Stroke>() }
@@ -126,6 +148,10 @@ fun NoteEditorScreen(
         undoneStrokes.clear()
         textBoxes.clear()
         imageElements.clear()
+        lassoSelection = null
+        currentLassoLoop.clear()
+        shapeDrawStart = null
+        shapeDrawCurrent = null
 
         while (note.pages.size <= index) {
             note.pages.add(NotePageData(pageIndex = note.pages.size))
@@ -205,6 +231,7 @@ fun NoteEditorScreen(
 
     // Helper: Deselect all objects
     fun deselectAll() {
+        lassoSelection = null
         for (i in textBoxes.indices) {
             textBoxes[i] = textBoxes[i].copy(isSelected = false)
         }
@@ -355,7 +382,14 @@ fun NoteEditorScreen(
                 currentBrush = currentBrush,
                 onGetNextBrush = { currentBrush },
                 onStrokesFinished = { newStrokes ->
-                    strokes.addAll(newStrokes)
+                    if (isAutoRefineEnabled) {
+                        val refined = newStrokes.map { stroke ->
+                            ShapeRecognizer.refineStroke(stroke) ?: stroke
+                        }
+                        strokes.addAll(refined)
+                    } else {
+                        strokes.addAll(newStrokes)
+                    }
                     undoneStrokes.clear()
                 },
                 isEraserMode = activeTool == NoteTool.ERASER,
@@ -376,6 +410,410 @@ fun NoteEditorScreen(
                 },
                 modifier = Modifier.fillMaxSize()
             )
+
+            // ── SHAPE TOOL DRAWING & LIVE PREVIEW LAYER ──
+            if (activeTool == NoteTool.SHAPE) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(selectedShapeType, currentBrush) {
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                val worldStart = Offset((down.position.x - panX) / scale, (down.position.y - panY) / scale)
+                                shapeDrawStart = worldStart
+                                shapeDrawCurrent = worldStart
+
+                                drag(down.id) { change ->
+                                    change.consume()
+                                    shapeDrawCurrent = Offset((change.position.x - panX) / scale, (change.position.y - panY) / scale)
+                                }
+
+                                val start = shapeDrawStart
+                                val end = shapeDrawCurrent
+                                if (start != null && end != null && (end - start).getDistance() > 15f) {
+                                    val newStroke = ShapeRecognizer.generateGeometricShape(
+                                        type = selectedShapeType,
+                                        start = start,
+                                        end = end,
+                                        brush = currentBrush
+                                    )
+                                    strokes.add(newStroke)
+                                    undoneStrokes.clear()
+                                }
+                                shapeDrawStart = null
+                                shapeDrawCurrent = null
+                            }
+                        }
+                )
+
+                // Live Preview Canvas
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val start = shapeDrawStart
+                    val end = shapeDrawCurrent
+                    if (start != null && end != null) {
+                        val sX = start.x * scale + panX
+                        val sY = start.y * scale + panY
+                        val eX = end.x * scale + panX
+                        val eY = end.y * scale + panY
+
+                        val minX = minOf(sX, eX)
+                        val maxX = maxOf(sX, eX)
+                        val minY = minOf(sY, eY)
+                        val maxY = maxOf(sY, eY)
+                        val w = maxOf(10f, maxX - minX)
+                        val h = maxOf(10f, maxY - minY)
+                        val strokeW = selectedThickness * scale
+
+                        when (selectedShapeType) {
+                            GeometricShapeType.LINE -> {
+                                drawLine(
+                                    color = selectedColor,
+                                    start = Offset(sX, sY),
+                                    end = Offset(eX, eY),
+                                    strokeWidth = strokeW
+                                )
+                            }
+                            GeometricShapeType.RECTANGLE -> {
+                                drawRect(
+                                    color = selectedColor,
+                                    topLeft = Offset(minX, minY),
+                                    size = Size(w, h),
+                                    style = DrawStroke(width = strokeW)
+                                )
+                            }
+                            GeometricShapeType.CIRCLE -> {
+                                drawOval(
+                                    color = selectedColor,
+                                    topLeft = Offset(minX, minY),
+                                    size = Size(w, h),
+                                    style = DrawStroke(width = strokeW)
+                                )
+                            }
+                            GeometricShapeType.TRIANGLE -> {
+                                val path = Path().apply {
+                                    moveTo((minX + maxX) / 2f, minY)
+                                    lineTo(maxX, maxY)
+                                    lineTo(minX, maxY)
+                                    close()
+                                }
+                                drawPath(
+                                    path = path,
+                                    color = selectedColor,
+                                    style = DrawStroke(width = strokeW)
+                                )
+                            }
+                            GeometricShapeType.ARROW -> {
+                                drawLine(
+                                    color = selectedColor,
+                                    start = Offset(sX, sY),
+                                    end = Offset(eX, eY),
+                                    strokeWidth = strokeW
+                                )
+                                val dx = eX - sX
+                                val dy = eY - sY
+                                val angle = kotlin.math.atan2(dy, dx)
+                                val headLen = minOf(36f * scale, kotlin.math.hypot(dx, dy) * 0.35f)
+                                val headAngle = Math.toRadians(30.0).toFloat()
+                                drawLine(
+                                    color = selectedColor,
+                                    start = Offset(eX, eY),
+                                    end = Offset(
+                                        eX - headLen * kotlin.math.cos(angle - headAngle),
+                                        eY - headLen * kotlin.math.sin(angle - headAngle)
+                                    ),
+                                    strokeWidth = strokeW
+                                )
+                                drawLine(
+                                    color = selectedColor,
+                                    start = Offset(eX, eY),
+                                    end = Offset(
+                                        eX - headLen * kotlin.math.cos(angle + headAngle),
+                                        eY - headLen * kotlin.math.sin(angle + headAngle)
+                                    ),
+                                    strokeWidth = strokeW
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── LASSO TOOL SELECTION & MANIPULATION LAYER ──
+            if (activeTool == NoteTool.LASSO || lassoSelection != null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(strokes.size, textBoxes.size, imageElements.size, lassoSelection) {
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                val screenPoint = down.position
+                                val worldPoint = Offset((screenPoint.x - panX) / scale, (screenPoint.y - panY) / scale)
+
+                                val curSel = lassoSelection
+                                if (curSel != null && !curSel.isEmpty) {
+                                    val screenBounds = Rect(
+                                        curSel.bounds.left * scale + panX,
+                                        curSel.bounds.top * scale + panY,
+                                        curSel.bounds.right * scale + panX,
+                                        curSel.bounds.bottom * scale + panY
+                                    )
+                                    if (screenBounds.contains(screenPoint)) {
+                                        // Drag inside selection bounding box to MOVE selected items!
+                                        drag(down.id) { change ->
+                                            change.consume()
+                                            val dx = change.positionChange().x / scale
+                                            val dy = change.positionChange().y / scale
+
+                                            // 1. Move selected strokes
+                                            for (i in curSel.selectedStrokes.indices) {
+                                                val oldStroke = curSel.selectedStrokes[i]
+                                                val newStroke = ShapeRecognizer.translateStroke(oldStroke, dx, dy)
+                                                val idxInMain = strokes.indexOf(oldStroke)
+                                                if (idxInMain != -1) {
+                                                    strokes[idxInMain] = newStroke
+                                                }
+                                                curSel.selectedStrokes[i] = newStroke
+                                            }
+
+                                            // 2. Move selected text boxes
+                                            for (box in curSel.selectedTextBoxes) {
+                                                box.x += dx
+                                                box.y += dy
+                                            }
+
+                                            // 3. Move selected images
+                                            for (img in curSel.selectedImages) {
+                                                img.x += dx
+                                                img.y += dy
+                                            }
+
+                                            curSel.bounds = curSel.bounds.translate(Offset(dx, dy))
+                                        }
+                                        return@awaitEachGesture
+                                    } else {
+                                        // Tapped outside bounding box -> deselect!
+                                        lassoSelection = null
+                                    }
+                                }
+
+                                if (activeTool == NoteTool.LASSO) {
+                                    // Draw new lasso loop
+                                    currentLassoLoop.clear()
+                                    currentLassoLoop.add(worldPoint)
+
+                                    drag(down.id) { change ->
+                                        change.consume()
+                                        val curWorld = Offset((change.position.x - panX) / scale, (change.position.y - panY) / scale)
+                                        currentLassoLoop.add(curWorld)
+                                    }
+
+                                    // Finished drawing lasso loop: calculate matches!
+                                    if (currentLassoLoop.size >= 4) {
+                                        val loopCopy = currentLassoLoop.toList()
+                                        val matchedStrokes = strokes.filter { LassoHelper.isStrokeSelected(it, loopCopy) }.toMutableList()
+                                        val matchedBoxes = textBoxes.filter { LassoHelper.isTextBoxSelected(it, loopCopy) }.toMutableList()
+                                        val matchedImages = imageElements.filter { LassoHelper.isImageSelected(it, loopCopy) }.toMutableList()
+
+                                        val bounds = LassoHelper.computeCombinedBounds(matchedStrokes, matchedBoxes, matchedImages)
+                                        if (bounds != null && (matchedStrokes.isNotEmpty() || matchedBoxes.isNotEmpty() || matchedImages.isNotEmpty())) {
+                                            lassoSelection = LassoSelectionState(
+                                                selectedStrokes = matchedStrokes,
+                                                selectedTextBoxes = matchedBoxes,
+                                                selectedImages = matchedImages,
+                                                bounds = bounds
+                                            )
+                                        } else {
+                                            lassoSelection = null
+                                        }
+                                    }
+                                    currentLassoLoop.clear()
+                                }
+                            }
+                        }
+                )
+
+                // Render in-progress Lasso loop (dashed path + semi-transparent fill)
+                if (currentLassoLoop.size >= 2) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val path = Path().apply {
+                            val p0 = currentLassoLoop[0]
+                            moveTo(p0.x * scale + panX, p0.y * scale + panY)
+                            for (i in 1 until currentLassoLoop.size) {
+                                val p = currentLassoLoop[i]
+                                lineTo(p.x * scale + panX, p.y * scale + panY)
+                            }
+                        }
+                        drawPath(
+                            path = path,
+                            color = AccentBlue.copy(alpha = 0.12f),
+                            style = Fill
+                        )
+                        drawPath(
+                            path = path,
+                            color = AccentBlue,
+                            style = DrawStroke(
+                                width = 2.dp.toPx(),
+                                pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 10f), 0f)
+                            )
+                        )
+                    }
+                }
+
+                // Render Lasso Selection Bounding Box & Floating Action Menu
+                val curSel = lassoSelection
+                if (curSel != null && !curSel.isEmpty) {
+                    val screenLeft = curSel.bounds.left * scale + panX
+                    val screenTop = curSel.bounds.top * scale + panY
+                    val screenRight = curSel.bounds.right * scale + panX
+                    val screenBottom = curSel.bounds.bottom * scale + panY
+                    val selWidth = maxOf(40f, screenRight - screenLeft)
+                    val selHeight = maxOf(40f, screenBottom - screenTop)
+
+                    // Dashed selection marquee
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        drawRoundRect(
+                            color = AccentBlue,
+                            topLeft = Offset(screenLeft, screenTop),
+                            size = Size(selWidth, selHeight),
+                            cornerRadius = CornerRadius(8.dp.toPx(), 8.dp.toPx()),
+                            style = DrawStroke(
+                                width = 2.dp.toPx(),
+                                pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 8f), 0f)
+                            )
+                        )
+                    }
+
+                    // Floating Action Menu (Geser / Duplikat / Hapus / Selesai)
+                    Box(
+                        modifier = Modifier
+                            .offset {
+                                IntOffset(
+                                    x = (screenLeft + selWidth / 2f - 140.dp.toPx()).roundToInt().coerceAtLeast(16),
+                                    y = (screenTop - 52.dp.toPx()).roundToInt().coerceAtLeast(70)
+                                )
+                            }
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(20.dp),
+                            color = Color.White,
+                            shadowElevation = 8.dp,
+                            border = BorderStroke(1.5.dp, Color(0xFFE2E8F0))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                // Drag Move hint
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.OpenWith,
+                                        contentDescription = "Geser",
+                                        tint = AccentBlue,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Text(
+                                        text = "Geser",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = AccentBlue
+                                    )
+                                }
+
+                                VerticalDivider(modifier = Modifier.height(16.dp), color = Color(0xFFE2E8F0))
+
+                                // Duplicate button
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = Color(0xFFF1F5F9),
+                                    modifier = Modifier.clickable {
+                                        val offsetDelta = 35f
+                                        val newDuplicates = curSel.selectedStrokes.map {
+                                            ShapeRecognizer.translateStroke(it, offsetDelta, offsetDelta)
+                                        }
+                                        strokes.addAll(newDuplicates)
+                                        curSel.selectedStrokes.clear()
+                                        curSel.selectedStrokes.addAll(newDuplicates)
+                                        curSel.bounds = curSel.bounds.translate(Offset(offsetDelta, offsetDelta))
+                                        undoneStrokes.clear()
+                                    }
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.ContentCopy,
+                                            contentDescription = "Duplikat",
+                                            tint = LernspaceDark,
+                                            modifier = Modifier.size(13.dp)
+                                        )
+                                        Text(
+                                            text = "Duplikat",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = LernspaceDark
+                                        )
+                                    }
+                                }
+
+                                // Delete button
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = Color(0xFFFEE2E2),
+                                    modifier = Modifier.clickable {
+                                        strokes.removeAll(curSel.selectedStrokes)
+                                        textBoxes.removeAll(curSel.selectedTextBoxes)
+                                        imageElements.removeAll(curSel.selectedImages)
+                                        lassoSelection = null
+                                    }
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Delete,
+                                            contentDescription = "Hapus",
+                                            tint = Color(0xFFDC2626),
+                                            modifier = Modifier.size(13.dp)
+                                        )
+                                        Text(
+                                            text = "Hapus",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = Color(0xFFDC2626)
+                                        )
+                                    }
+                                }
+
+                                // Done / Close button
+                                Surface(
+                                    shape = CircleShape,
+                                    color = Color(0xFFF1F5F9),
+                                    modifier = Modifier
+                                        .size(26.dp)
+                                        .clickable { lassoSelection = null }
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Close,
+                                            contentDescription = "Selesai",
+                                            tint = Color(0xFF64748B),
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
             // Placed Images Layer
             imageElements.forEachIndexed { index, img ->
@@ -473,6 +911,10 @@ fun NoteEditorScreen(
                     )
                 }
             },
+            selectedShapeType = selectedShapeType,
+            onSelectShapeType = { selectedShapeType = it },
+            isAutoRefineEnabled = isAutoRefineEnabled,
+            onToggleAutoRefine = { isAutoRefineEnabled = !isAutoRefineEnabled },
             selectedColor = selectedColor,
             onSelectColor = {
                 selectedColor = it
@@ -602,6 +1044,10 @@ private fun UnifiedNoteTopBar(
     totalPages: Int,
     activeTool: NoteTool,
     onSelectTool: (NoteTool) -> Unit,
+    selectedShapeType: GeometricShapeType = GeometricShapeType.RECTANGLE,
+    onSelectShapeType: (GeometricShapeType) -> Unit = {},
+    isAutoRefineEnabled: Boolean = false,
+    onToggleAutoRefine: () -> Unit = {},
     selectedColor: Color,
     onSelectColor: (Color) -> Unit,
     selectedThickness: Float,
@@ -622,7 +1068,7 @@ private fun UnifiedNoteTopBar(
             .statusBarsPadding()
             .padding(horizontal = 14.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.Top
     ) {
         // ── 1. LEFT CAPSULE: Back Button + Title & Immutable Format Label (Max 300dp) ──
         Surface(
@@ -690,6 +1136,10 @@ private fun UnifiedNoteTopBar(
         NoteFloatingToolbar(
             activeTool = activeTool,
             onSelectTool = onSelectTool,
+            selectedShapeType = selectedShapeType,
+            onSelectShapeType = onSelectShapeType,
+            isAutoRefineEnabled = isAutoRefineEnabled,
+            onToggleAutoRefine = onToggleAutoRefine,
             selectedColor = selectedColor,
             onSelectColor = onSelectColor,
             selectedThickness = selectedThickness,

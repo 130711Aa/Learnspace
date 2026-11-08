@@ -9,8 +9,18 @@ enum class NoteTool {
     PEN,
     HIGHLIGHTER,
     ERASER,
+    SHAPE,
+    LASSO,
     TEXT,
     IMAGE
+}
+
+enum class GeometricShapeType(val label: String) {
+    LINE("Garis Lurus"),
+    RECTANGLE("Kotak / Persegi"),
+    CIRCLE("Lingkaran / Oval"),
+    TRIANGLE("Segitiga"),
+    ARROW("Panah")
 }
 
 enum class PaperStyle(val displayName: String) {
