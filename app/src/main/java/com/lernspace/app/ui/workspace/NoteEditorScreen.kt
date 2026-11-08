@@ -56,7 +56,6 @@ fun NoteEditorScreen(
     // Note Meta
     var noteTitle by remember { mutableStateOf(note.title) }
     var paperStyle by remember { mutableStateOf(PaperStyle.RULED) }
-    var showPaperMenu by remember { mutableStateOf(false) }
 
     // Tool State
     var activeTool by remember { mutableStateOf(NoteTool.PEN) }
@@ -289,173 +288,37 @@ fun NoteEditorScreen(
         }
 
         // 6. Top Header Navigation Bar
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Left: Back button & Title
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = Color.White,
-                    shadowElevation = 2.dp,
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clickable(onClick = onBack)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = LernspaceDark,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
+        NoteTopHeader(
+            title = noteTitle,
+            onTitleChange = {
+                noteTitle = it
+                note.title = it
+            },
+            subject = note.subject,
+            paperStyle = paperStyle,
+            onSelectPaperStyle = { paperStyle = it },
+            canUndo = strokes.isNotEmpty(),
+            onUndo = {
+                if (strokes.isNotEmpty()) {
+                    val removed = strokes.removeLast()
+                    undoneStrokes.add(removed)
                 }
-
-                Column {
-                    BasicTextField(
-                        value = noteTitle,
-                        onValueChange = {
-                            noteTitle = it
-                            note.title = it
-                        },
-                        textStyle = TextStyle(
-                            color = LernspaceDark,
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold
-                        ),
-                        cursorBrush = SolidColor(LernspaceDark),
-                        singleLine = true
-                    )
-                    Text(
-                        text = "${note.subject} · ${paperStyle.displayName}",
-                        fontSize = 12.sp,
-                        color = Color(0xFF64748B)
-                    )
+            },
+            canRedo = undoneStrokes.isNotEmpty(),
+            onRedo = {
+                if (undoneStrokes.isNotEmpty()) {
+                    val restored = undoneStrokes.removeLast()
+                    strokes.add(restored)
                 }
-            }
-
-            // Right: Actions (Paper style, Undo, Redo, Clear)
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                // Paper Style Selector
-                Box {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = Color.White,
-                        shadowElevation = 2.dp,
-                        modifier = Modifier
-                            .size(38.dp)
-                            .clickable { showPaperMenu = true }
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Filled.Layers,
-                                contentDescription = "Paper style",
-                                tint = LernspaceDark,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
-
-                    DropdownMenu(
-                        expanded = showPaperMenu,
-                        onDismissRequest = { showPaperMenu = false }
-                    ) {
-                        PaperStyle.values().forEach { style ->
-                            DropdownMenuItem(
-                                text = { Text(style.displayName) },
-                                onClick = {
-                                    paperStyle = style
-                                    showPaperMenu = false
-                                }
-                            )
-                        }
-                    }
-                }
-
-                // Undo
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = Color.White,
-                    shadowElevation = 2.dp,
-                    modifier = Modifier
-                        .size(38.dp)
-                        .clickable(enabled = strokes.isNotEmpty()) {
-                            if (strokes.isNotEmpty()) {
-                                val removed = strokes.removeLast()
-                                undoneStrokes.add(removed)
-                            }
-                        }
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.Undo,
-                            contentDescription = "Undo",
-                            tint = if (strokes.isNotEmpty()) LernspaceDark else Color(0xFFCBD5E1),
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
-
-                // Redo
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = Color.White,
-                    shadowElevation = 2.dp,
-                    modifier = Modifier
-                        .size(38.dp)
-                        .clickable(enabled = undoneStrokes.isNotEmpty()) {
-                            if (undoneStrokes.isNotEmpty()) {
-                                val restored = undoneStrokes.removeLast()
-                                strokes.add(restored)
-                            }
-                        }
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.Redo,
-                            contentDescription = "Redo",
-                            tint = if (undoneStrokes.isNotEmpty()) LernspaceDark else Color(0xFFCBD5E1),
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
-
-                // Clear Canvas
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = Color.White,
-                    shadowElevation = 2.dp,
-                    modifier = Modifier
-                        .size(38.dp)
-                        .clickable {
-                            strokes.clear()
-                            undoneStrokes.clear()
-                            textBoxes.clear()
-                            imageElements.clear()
-                        }
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Filled.DeleteSweep,
-                            contentDescription = "Clear all",
-                            tint = Color(0xFFDC2626),
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
-            }
-        }
+            },
+            onClearAll = {
+                strokes.clear()
+                undoneStrokes.clear()
+                textBoxes.clear()
+                imageElements.clear()
+            },
+            onBack = onBack
+        )
 
         // 7. Floating Pill Toolbar (Top Center)
         NoteFloatingToolbar(
@@ -554,6 +417,174 @@ private fun ZoomIndicator(
                     color = Color(0xFF2563EB),
                     fontWeight = FontWeight.SemiBold
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun NoteTopHeader(
+    title: String,
+    onTitleChange: (String) -> Unit,
+    subject: String,
+    paperStyle: PaperStyle,
+    onSelectPaperStyle: (PaperStyle) -> Unit,
+    canUndo: Boolean,
+    onUndo: () -> Unit,
+    canRedo: Boolean,
+    onRedo: () -> Unit,
+    onClearAll: () -> Unit,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var showPaperMenu by remember { mutableStateOf(false) }
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Left: Back button & Title
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = Color.White,
+                shadowElevation = 2.dp,
+                modifier = Modifier
+                    .size(40.dp)
+                    .clickable(onClick = onBack)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back",
+                        tint = LernspaceDark,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            Column {
+                BasicTextField(
+                    value = title,
+                    onValueChange = onTitleChange,
+                    textStyle = TextStyle(
+                        color = LernspaceDark,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    cursorBrush = SolidColor(LernspaceDark),
+                    singleLine = true
+                )
+                Text(
+                    text = "$subject · ${paperStyle.displayName}",
+                    fontSize = 12.sp,
+                    color = Color(0xFF64748B)
+                )
+            }
+        }
+
+        // Right: Actions (Paper style, Undo, Redo, Clear)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // Paper Style Selector
+            Box {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color.White,
+                    shadowElevation = 2.dp,
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clickable { showPaperMenu = true }
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Filled.Layers,
+                            contentDescription = "Paper style",
+                            tint = LernspaceDark,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+
+                DropdownMenu(
+                    expanded = showPaperMenu,
+                    onDismissRequest = { showPaperMenu = false }
+                ) {
+                    PaperStyle.values().forEach { style ->
+                        DropdownMenuItem(
+                            text = { Text(style.displayName) },
+                            onClick = {
+                                onSelectPaperStyle(style)
+                                showPaperMenu = false
+                            }
+                        )
+                    }
+                }
+            }
+
+            // Undo
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = Color.White,
+                shadowElevation = 2.dp,
+                modifier = Modifier
+                    .size(38.dp)
+                    .clickable(enabled = canUndo, onClick = onUndo)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Undo,
+                        contentDescription = "Undo",
+                        tint = if (canUndo) LernspaceDark else Color(0xFFCBD5E1),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+
+            // Redo
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = Color.White,
+                shadowElevation = 2.dp,
+                modifier = Modifier
+                    .size(38.dp)
+                    .clickable(enabled = canRedo, onClick = onRedo)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Redo,
+                        contentDescription = "Redo",
+                        tint = if (canRedo) LernspaceDark else Color(0xFFCBD5E1),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+
+            // Clear Canvas
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = Color.White,
+                shadowElevation = 2.dp,
+                modifier = Modifier
+                    .size(38.dp)
+                    .clickable(onClick = onClearAll)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Filled.DeleteSweep,
+                        contentDescription = "Clear all",
+                        tint = Color(0xFFDC2626),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
         }
     }

@@ -98,8 +98,9 @@ fun DraggableTextBox(
 
     val selectionColor = Color(0xFF2563EB) // MS Word Selection Blue
 
-    val dynamicFontSize = (16 * scale.coerceIn(0.7f, 2.2f)).sp
-    val dynamicLineHeight = (24 * scale.coerceIn(0.7f, 2.2f)).sp
+    val quantizedScale = (scale * 10f).roundToInt() / 10f
+    val dynamicFontSize = (16 * quantizedScale.coerceIn(0.7f, 2.2f)).sp
+    val dynamicLineHeight = (24 * quantizedScale.coerceIn(0.7f, 2.2f)).sp
 
     Box(
         modifier = modifier

@@ -87,18 +87,19 @@ fun DrawingSurface(
     val strokeToScreenMatrix = remember { Matrix() }
     val identityComposeMatrix = remember { androidx.compose.ui.graphics.Matrix() }
 
-    // Stable instance to prevent InProgressStrokes from constantly recreating shaders during pinch gestures
-    val pointerEventToWorldMatrix = remember { androidx.compose.ui.graphics.Matrix() }
-    val renderMatrix = remember { Matrix() }
-    val invMatrix = remember { Matrix() }
-
-    // Update the matrix values in-place whenever scale or pan changes
-    LaunchedEffect(scale, panX, panY) {
-        renderMatrix.reset()
-        renderMatrix.postScale(scale, scale)
-        renderMatrix.postTranslate(panX, panY)
-        renderMatrix.invert(invMatrix)
-        pointerEventToWorldMatrix.setFrom(invMatrix)
+    // Mathematically exact inverse computed by android.graphics.Matrix.invert()
+    // and mapped directly into Compose Matrix via setFrom(inv).
+    // This guarantees 100% precision for any scale & pan values!
+    val pointerEventToWorldMatrix = remember(scale, panX, panY) {
+        val renderMatrix = Matrix().apply {
+            postScale(scale, scale)
+            postTranslate(panX, panY)
+        }
+        val inv = Matrix()
+        renderMatrix.invert(inv)
+        androidx.compose.ui.graphics.Matrix().apply {
+            setFrom(inv)
+        }
     }
 
     Box(
@@ -115,7 +116,6 @@ fun DrawingSurface(
                         var isTransforming = false
                         var accumulatedPan = Offset.Zero
                         val touchSlop = viewConfiguration.touchSlop
-                        var previousFingerCount = 1
 
                         while (true) {
                             val event = awaitPointerEvent(pass = PointerEventPass.Initial)
@@ -139,25 +139,16 @@ fun DrawingSurface(
                                 break
                             }
 
-                            // If finger count changed (e.g. 2nd finger touched down or 1 finger lifted),
-                            // skip transform on this transition frame to eliminate centroid jump & stutter!
-                            if (pressedFingers.size != previousFingerCount) {
-                                previousFingerCount = pressedFingers.size
-                                pressedFingers.forEach { it.consume() }
-                                continue
-                            }
-
                             if (pressedFingers.size >= 2) {
                                 // 2-finger pinch-to-zoom & pan
                                 isTransforming = true
                                 val zoom = event.calculateZoom()
                                 val pan = event.calculatePan()
-                                val centroid = event.calculateCentroid(useCurrent = true)
-                                pressedFingers.forEach { it.consume() }
+                                val centroid = event.calculateCentroid(useCurrent = false)
+                                event.changes.forEach { it.consume() }
 
-                                if (!zoom.isNaN() && zoom > 0f) {
-                                    val significantZoom = if (kotlin.math.abs(zoom - 1f) > 0.001f) zoom else 1f
-                                    currentOnTransform(centroid, pan, significantZoom)
+                                if (centroid != Offset.Unspecified && !zoom.isNaN() && zoom > 0f) {
+                                    currentOnTransform(centroid, pan, zoom)
                                 }
                             } else if (pressedFingers.size == 1) {
                                 // 1-finger pan

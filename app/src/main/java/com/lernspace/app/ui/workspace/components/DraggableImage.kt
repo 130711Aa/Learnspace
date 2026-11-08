@@ -118,6 +118,15 @@ fun DraggableImage(
 
                         while (true) {
                             val event = awaitPointerEvent()
+
+                            // Multi-finger gesture detected: let canvas pinch-to-zoom handle it!
+                            if (event.changes.count { it.pressed } >= 2) {
+                                if (isDragging) {
+                                    currentOnCommitMove(worldX, worldY)
+                                }
+                                break
+                            }
+
                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
                             if (!change.pressed) {
                                 if (!isDragging) {
