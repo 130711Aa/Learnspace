@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -21,7 +22,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.lernspace.app.data.repository.AcademicWorkspaceState
 import com.lernspace.app.ui.theme.*
+import com.lernspace.app.ui.workspace.NoteEditorScreen
+import com.lernspace.app.ui.workspace.model.NoteUiModel
 import java.util.UUID
 
 // Data models for Learning Syllabus UI
@@ -92,166 +96,23 @@ private val SubjectColorPalette = listOf(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LearningScreen() {
-    // Subjects state
-    val subjects = remember {
-        mutableStateListOf(
-            SubjectUi(
-                id = "subj-1",
-                name = "Neurobiology",
-                code = "NEUR-401",
-                description = "Cellular physiology, ion channels, and synaptic plasticity",
-                color = AccentTeal
-            ),
-            SubjectUi(
-                id = "subj-2",
-                name = "Cognitive Psychology",
-                code = "PSYC-320",
-                description = "Attention networks, working memory, and language processing",
-                color = AccentBlue
-            ),
-            SubjectUi(
-                id = "subj-3",
-                name = "Advanced Statistics",
-                code = "STAT-210",
-                description = "Bayesian inference, probability distributions, and MCMC methods",
-                color = Color(0xFF8B5CF6)
-            ),
-            SubjectUi(
-                id = "subj-4",
-                name = "Organic Chemistry II",
-                code = "CHEM-222",
-                description = "Reaction mechanisms, aromatic synthesis, and spectroscopy",
-                color = Color(0xFFF59E0B)
-            )
-        )
-    }
+fun LearningScreen(
+    onNavigateToWorkspace: ((subjectId: String?) -> Unit)? = null
+) {
+    val subjects = AcademicWorkspaceState.subjects
+    val topics = AcademicWorkspaceState.topics
+    val notes = AcademicWorkspaceState.notes
 
     var selectedSubjectId by remember { mutableStateOf(subjects.firstOrNull()?.id ?: "") }
+    var activeNote by remember { mutableStateOf<NoteUiModel?>(null) }
 
-    // Topics state
-    val topics = remember {
-        mutableStateListOf(
-            // Neurobiology topics
-            TopicUi(
-                id = "top-1",
-                subjectId = "subj-1",
-                title = "Resting Membrane Potential & Nernst Equation",
-                description = "Potassium leak channels and Gibbs-Donnan equilibrium",
-                status = TopicStatus.COMFORTABLE,
-                targetDate = "Nov 12"
-            ),
-            TopicUi(
-                id = "top-2",
-                subjectId = "subj-1",
-                title = "Action Potential Propagation & Voltage Gating",
-                description = "Hodgkin-Huxley model, absolute and relative refractory periods",
-                status = TopicStatus.MASTERED,
-                targetDate = "Nov 14"
-            ),
-            TopicUi(
-                id = "top-3",
-                subjectId = "subj-1",
-                title = "Synaptic Transmission & LTP Plasticity",
-                description = "NMDA receptor magnesium block release and CaMKII cascade",
-                status = TopicStatus.NEEDS_REVIEW,
-                targetDate = "Nov 16"
-            ),
-            TopicUi(
-                id = "top-4",
-                subjectId = "subj-1",
-                title = "Hippocampal Circuitry & Spatial Mapping",
-                description = "Trisynaptic circuit (DG -> CA3 -> CA1) and grid cell function",
-                status = TopicStatus.LEARNING,
-                targetDate = "Nov 20"
-            ),
-            TopicUi(
-                id = "top-5",
-                subjectId = "subj-1",
-                title = "Glial Cell Regulation & Myelination",
-                description = "Oligodendrocytes, astrocyte glutamate uptake, and tripartite synapse",
-                status = TopicStatus.NOT_STARTED,
-                targetDate = "Nov 25"
-            ),
-
-            // Cognitive Psychology topics
-            TopicUi(
-                id = "top-6",
-                subjectId = "subj-2",
-                title = "Baddeley's Multicomponent Working Memory",
-                description = "Phonological loop, visuospatial sketchpad, and central executive",
-                status = TopicStatus.COMFORTABLE,
-                targetDate = "Nov 15"
-            ),
-            TopicUi(
-                id = "top-7",
-                subjectId = "subj-2",
-                title = "Feature Integration Theory & Visual Search",
-                description = "Treisman's preattentive feature map vs serial attentive binding",
-                status = TopicStatus.LEARNING,
-                targetDate = "Nov 18"
-            ),
-            TopicUi(
-                id = "top-8",
-                subjectId = "subj-2",
-                title = "Dual Process Theory of Reasoning",
-                description = "System 1 fast heuristic vs System 2 slow deliberate cognition",
-                status = TopicStatus.NOT_STARTED,
-                targetDate = "Nov 22"
-            ),
-
-            // Advanced Statistics topics
-            TopicUi(
-                id = "top-9",
-                subjectId = "subj-3",
-                title = "Bayesian Prior Distributions & Conjugacy",
-                description = "Beta-Binomial, Normal-Normal conjugate priors for posterior estimation",
-                status = TopicStatus.NEEDS_REVIEW,
-                targetDate = "Nov 14"
-            ),
-            TopicUi(
-                id = "top-10",
-                subjectId = "subj-3",
-                title = "Markov Chain Monte Carlo & Metropolis-Hastings",
-                description = "Transition kernel, acceptance probability, and stationary distribution",
-                status = TopicStatus.LEARNING,
-                targetDate = "Nov 19"
-            ),
-            TopicUi(
-                id = "top-11",
-                subjectId = "subj-3",
-                title = "Maximum Likelihood vs MAP Estimators",
-                description = "Log-likelihood maximization, Newton-Raphson, and regularized priors",
-                status = TopicStatus.COMFORTABLE,
-                targetDate = "Nov 23"
-            ),
-
-            // Organic Chemistry topics
-            TopicUi(
-                id = "top-12",
-                subjectId = "subj-4",
-                title = "Electrophilic Aromatic Substitution (EAS)",
-                description = "Arenium ion intermediate, activating vs deactivating ortho/para directors",
-                status = TopicStatus.COMFORTABLE,
-                targetDate = "Nov 13"
-            ),
-            TopicUi(
-                id = "top-13",
-                subjectId = "subj-4",
-                title = "Aldol Condensation & Claisen Reactions",
-                description = "Enolate ion nucleophilic attack on carbonyl carbons",
-                status = TopicStatus.NEEDS_REVIEW,
-                targetDate = "Nov 17"
-            ),
-            TopicUi(
-                id = "top-14",
-                subjectId = "subj-4",
-                title = "1H & 13C NMR Spectroscopy Interpretation",
-                description = "Chemical shift, spin-spin splitting multiplicity, and integration",
-                status = TopicStatus.LEARNING,
-                targetDate = "Nov 21"
-            )
+    // If active note is selected, show fullscreen NoteEditorScreen!
+    if (activeNote != null) {
+        NoteEditorScreen(
+            note = activeNote!!,
+            onBack = { activeNote = null }
         )
+        return
     }
 
     // Dialog & filter states
@@ -315,21 +176,35 @@ fun LearningScreen() {
                     }
                 }
                 Text(
-                    text = "Track understanding, syllabus coverage, and mastery progression across modules",
+                    text = "Structured course curriculum with attached lecture notes and mastery progression",
                     style = MaterialTheme.typography.bodyMedium,
                     color = LernspaceTextSecondary
                 )
             }
 
-            Button(
-                onClick = { showAddSubjectDialog = true },
-                shape = RoundedCornerShape(10.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)
-            ) {
-                Icon(imageVector = Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("New Subject", fontWeight = FontWeight.SemiBold)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (onNavigateToWorkspace != null) {
+                    OutlinedButton(
+                        onClick = { onNavigateToWorkspace(selectedSubjectId) },
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
+                    ) {
+                        Icon(imageVector = Icons.Filled.Description, contentDescription = null, modifier = Modifier.size(17.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Open in Workspace Desk", fontWeight = FontWeight.SemiBold)
+                    }
+                }
+
+                Button(
+                    onClick = { showAddSubjectDialog = true },
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)
+                ) {
+                    Icon(imageVector = Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("New Subject", fontWeight = FontWeight.SemiBold)
+                }
             }
         }
 
@@ -392,6 +267,7 @@ fun LearningScreen() {
                                     if (subjects.size > 1) {
                                         subjects.remove(subject)
                                         topics.removeAll { it.subjectId == subject.id }
+                                        notes.removeAll { it.subjectId == subject.id }
                                         if (selectedSubjectId == subject.id) {
                                             selectedSubjectId = subjects.first().id
                                         }
@@ -431,7 +307,8 @@ fun LearningScreen() {
                             comfortableCount = comfortableCount,
                             needsReviewCount = needsReviewCount,
                             masteryPercent = masteryPercent,
-                            onAddTopic = { showAddTopicDialog = true }
+                            onAddTopic = { showAddTopicDialog = true },
+                            onOpenWorkspace = { onNavigateToWorkspace?.invoke(activeSubject.id) }
                         )
 
                         // 2. Search & Status Filter Row
@@ -495,7 +372,7 @@ fun LearningScreen() {
                             }
                         }
 
-                        // 3. Topics List
+                        // 3. Topics List with attached note cards!
                         if (filteredTopics.isEmpty()) {
                             Box(
                                 modifier = Modifier
@@ -510,7 +387,7 @@ fun LearningScreen() {
                                     verticalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Filled.MenuBook,
+                                        imageVector = Icons.AutoMirrored.Filled.MenuBook,
                                         contentDescription = null,
                                         tint = LernspaceTextSecondary,
                                         modifier = Modifier.size(40.dp)
@@ -543,10 +420,18 @@ fun LearningScreen() {
                             ) {
                                 items(filteredTopics, key = { it.id }) { topic ->
                                     val index = subjectAllTopics.indexOfFirst { it.id == topic.id } + 1
+                                    val topicNotes = AcademicWorkspaceState.getNotesForTopic(topic.id)
+
                                     TopicCardInteractive(
                                         index = index,
                                         topic = topic,
                                         subjectColor = activeSubject.color,
+                                        attachedNote = topicNotes.firstOrNull(),
+                                        onOpenNote = { note -> activeNote = note },
+                                        onCreateNote = {
+                                            val newNote = AcademicWorkspaceState.createNoteForTopic(activeSubject, topic)
+                                            activeNote = newNote
+                                        },
                                         onStatusChange = { newStatus ->
                                             val idx = topics.indexOfFirst { it.id == topic.id }
                                             if (idx != -1) {
@@ -554,7 +439,10 @@ fun LearningScreen() {
                                             }
                                         },
                                         onEdit = { topicToEdit = topic },
-                                        onDelete = { topics.remove(topic) }
+                                        onDelete = {
+                                            topics.remove(topic)
+                                            notes.removeAll { it.topicId == topic.id }
+                                        }
                                     )
                                 }
                             }
@@ -761,7 +649,8 @@ private fun SubjectSummaryBanner(
     comfortableCount: Int,
     needsReviewCount: Int,
     masteryPercent: Int,
-    onAddTopic: () -> Unit
+    onAddTopic: () -> Unit,
+    onOpenWorkspace: () -> Unit
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -808,15 +697,27 @@ private fun SubjectSummaryBanner(
                     }
                 }
 
-                Button(
-                    onClick = onAddTopic,
-                    shape = RoundedCornerShape(8.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = subject.color),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 7.dp)
-                ) {
-                    Icon(Icons.Filled.Add, null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Add Topic", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = onOpenWorkspace,
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Icon(Icons.Filled.Description, null, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Desk Notes", fontSize = 12.sp)
+                    }
+
+                    Button(
+                        onClick = onAddTopic,
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = subject.color),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 7.dp)
+                    ) {
+                        Icon(Icons.Filled.Add, null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Add Topic", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    }
                 }
             }
 
@@ -879,13 +780,16 @@ private fun SubjectSummaryBanner(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// COMPONENT: Interactive Topic Card with Status Switcher
+// COMPONENT: Interactive Topic Card with Attached Note & Status Switcher
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun TopicCardInteractive(
     index: Int,
     topic: TopicUi,
     subjectColor: Color,
+    attachedNote: NoteUiModel?,
+    onOpenNote: (NoteUiModel) -> Unit,
+    onCreateNote: () -> Unit,
     onStatusChange: (TopicStatus) -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit
@@ -900,143 +804,243 @@ private fun TopicCardInteractive(
         color = LernspaceSurfaceCard,
         shadowElevation = 0.5.dp
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .padding(horizontal = 16.dp, vertical = 14.dp)
                 .fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Left: Topic Index, Title & Description
+            // Row 1: Title, Index, Status & Actions
             Row(
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.weight(1f)
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                // Topic Number Badge
-                Surface(
-                    shape = CircleShape,
-                    color = subjectColor.copy(alpha = 0.12f),
-                    modifier = Modifier.size(30.dp)
+                // Left: Topic Index & Title
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.weight(1f)
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
+                    // Topic Number Badge
+                    Surface(
+                        shape = CircleShape,
+                        color = subjectColor.copy(alpha = 0.12f),
+                        modifier = Modifier.size(30.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = "$index",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = subjectColor
+                            )
+                        }
+                    }
+
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "$index",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = subjectColor
+                            text = topic.title,
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = LernspaceDark
                         )
+                        if (topic.description.isNotBlank()) {
+                            Text(
+                                text = topic.description,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = LernspaceTextSecondary,
+                                maxLines = 2
+                            )
+                        }
+                        if (topic.targetDate != null) {
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(Icons.Filled.CalendarToday, null, tint = LernspaceTextSecondary, modifier = Modifier.size(11.dp))
+                                Text(
+                                    text = "Target: ${topic.targetDate}",
+                                    fontSize = 11.sp,
+                                    color = LernspaceTextSecondary
+                                )
+                            }
+                        }
                     }
                 }
 
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = topic.title,
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        color = LernspaceDark
-                    )
-                    if (topic.description.isNotBlank()) {
-                        Text(
-                            text = topic.description,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = LernspaceTextSecondary,
-                            maxLines = 2
+                // Right: Interactive Status Pill & Actions
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Clickable Status Pill (Opens dropdown to update understanding)
+                    Box {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = topic.status.chipBg,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, topic.status.chipFg.copy(alpha = 0.3f)),
+                            modifier = Modifier.clickable { showStatusMenu = true }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                topic.status.icon()
+                                Text(
+                                    text = topic.status.label,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = topic.status.chipFg
+                                )
+                                Icon(
+                                    imageVector = Icons.Filled.ArrowDropDown,
+                                    contentDescription = "Change Status",
+                                    tint = topic.status.chipFg,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        }
+
+                        DropdownMenu(
+                            expanded = showStatusMenu,
+                            onDismissRequest = { showStatusMenu = false }
+                        ) {
+                            TopicStatus.values().forEach { st ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            st.icon()
+                                            Text(st.label, fontWeight = if (st == topic.status) FontWeight.Bold else FontWeight.Normal)
+                                        }
+                                    },
+                                    onClick = {
+                                        onStatusChange(st)
+                                        showStatusMenu = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    // Edit Topic Button
+                    IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
+                        Icon(
+                            imageVector = Icons.Filled.Edit,
+                            contentDescription = "Edit Topic",
+                            tint = LernspaceTextSecondary,
+                            modifier = Modifier.size(16.dp)
                         )
                     }
-                    if (topic.targetDate != null) {
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Icon(Icons.Filled.CalendarToday, null, tint = LernspaceTextSecondary, modifier = Modifier.size(11.dp))
-                            Text(
-                                text = "Target: ${topic.targetDate}",
-                                fontSize = 11.sp,
-                                color = LernspaceTextSecondary
-                            )
-                        }
+
+                    // Delete Topic Button
+                    IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
+                        Icon(
+                            imageVector = Icons.Filled.DeleteOutline,
+                            contentDescription = "Delete Topic",
+                            tint = Color(0xFFEF4444),
+                            modifier = Modifier.size(16.dp)
+                        )
                     }
                 }
             }
 
-            // Right: Interactive Status Pill & Actions
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            // Row 2: Attached Lecture Note Integration Bar
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = LernspaceSurfaceLow,
+                border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder.copy(alpha = 0.8f)),
+                modifier = Modifier.fillMaxWidth()
             ) {
-                // Clickable Status Pill (Opens dropdown to update understanding)
-                Box {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = topic.status.chipBg,
-                        border = androidx.compose.foundation.BorderStroke(1.dp, topic.status.chipFg.copy(alpha = 0.3f)),
-                        modifier = Modifier.clickable { showStatusMenu = true }
+                if (attachedNote != null) {
+                    // Note already exists for this topic
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.weight(1f)
                         ) {
-                            topic.status.icon()
-                            Text(
-                                text = topic.status.label,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = topic.status.chipFg
-                            )
                             Icon(
-                                imageVector = Icons.Filled.ArrowDropDown,
-                                contentDescription = "Change Status",
-                                tint = topic.status.chipFg,
-                                modifier = Modifier.size(14.dp)
+                                imageVector = Icons.Filled.Description,
+                                contentDescription = null,
+                                tint = subjectColor,
+                                modifier = Modifier.size(16.dp)
                             )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = attachedNote.title,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = LernspaceDark,
+                                    maxLines = 1
+                                )
+                                Text(
+                                    text = attachedNote.snippet,
+                                    fontSize = 11.sp,
+                                    color = LernspaceTextSecondary,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+
+                        Button(
+                            onClick = { onOpenNote(attachedNote) },
+                            shape = RoundedCornerShape(6.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = subjectColor),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Icon(Icons.Filled.Create, null, modifier = Modifier.size(13.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Open Note", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         }
                     }
-
-                    DropdownMenu(
-                        expanded = showStatusMenu,
-                        onDismissRequest = { showStatusMenu = false }
+                } else {
+                    // No note created yet for this topic
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        TopicStatus.values().forEach { st ->
-                            DropdownMenuItem(
-                                text = {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        st.icon()
-                                        Text(st.label, fontWeight = if (st == topic.status) FontWeight.Bold else FontWeight.Normal)
-                                    }
-                                },
-                                onClick = {
-                                    onStatusChange(st)
-                                    showStatusMenu = false
-                                }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.NoteAdd,
+                                contentDescription = null,
+                                tint = LernspaceTextSecondary,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Text(
+                                text = "No lecture notes created for this chapter yet",
+                                fontSize = 12.sp,
+                                color = LernspaceTextSecondary
                             )
                         }
+
+                        OutlinedButton(
+                            onClick = onCreateNote,
+                            shape = RoundedCornerShape(6.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp)
+                        ) {
+                            Icon(Icons.Filled.Add, null, modifier = Modifier.size(13.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Write Note", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        }
                     }
-                }
-
-                // Edit Topic Button
-                IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
-                    Icon(
-                        imageVector = Icons.Filled.Edit,
-                        contentDescription = "Edit Topic",
-                        tint = LernspaceTextSecondary,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-
-                // Delete Topic Button
-                IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
-                    Icon(
-                        imageVector = Icons.Filled.DeleteOutline,
-                        contentDescription = "Delete Topic",
-                        tint = Color(0xFFEF4444),
-                        modifier = Modifier.size(16.dp)
-                    )
                 }
             }
         }

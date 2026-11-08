@@ -40,10 +40,22 @@ fun LernspaceNavHost(
             PlannerScreen()
         }
         composable(Screen.Learning.route) {
-            LearningScreen()
+            LearningScreen(
+                onNavigateToWorkspace = { subjectId ->
+                    navController.navigate(Screen.Workspace.route) {
+                        launchSingleTop = true
+                    }
+                }
+            )
         }
         composable(Screen.Workspace.route) {
-            WorkspaceScreen()
+            WorkspaceScreen(
+                onNavigateToSyllabus = { subjectId ->
+                    navController.navigate(Screen.Learning.route) {
+                        launchSingleTop = true
+                    }
+                }
+            )
         }
         composable(Screen.Insights.route) {
             InsightsScreen()

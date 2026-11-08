@@ -44,5 +44,9 @@ data class NoteUiModel(
     var title: String,
     val subject: String,
     val date: String,
-    val snippet: String
+    val snippet: String,
+    val subjectId: String? = null,
+    val topicId: String? = null,
+    val topicName: String? = null,
+    val isScratchpad: Boolean = false
 )
