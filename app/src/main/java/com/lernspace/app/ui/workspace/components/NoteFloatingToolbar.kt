@@ -35,8 +35,6 @@ fun NoteFloatingToolbar(
     onSelectTool: (NoteTool) -> Unit,
     selectedShapeType: GeometricShapeType = GeometricShapeType.RECTANGLE,
     onSelectShapeType: (GeometricShapeType) -> Unit = {},
-    isAutoRefineEnabled: Boolean = false,
-    onToggleAutoRefine: () -> Unit = {},
     selectedColor: Color,
     onSelectColor: (Color) -> Unit,
     selectedThickness: Float,
@@ -108,25 +106,6 @@ fun NoteFloatingToolbar(
                     isSelected = activeTool == NoteTool.SHAPE,
                     onClick = { onSelectTool(NoteTool.SHAPE) }
                 )
-
-                // Auto-Refine Shape Toggle (Magic Wand - Smart Auto-Snap)
-                Surface(
-                    shape = CircleShape,
-                    color = if (isAutoRefineEnabled) Color(0xFFFEF3C7) else Color.Transparent,
-                    border = if (isAutoRefineEnabled) BorderStroke(1.dp, Color(0xFFFDE68A)) else null,
-                    modifier = Modifier
-                        .size(34.dp)
-                        .clickable(onClick = onToggleAutoRefine)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Filled.AutoFixHigh,
-                            contentDescription = "Bentuk Rapi Otomatis",
-                            tint = if (isAutoRefineEnabled) Color(0xFFD97706) else Color(0xFF64748B),
-                            modifier = Modifier.size(17.dp)
-                        )
-                    }
-                }
 
                 // Lasso Tool (Seleksi & Pindahkan)
                 ToolIconButton(

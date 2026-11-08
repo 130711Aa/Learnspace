@@ -72,33 +72,59 @@ object ShapeRecognizer {
         return list
     }
 
-    /**
-     * Gets the axis-aligned bounding box of a Stroke.
-     */
-    fun getBoundingBox(stroke: Stroke): Rect {
-        val inputs = stroke.inputs
-        if (inputs.size == 0) return Rect.Zero
-        val temp = StrokeInput()
-        var minX = Float.MAX_VALUE
-        var maxX = -Float.MAX_VALUE
-        var minY = Float.MAX_VALUE
-        var maxY = -Float.MAX_VALUE
+    // ─────────────────────────────────────────────────────────────────────────
+    // GEOMETRIC ALGORITHMS: Douglas-Peucker & Shoelace Area
+    // ─────────────────────────────────────────────────────────────────────────
 
-        for (i in 0 until inputs.size) {
-            inputs.populate(i, temp)
-            if (temp.x < minX) minX = temp.x
-            if (temp.x > maxX) maxX = temp.x
-            if (temp.y < minY) minY = temp.y
-            if (temp.y > maxY) maxY = temp.y
+    private fun perpendicularDistance(pt: Offset, lineStart: Offset, lineEnd: Offset): Float {
+        val dx = lineEnd.x - lineStart.x
+        val dy = lineEnd.y - lineStart.y
+        val lineLengthSq = dx * dx + dy * dy
+        if (lineLengthSq == 0f) return (pt - lineStart).getDistance()
+        val num = abs(dy * pt.x - dx * pt.y + lineEnd.x * lineStart.y - lineEnd.y * lineStart.x)
+        return num / sqrt(lineLengthSq)
+    }
+
+    fun douglasPeucker(points: List<Offset>, epsilon: Float): List<Offset> {
+        if (points.size < 3) return points
+
+        var maxDist = 0f
+        var maxIndex = 0
+        val start = points.first()
+        val end = points.last()
+
+        for (i in 1 until points.size - 1) {
+            val dist = perpendicularDistance(points[i], start, end)
+            if (dist > maxDist) {
+                maxDist = dist
+                maxIndex = i
+            }
         }
-        return Rect(minX, minY, maxX, maxY)
+
+        return if (maxDist > epsilon) {
+            val left = douglasPeucker(points.subList(0, maxIndex + 1), epsilon)
+            val right = douglasPeucker(points.subList(maxIndex, points.size), epsilon)
+            left.dropLast(1) + right
+        } else {
+            listOf(start, end)
+        }
+    }
+
+    fun computePolygonArea(points: List<Offset>): Float {
+        if (points.size < 3) return 0f
+        var sum = 0f
+        for (i in points.indices) {
+            val j = (i + 1) % points.size
+            sum += points[i].x * points[j].y - points[j].x * points[i].y
+        }
+        return abs(sum) / 2f
     }
 
     // ─────────────────────────────────────────────────────────────────────────
     // SHAPE SAMPLING UTILITIES
     // ─────────────────────────────────────────────────────────────────────────
 
-    fun sampleLine(p1: Offset, p2: Offset, numPoints: Int = 12): List<Offset> {
+    fun sampleLine(p1: Offset, p2: Offset, numPoints: Int = 14): List<Offset> {
         val points = mutableListOf<Offset>()
         for (i in 0 until numPoints) {
             val t = i.toFloat() / (numPoints - 1)
@@ -107,34 +133,29 @@ object ShapeRecognizer {
         return points
     }
 
-    fun sampleRectangle(minX: Float, minY: Float, maxX: Float, maxY: Float, pointsPerEdge: Int = 8): List<Offset> {
+    fun sampleRectangle(minX: Float, minY: Float, maxX: Float, maxY: Float, pointsPerEdge: Int = 10): List<Offset> {
         val points = mutableListOf<Offset>()
-        // Top edge: (minX, minY) -> (maxX, minY)
         for (i in 0 until pointsPerEdge) {
             val t = i.toFloat() / pointsPerEdge
             points.add(Offset(minX + (maxX - minX) * t, minY))
         }
-        // Right edge: (maxX, minY) -> (maxX, maxY)
         for (i in 0 until pointsPerEdge) {
             val t = i.toFloat() / pointsPerEdge
             points.add(Offset(maxX, minY + (maxY - minY) * t))
         }
-        // Bottom edge: (maxX, maxY) -> (minX, maxY)
         for (i in 0 until pointsPerEdge) {
             val t = i.toFloat() / pointsPerEdge
             points.add(Offset(maxX - (maxX - minX) * t, maxY))
         }
-        // Left edge: (minX, maxY) -> (minX, minY)
         for (i in 0 until pointsPerEdge) {
             val t = i.toFloat() / pointsPerEdge
             points.add(Offset(minX, maxY - (maxY - minY) * t))
         }
-        // Close polygon
         points.add(Offset(minX, minY))
         return points
     }
 
-    fun sampleCircle(cx: Float, cy: Float, rx: Float, ry: Float, numPoints: Int = 40): List<Offset> {
+    fun sampleCircle(cx: Float, cy: Float, rx: Float, ry: Float, numPoints: Int = 48): List<Offset> {
         val points = mutableListOf<Offset>()
         for (i in 0..numPoints) {
             val angle = (i.toFloat() / numPoints) * 2f * Math.PI.toFloat()
@@ -143,34 +164,28 @@ object ShapeRecognizer {
         return points
     }
 
-    fun sampleTriangle(p1: Offset, p2: Offset, p3: Offset, pointsPerEdge: Int = 10): List<Offset> {
+    fun sampleTriangle(p1: Offset, p2: Offset, p3: Offset, pointsPerEdge: Int = 12): List<Offset> {
         val points = mutableListOf<Offset>()
-        // Side 1: p1 -> p2
         for (i in 0 until pointsPerEdge) {
             val t = i.toFloat() / pointsPerEdge
             points.add(Offset(p1.x + (p2.x - p1.x) * t, p1.y + (p2.y - p1.y) * t))
         }
-        // Side 2: p2 -> p3
         for (i in 0 until pointsPerEdge) {
             val t = i.toFloat() / pointsPerEdge
             points.add(Offset(p2.x + (p3.x - p2.x) * t, p2.y + (p3.y - p2.y) * t))
         }
-        // Side 3: p3 -> p1
         for (i in 0 until pointsPerEdge) {
             val t = i.toFloat() / pointsPerEdge
             points.add(Offset(p3.x + (p1.x - p3.x) * t, p3.y + (p1.y - p3.y) * t))
         }
-        // Close polygon
         points.add(p1)
         return points
     }
 
     fun sampleArrow(start: Offset, end: Offset): List<Offset> {
         val points = mutableListOf<Offset>()
-        // Main stem
-        points.addAll(sampleLine(start, end, 10))
+        points.addAll(sampleLine(start, end, 12))
 
-        // Arrowhead
         val dx = end.x - start.x
         val dy = end.y - start.y
         val angle = atan2(dy, dx)
@@ -186,15 +201,10 @@ object ShapeRecognizer {
             end.y - headLength * sin(angle + headAngle)
         )
 
-        // Draw left barb then right barb
-        points.addAll(sampleLine(end, leftArm, 4))
-        points.addAll(sampleLine(end, rightArm, 4))
+        points.addAll(sampleLine(end, leftArm, 5))
+        points.addAll(sampleLine(end, rightArm, 5))
         return points
     }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // EXPLICIT SHAPE CREATION (FOR SHAPE TOOL)
-    // ─────────────────────────────────────────────────────────────────────────
 
     fun generateGeometricShape(
         type: GeometricShapeType,
@@ -229,15 +239,15 @@ object ShapeRecognizer {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // AUTO-REFINE / SHAPE RECOGNITION (SMART AUTO-SNAP)
+    // ACCURATE SHAPE RECOGNITION (HOLD-TO-REFINE)
     // ─────────────────────────────────────────────────────────────────────────
 
     fun refineStroke(stroke: Stroke): Stroke? {
-        val points = extractPoints(stroke)
-        if (points.size < 6) return null
+        val rawPoints = extractPoints(stroke)
+        if (rawPoints.size < 6) return null
 
-        val start = points.first()
-        val end = points.last()
+        val start = rawPoints.first()
+        val end = rawPoints.last()
 
         var minX = Float.MAX_VALUE
         var maxX = -Float.MAX_VALUE
@@ -245,14 +255,14 @@ object ShapeRecognizer {
         var maxY = -Float.MAX_VALUE
 
         var totalPathLength = 0f
-        for (i in 0 until points.size) {
-            val p = points[i]
+        for (i in 0 until rawPoints.size) {
+            val p = rawPoints[i]
             if (p.x < minX) minX = p.x
             if (p.x > maxX) maxX = p.x
             if (p.y < minY) minY = p.y
             if (p.y > maxY) maxY = p.y
             if (i > 0) {
-                totalPathLength += (p - points[i - 1]).getDistance()
+                totalPathLength += (p - rawPoints[i - 1]).getDistance()
             }
         }
 
@@ -263,64 +273,121 @@ object ShapeRecognizer {
 
         val startEndDist = (end - start).getDistance()
 
-        // ── 1. Straight Line Recognition ──
+        // ── 1. STRAIGHT LINE RECOGNITION ──
+        // If start-to-end distance is a large portion of the total path length, it's open & straight!
         val straightness = startEndDist / totalPathLength
-        if (straightness > 0.84f && startEndDist > 45f) {
+        if (straightness > 0.80f && startEndDist > 45f && (startEndDist / diagonal > 0.60f)) {
             var snappedEnd = end
-            // Snap to horizontal line if slope is very small
-            if (abs(end.y - start.y) < 0.09f * startEndDist) {
+            // Snap to horizontal if angle is within ~8 degrees
+            if (abs(end.y - start.y) < 0.12f * startEndDist) {
                 snappedEnd = Offset(end.x, start.y)
             }
-            // Snap to vertical line if slope is very small
-            else if (abs(end.x - start.x) < 0.09f * startEndDist) {
+            // Snap to vertical if angle is within ~8 degrees
+            else if (abs(end.x - start.x) < 0.12f * startEndDist) {
                 snappedEnd = Offset(start.x, end.y)
+            }
+            // Snap to 45 degree diagonal
+            else if (abs(abs(end.x - start.x) - abs(end.y - start.y)) < 0.14f * startEndDist) {
+                val signX = if (end.x >= start.x) 1f else -1f
+                val signY = if (end.y >= start.y) 1f else -1f
+                val avgLen = (abs(end.x - start.x) + abs(end.y - start.y)) / 2f
+                snappedEnd = Offset(start.x + signX * avgLen, start.y + signY * avgLen)
             }
             return createStrokeFromPoints(sampleLine(start, snappedEnd), stroke.brush)
         }
 
-        // ── 2. Closed Shapes (Circle / Oval, Rectangle, Triangle) ──
-        val isClosed = startEndDist / diagonal < 0.38f || startEndDist < 60f
+        // ── 2. CLOSED GEOMETRIC SHAPES (Triangle, Rectangle, Circle/Oval) ──
+        val isClosed = (startEndDist / diagonal < 0.50f) || (startEndDist < 80f)
         if (isClosed) {
             val cx = (minX + maxX) / 2f
             val cy = (minY + maxY) / 2f
+            val boxArea = maxOf(1f, width * height)
+            val polyArea = computePolygonArea(rawPoints)
+            val areaRatio = polyArea / boxArea // Triangle: <= 0.60 | Circle: ~0.785 | Box: >= 0.78
+
+            // Simplify using Douglas-Peucker to identify distinct corner vertices
+            val simplified = douglasPeucker(rawPoints, epsilon = diagonal * 0.08f)
+            val cornerCount = maxOf(3, simplified.size - 1)
+
+            // Measure circular variance
             val rx = width / 2f
             val ry = height / 2f
-
-            // A. Test Circle / Oval fit
             var sumNormalizedDistDiff = 0f
-            for (p in points) {
+            for (p in rawPoints) {
                 val dxNorm = (p.x - cx) / maxOf(1f, rx)
                 val dyNorm = (p.y - cy) / maxOf(1f, ry)
                 val distNorm = sqrt(dxNorm * dxNorm + dyNorm * dyNorm)
                 sumNormalizedDistDiff += abs(distNorm - 1f)
             }
-            val avgCircleDeviation = sumNormalizedDistDiff / points.size
+            val avgCircleDeviation = sumNormalizedDistDiff / rawPoints.size
 
-            if (avgCircleDeviation < 0.17f && rx > 15f && ry > 15f) {
-                // If aspect ratio is close to 1:1, snap to perfect circle
+            // ── CHECK A: CIRCLE / OVAL ──
+            // Circle has smooth curve, low variance from ellipse formula (avgCircleDeviation < 0.18),
+            // and areaRatio around pi/4 (~0.785)
+            if (avgCircleDeviation < 0.18f && areaRatio in 0.60f..0.92f) {
                 val isNearSquare = abs(width - height) / maxOf(width, height) < 0.22f
                 val finalRx = if (isNearSquare) (rx + ry) / 2f else rx
                 val finalRy = if (isNearSquare) (rx + ry) / 2f else ry
                 return createStrokeFromPoints(sampleCircle(cx, cy, finalRx, finalRy), stroke.brush)
             }
 
-            // B. Test Rectangle / Box fit
-            // Check corner count and points proximity to bounding box perimeter
-            var pointsNearEdge = 0
-            val edgeTolerance = minOf(24f, diagonal * 0.10f)
-            for (p in points) {
-                val dLeft = abs(p.x - minX)
-                val dRight = abs(p.x - maxX)
-                val dTop = abs(p.y - minY)
-                val dBottom = abs(p.y - maxY)
-                val minDistToEdge = minOf(dLeft, dRight, dTop, dBottom)
-                if (minDistToEdge <= edgeTolerance) {
-                    pointsNearEdge++
+            // ── CHECK B: TRIANGLE ──
+            // Key invariant: Triangle area can NEVER exceed 0.50-0.62 of its bounding box!
+            // Rectangle has areaRatio > 0.70, so areaRatio <= 0.65 is mathematically a Triangle!
+            if (areaRatio <= 0.65f) {
+                // Find 3 vertices that maximize the inscribed triangle area
+                val candidates = if (simplified.size >= 3) {
+                    simplified
+                } else {
+                    rawPoints.filterIndexed { idx, _ -> idx % maxOf(1, rawPoints.size / 16) == 0 }
                 }
+
+                var bestArea = -1f
+                var bestCorners: List<Offset>? = null
+
+                for (i in 0 until candidates.size) {
+                    for (j in i + 1 until candidates.size) {
+                        for (k in j + 1 until candidates.size) {
+                            val pA = candidates[i]
+                            val pB = candidates[j]
+                            val pC = candidates[k]
+                            val triArea = abs((pB.x - pA.x) * (pC.y - pA.y) - (pC.x - pA.x) * (pB.y - pA.y)) / 2f
+                            if (triArea > bestArea) {
+                                bestArea = triArea
+                                bestCorners = listOf(pA, pB, pC)
+                            }
+                        }
+                    }
+                }
+
+                val pts = (bestCorners ?: listOf(
+                    Offset(cx, minY),
+                    Offset(maxX, maxY),
+                    Offset(minX, maxY)
+                )).toMutableList()
+
+                // Straighten nearly horizontal base or vertical edges
+                for (i in 0..2) {
+                    val j = (i + 1) % 3
+                    if (abs(pts[i].y - pts[j].y) < maxOf(8f, height * 0.08f)) {
+                        val avgY = (pts[i].y + pts[j].y) / 2f
+                        pts[i] = Offset(pts[i].x, avgY)
+                        pts[j] = Offset(pts[j].x, avgY)
+                    }
+                    if (abs(pts[i].x - pts[j].x) < maxOf(8f, width * 0.08f)) {
+                        val avgX = (pts[i].x + pts[j].x) / 2f
+                        pts[i] = Offset(avgX, pts[i].y)
+                        pts[j] = Offset(avgX, pts[j].y)
+                    }
+                }
+
+                return createStrokeFromPoints(sampleTriangle(pts[0], pts[1], pts[2]), stroke.brush)
             }
-            val edgeRatio = pointsNearEdge.toFloat() / points.size
-            if (edgeRatio > 0.68f && width > 25f && height > 25f) {
-                val isSquare = abs(width - height) / maxOf(width, height) < 0.15f
+
+            // ── CHECK C: RECTANGLE / SQUARE ──
+            // Rectangle fills almost the entire bounding box (areaRatio >= 0.68)
+            if (areaRatio >= 0.68f) {
+                val isSquare = abs(width - height) / maxOf(width, height) < 0.18f
                 val finalW = if (isSquare) maxOf(width, height) else width
                 val finalH = if (isSquare) maxOf(width, height) else height
                 val fMinX = if (isSquare) cx - finalW / 2f else minX
@@ -329,28 +396,8 @@ object ShapeRecognizer {
                 val fMaxY = if (isSquare) cy + finalH / 2f else maxY
                 return createStrokeFromPoints(sampleRectangle(fMinX, fMinY, fMaxX, fMaxY), stroke.brush)
             }
-
-            // C. Test Triangle
-            // Find apex (point closest to top center or furthest from opposite baseline)
-            val topApex = Offset((minX + maxX) / 2f, minY)
-            val botRight = Offset(maxX, maxY)
-            val botLeft = Offset(minX, maxY)
-            // If the user drew a roughly triangular form
-            if (width > 30f && height > 30f && avgCircleDeviation > 0.20f) {
-                // Check if top portion has much smaller horizontal spread than bottom
-                val topPoints = points.filter { it.y < minY + height * 0.3f }
-                val botPoints = points.filter { it.y > minY + height * 0.7f }
-                if (topPoints.isNotEmpty() && botPoints.isNotEmpty()) {
-                    val topWidth = (topPoints.maxOf { it.x } - topPoints.minOf { it.x })
-                    val botWidth = (botPoints.maxOf { it.x } - botPoints.minOf { it.x })
-                    if (topWidth < botWidth * 0.45f) {
-                        return createStrokeFromPoints(sampleTriangle(topApex, botRight, botLeft), stroke.brush)
-                    }
-                }
-            }
         }
 
         return null
     }
 }
-

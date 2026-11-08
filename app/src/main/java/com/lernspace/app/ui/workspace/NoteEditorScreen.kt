@@ -9,6 +9,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.*
@@ -81,6 +82,7 @@ fun NoteEditorScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val view = androidx.compose.ui.platform.LocalView.current
     val coroutineScope = rememberCoroutineScope()
 
     // Note Meta
@@ -101,7 +103,29 @@ fun NoteEditorScreen(
     var selectedColor by remember { mutableStateOf(Color(0xFF16A34A)) } // Green default
     var selectedThickness by remember { mutableFloatStateOf(7f) }
     var selectedShapeType by remember { mutableStateOf(GeometricShapeType.RECTANGLE) }
-    var isAutoRefineEnabled by remember { mutableStateOf(false) }
+    // Helper: Detect if stroke points were held stationary at the end (hold-to-refine)
+    fun isStrokeHoldAtEnd(stroke: Stroke, currentScale: Float): Boolean {
+        val inputs = stroke.inputs
+        val count = inputs.size
+        if (count < 8) return false
+        val temp = androidx.ink.strokes.StrokeInput()
+        inputs.populate(count - 1, temp)
+        val endX = temp.x
+        val endY = temp.y
+        val endT = temp.elapsedTimeMillis
+
+        val maxJiggleDistance = maxOf(18f, 32f / currentScale)
+        var stationaryStartTime = endT
+        for (i in count - 2 downTo 0) {
+            inputs.populate(i, temp)
+            val d = kotlin.math.hypot(temp.x - endX, temp.y - endY)
+            if (d > maxJiggleDistance) {
+                stationaryStartTime = temp.elapsedTimeMillis
+                break
+            }
+        }
+        return (endT - stationaryStartTime) >= 260L
+    }
 
     // Live preview coordinates for Shape Tool
     var shapeDrawStart by remember { mutableStateOf<Offset?>(null) }
@@ -382,14 +406,22 @@ fun NoteEditorScreen(
                 currentBrush = currentBrush,
                 onGetNextBrush = { currentBrush },
                 onStrokesFinished = { newStrokes ->
-                    if (isAutoRefineEnabled) {
-                        val refined = newStrokes.map { stroke ->
-                            ShapeRecognizer.refineStroke(stroke) ?: stroke
+                    val processedStrokes = newStrokes.map { stroke ->
+                        if (isStrokeHoldAtEnd(stroke, scale)) {
+                            val refined = ShapeRecognizer.refineStroke(stroke)
+                            if (refined != null) {
+                                try {
+                                    view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                                } catch (e: Exception) {}
+                                refined
+                            } else {
+                                stroke
+                            }
+                        } else {
+                            stroke
                         }
-                        strokes.addAll(refined)
-                    } else {
-                        strokes.addAll(newStrokes)
                     }
+                    strokes.addAll(processedStrokes)
                     undoneStrokes.clear()
                 },
                 isEraserMode = activeTool == NoteTool.ERASER,
@@ -543,7 +575,7 @@ fun NoteEditorScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .pointerInput(strokes.size, textBoxes.size, imageElements.size, lassoSelection) {
+                        .pointerInput(activeTool, lassoSelection == null) {
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false)
                                 val screenPoint = down.position
@@ -558,36 +590,42 @@ fun NoteEditorScreen(
                                         curSel.bounds.bottom * scale + panY
                                     )
                                     if (screenBounds.contains(screenPoint)) {
+                                        val strokeIndices = curSel.selectedStrokes.map { strokes.indexOf(it) }
+
                                         // Drag inside selection bounding box to MOVE selected items!
                                         drag(down.id) { change ->
+                                            val delta = change.positionChange()
                                             change.consume()
-                                            val dx = change.positionChange().x / scale
-                                            val dy = change.positionChange().y / scale
+                                            val dx = delta.x / scale
+                                            val dy = delta.y / scale
 
-                                            // 1. Move selected strokes
-                                            for (i in curSel.selectedStrokes.indices) {
-                                                val oldStroke = curSel.selectedStrokes[i]
-                                                val newStroke = ShapeRecognizer.translateStroke(oldStroke, dx, dy)
-                                                val idxInMain = strokes.indexOf(oldStroke)
-                                                if (idxInMain != -1) {
-                                                    strokes[idxInMain] = newStroke
+                                            if (dx != 0f || dy != 0f) {
+                                                // 1. Move selected strokes
+                                                for (i in curSel.selectedStrokes.indices) {
+                                                    val oldStroke = curSel.selectedStrokes[i]
+                                                    val newStroke = ShapeRecognizer.translateStroke(oldStroke, dx, dy)
+                                                    val idxInMain = strokeIndices[i]
+                                                    if (idxInMain != -1 && idxInMain < strokes.size) {
+                                                        strokes[idxInMain] = newStroke
+                                                    }
+                                                    curSel.selectedStrokes[i] = newStroke
                                                 }
-                                                curSel.selectedStrokes[i] = newStroke
-                                            }
 
-                                            // 2. Move selected text boxes
-                                            for (box in curSel.selectedTextBoxes) {
-                                                box.x += dx
-                                                box.y += dy
-                                            }
+                                                // 2. Move selected text boxes
+                                                for (box in curSel.selectedTextBoxes) {
+                                                    box.x += dx
+                                                    box.y += dy
+                                                }
 
-                                            // 3. Move selected images
-                                            for (img in curSel.selectedImages) {
-                                                img.x += dx
-                                                img.y += dy
-                                            }
+                                                // 3. Move selected images
+                                                for (img in curSel.selectedImages) {
+                                                    img.x += dx
+                                                    img.y += dy
+                                                }
 
-                                            curSel.bounds = curSel.bounds.translate(Offset(dx, dy))
+                                                curSel.bounds = curSel.bounds.translate(Offset(dx, dy))
+                                                lassoSelection = curSel.copy(bounds = curSel.bounds)
+                                            }
                                         }
                                         return@awaitEachGesture
                                     } else {
@@ -704,10 +742,41 @@ fun NoteEditorScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                // Drag Move hint
+                                // Drag Move pill (both draggable and indicates drag area)
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                    modifier = Modifier
+                                        .pointerInput(lassoSelection == null) {
+                                            detectDragGestures { change, dragAmount ->
+                                                change.consume()
+                                                val sel = lassoSelection ?: return@detectDragGestures
+                                                val dx = dragAmount.x / scale
+                                                val dy = dragAmount.y / scale
+                                                if (dx != 0f || dy != 0f) {
+                                                    for (i in sel.selectedStrokes.indices) {
+                                                        val oldStroke = sel.selectedStrokes[i]
+                                                        val newStroke = ShapeRecognizer.translateStroke(oldStroke, dx, dy)
+                                                        val idxInMain = strokes.indexOf(oldStroke)
+                                                        if (idxInMain != -1) {
+                                                            strokes[idxInMain] = newStroke
+                                                        }
+                                                        sel.selectedStrokes[i] = newStroke
+                                                    }
+                                                    for (box in sel.selectedTextBoxes) {
+                                                        box.x += dx
+                                                        box.y += dy
+                                                    }
+                                                    for (img in sel.selectedImages) {
+                                                        img.x += dx
+                                                        img.y += dy
+                                                    }
+                                                    val newBounds = sel.bounds.translate(Offset(dx, dy))
+                                                    lassoSelection = sel.copy(bounds = newBounds)
+                                                }
+                                            }
+                                        }
+                                        .padding(horizontal = 4.dp, vertical = 2.dp)
                                 ) {
                                     Icon(
                                         imageVector = Icons.Filled.OpenWith,
@@ -738,6 +807,7 @@ fun NoteEditorScreen(
                                         curSel.selectedStrokes.clear()
                                         curSel.selectedStrokes.addAll(newDuplicates)
                                         curSel.bounds = curSel.bounds.translate(Offset(offsetDelta, offsetDelta))
+                                        lassoSelection = curSel.copy(bounds = curSel.bounds)
                                         undoneStrokes.clear()
                                     }
                                 ) {
@@ -913,8 +983,6 @@ fun NoteEditorScreen(
             },
             selectedShapeType = selectedShapeType,
             onSelectShapeType = { selectedShapeType = it },
-            isAutoRefineEnabled = isAutoRefineEnabled,
-            onToggleAutoRefine = { isAutoRefineEnabled = !isAutoRefineEnabled },
             selectedColor = selectedColor,
             onSelectColor = {
                 selectedColor = it
@@ -1046,8 +1114,6 @@ private fun UnifiedNoteTopBar(
     onSelectTool: (NoteTool) -> Unit,
     selectedShapeType: GeometricShapeType = GeometricShapeType.RECTANGLE,
     onSelectShapeType: (GeometricShapeType) -> Unit = {},
-    isAutoRefineEnabled: Boolean = false,
-    onToggleAutoRefine: () -> Unit = {},
     selectedColor: Color,
     onSelectColor: (Color) -> Unit,
     selectedThickness: Float,
@@ -1138,8 +1204,6 @@ private fun UnifiedNoteTopBar(
             onSelectTool = onSelectTool,
             selectedShapeType = selectedShapeType,
             onSelectShapeType = onSelectShapeType,
-            isAutoRefineEnabled = isAutoRefineEnabled,
-            onToggleAutoRefine = onToggleAutoRefine,
             selectedColor = selectedColor,
             onSelectColor = onSelectColor,
             selectedThickness = selectedThickness,
