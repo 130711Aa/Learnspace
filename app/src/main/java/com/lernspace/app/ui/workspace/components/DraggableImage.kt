@@ -6,14 +6,13 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.OpenWith
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
@@ -59,7 +58,16 @@ fun DraggableImage(
         worldHeight = image.height
     }
 
+    val currentScale by rememberUpdatedState(scale)
+    val currentOnCommitMove by rememberUpdatedState(onCommitMove)
+    val currentOnCommitResize by rememberUpdatedState(onCommitResize)
+    val currentOnSelect by rememberUpdatedState(onSelect)
+    val currentOnDelete by rememberUpdatedState(onDelete)
+
     val selectionColor = Color(0xFF2563EB)
+    val aspectRatio = remember(image.bitmap) {
+        (image.bitmap.width.toFloat() / image.bitmap.height.toFloat()).coerceIn(0.2f, 5f)
+    }
 
     Box(
         modifier = modifier
@@ -71,99 +79,137 @@ fun DraggableImage(
             .width((worldWidth * scale).dp)
             .height((worldHeight * scale).dp)
     ) {
+        // Image Body with clean crisp scaling
         Surface(
             modifier = Modifier
                 .fillMaxSize()
                 .then(
                     if (image.isSelected) {
                         Modifier
-                            .shadow(4.dp, RoundedCornerShape(8.dp))
-                            .border(2.dp, selectionColor, RoundedCornerShape(8.dp))
+                            .shadow(6.dp, RoundedCornerShape(10.dp))
+                            .border(2.5.dp, selectionColor, RoundedCornerShape(10.dp))
                     } else {
                         Modifier.shadow(2.dp, RoundedCornerShape(8.dp))
                     }
                 ),
-            shape = RoundedCornerShape(8.dp),
+            shape = RoundedCornerShape(if (image.isSelected) 10.dp else 8.dp),
             color = Color.White
         ) {
             Image(
                 bitmap = image.bitmap,
-                contentDescription = "Note illustration",
+                contentDescription = "Imported Note Image",
                 modifier = Modifier
                     .fillMaxSize()
                     .clip(RoundedCornerShape(8.dp)),
-                contentScale = ContentScale.Crop
+                contentScale = ContentScale.Fit
             )
         }
 
-        // Tap or Drag to Move directly:
+        // Tap to Select & Direct Smooth Dragging (120 FPS, never cancelled mid-drag)
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(image.id, scale) {
+                .pointerInput(image.id) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
-                        var moved = false
-                        var overSlop = Offset.Zero
-                        val dragChange = awaitTouchSlopOrCancellation(down.id) { change, over ->
-                            change.consume()
-                            overSlop = over
-                            moved = true
-                        }
-                        if (dragChange != null && moved) {
-                            onSelect()
-                            worldX += overSlop.x / scale
-                            worldY += overSlop.y / scale
-                            drag(dragChange.id) { change ->
-                                change.consume()
-                                worldX += change.positionChange().x / scale
-                                worldY += change.positionChange().y / scale
+                        var isDragging = false
+                        var accumulated = Offset.Zero
+                        val touchSlop = viewConfiguration.touchSlop
+
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!change.pressed) {
+                                if (!isDragging) {
+                                    currentOnSelect()
+                                } else {
+                                    currentOnCommitMove(worldX, worldY)
+                                }
+                                break
                             }
-                            onCommitMove(worldX, worldY)
-                        } else {
-                            onSelect()
+                            val delta = change.positionChange()
+                            if (!isDragging) {
+                                accumulated += delta
+                                if (accumulated.getDistance() > touchSlop) {
+                                    isDragging = true
+                                    currentOnSelect()
+                                    change.consume()
+                                    worldX += accumulated.x / currentScale
+                                    worldY += accumulated.y / currentScale
+                                }
+                            } else {
+                                change.consume()
+                                worldX += delta.x / currentScale
+                                worldY += delta.y / currentScale
+                            }
                         }
                     }
                 }
         )
 
+        // Overlay Controls when Image is Selected
         if (image.isSelected) {
-            // Delete Button (Integrated top-right corner inside image)
+            // Delete Button (Top-Right Circular Action)
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(6.dp)
-                    .size(26.dp)
-                    .shadow(3.dp, CircleShape)
+                    .offset(x = 10.dp, y = (-10).dp)
+                    .size(30.dp)
+                    .shadow(4.dp, CircleShape)
                     .clip(CircleShape)
                     .background(Color(0xFFEF4444))
-                    .clickable { onDelete() },
+                    .clickable { currentOnDelete() },
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = Icons.Filled.Close,
                     contentDescription = "Delete Image",
                     tint = Color.White,
-                    modifier = Modifier.size(14.dp)
+                    modifier = Modifier.size(15.dp)
                 )
             }
 
-            // Bottom-Right Corner Resize Handle
+            // Move Indicator Pill (Top-Left)
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = selectionColor,
+                shadowElevation = 3.dp,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .offset(x = (-8).dp, y = (-10).dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.OpenWith,
+                        contentDescription = "Move",
+                        tint = Color.White,
+                        modifier = Modifier.size(12.dp)
+                    )
+                }
+            }
+
+            // Proportional Resize Handle (Bottom-Right Corner)
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .offset(x = 14.dp, y = 14.dp)
+                    .offset(x = 12.dp, y = 12.dp)
                     .size(44.dp)
-                    .pointerInput(image.id, scale) {
+                    .pointerInput(image.id) {
                         detectDragGestures(
-                            onDragEnd = { onCommitResize(worldWidth, worldHeight) },
-                            onDragCancel = { onCommitResize(worldWidth, worldHeight) },
+                            onDragEnd = { currentOnCommitResize(worldWidth, worldHeight) },
+                            onDragCancel = { currentOnCommitResize(worldWidth, worldHeight) },
                             onDrag = { change, dragAmount ->
                                 change.consume()
-                                val deltaX = (dragAmount.x / density.density) / scale
-                                val deltaY = (dragAmount.y / density.density) / scale
-                                worldWidth = maxOf(100f, worldWidth + deltaX)
-                                worldHeight = maxOf(60f, worldHeight + deltaY)
+                                val deltaDpX = (dragAmount.x / density.density) / currentScale
+                                val deltaDpY = (dragAmount.y / density.density) / currentScale
+                                val delta = (deltaDpX + deltaDpY * aspectRatio) / 2f
+                                val newWidth = (worldWidth + delta).coerceIn(80f, 1600f)
+                                worldWidth = newWidth
+                                worldHeight = newWidth / aspectRatio
                             }
                         )
                     },
@@ -171,11 +217,11 @@ fun DraggableImage(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(18.dp)
-                        .shadow(3.dp, CircleShape)
+                        .size(20.dp)
+                        .shadow(4.dp, CircleShape)
                         .clip(CircleShape)
                         .background(Color.White)
-                        .border(2.5.dp, selectionColor, CircleShape)
+                        .border(3.dp, selectionColor, CircleShape)
                 )
             }
         }

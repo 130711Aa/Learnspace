@@ -97,12 +97,17 @@ fun NoteEditorScreen(
                     val bitmap = BitmapFactory.decodeStream(stream)
                     if (bitmap != null) {
                         deselectAll()
-                        val spawnX = (-panX + 200f) / scale
-                        val spawnY = (-panY + 160f) / scale
+                        val spawnX = (-panX + 160f) / scale
+                        val spawnY = (-panY + 120f) / scale
+                        val aspect = (bitmap.width.toFloat() / bitmap.height.toFloat()).coerceIn(0.2f, 5f)
+                        val baseWidth = 280f
+                        val baseHeight = baseWidth / aspect
                         imageElements.add(
                             ImageElement(
                                 x = maxOf(40f, spawnX),
                                 y = maxOf(60f, spawnY),
+                                width = baseWidth,
+                                height = baseHeight,
                                 bitmap = bitmap.asImageBitmap(),
                                 isSelected = true
                             )
@@ -191,33 +196,6 @@ fun NoteEditorScreen(
                 modifier = Modifier.fillMaxSize()
             )
 
-            // Placed Images Layer
-            imageElements.forEachIndexed { index, img ->
-                DraggableImage(
-                    image = img,
-                    scale = scale,
-                    panX = panX,
-                    panY = panY,
-                    onCommitMove = { newWorldX, newWorldY ->
-                        if (index < imageElements.size) {
-                            imageElements[index] = imageElements[index].copy(x = newWorldX, y = newWorldY)
-                        }
-                    },
-                    onCommitResize = { newWorldW, newWorldH ->
-                        if (index < imageElements.size) {
-                            imageElements[index] = imageElements[index].copy(width = newWorldW, height = newWorldH)
-                        }
-                    },
-                    onSelect = {
-                        deselectAll()
-                        if (index < imageElements.size) {
-                            imageElements[index] = imageElements[index].copy(isSelected = true)
-                        }
-                    },
-                    onDelete = { imageElements.remove(img) }
-                )
-            }
-
             // Inking Layer (AndroidX Ink Native Vector Tessellation - STYLUS ONLY for Inking, FINGER for Pan & Zoom)
             DrawingSurface(
                 strokes = strokes,
@@ -246,6 +224,33 @@ fun NoteEditorScreen(
                 },
                 modifier = Modifier.fillMaxSize()
             )
+
+            // Placed Images Layer (Rendered on top of DrawingSurface so gestures work cleanly!)
+            imageElements.forEachIndexed { index, img ->
+                DraggableImage(
+                    image = img,
+                    scale = scale,
+                    panX = panX,
+                    panY = panY,
+                    onCommitMove = { newWorldX, newWorldY ->
+                        if (index < imageElements.size) {
+                            imageElements[index] = imageElements[index].copy(x = newWorldX, y = newWorldY)
+                        }
+                    },
+                    onCommitResize = { newWorldW, newWorldH ->
+                        if (index < imageElements.size) {
+                            imageElements[index] = imageElements[index].copy(width = newWorldW, height = newWorldH)
+                        }
+                    },
+                    onSelect = {
+                        deselectAll()
+                        if (index < imageElements.size) {
+                            imageElements[index] = imageElements[index].copy(isSelected = true)
+                        }
+                    },
+                    onDelete = { imageElements.remove(img) }
+                )
+            }
 
             // Placed Draggable Text Boxes Layer (MS Word Style - Crisp Vector Fonts)
             textBoxes.forEachIndexed { index, boxElement ->
