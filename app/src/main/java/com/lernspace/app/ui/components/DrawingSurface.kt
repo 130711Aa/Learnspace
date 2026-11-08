@@ -56,9 +56,6 @@ fun DrawingSurface(
     onTransform: (centroid: Offset, pan: Offset, zoom: Float) -> Unit = { _, _, _ -> },
     onCanvasTap: () -> Unit = {}
 ) {
-    val screenMatrix = remember { Matrix() }
-    val identityUiMatrix = remember { androidx.compose.ui.graphics.Matrix() }
-
     val currentOnErase by rememberUpdatedState(onErase)
     val currentOnEraseStart by rememberUpdatedState(onEraseStart)
     val currentOnEraseEnd by rememberUpdatedState(onEraseEnd)
@@ -68,25 +65,51 @@ fun DrawingSurface(
     val currentPanX by rememberUpdatedState(panX)
     val currentPanY by rememberUpdatedState(panY)
 
-    // Accurate Screen-to-World Inverse Matrix:
-    // First subtract pan, then divide by scale: (screen - pan) / scale
-    val screenToWorldMatrix = remember(scale, panX, panY) {
+    // =========================================================================
+    // COORDINATE SYSTEM (World Space):
+    //   screenX = worldX * scale + panX   →  worldX = (screenX - panX) / scale
+    //   screenY = worldY * scale + panY   →  worldY = (screenY - panY) / scale
+    //
+    // strokeToScreen (android.graphics.Matrix, used by CanvasStrokeRenderer):
+    //   postScale(scale, scale)  → postTranslate(panX, panY)
+    //   Maps: world → screen
+    //
+    // pointerEventToWorld (androidx.compose.ui.graphics.Matrix, expected by InProgressStrokes):
+    //   Compose Matrix operations post-multiply: M_new = M_prev × M_op
+    //   Compose Matrix.scale(sx,sy) then .translate(tx,ty) maps:
+    //     (x,y) → ((x + tx)*sx, (y + ty)*sy)
+    //   We want worldX = (screenX - panX) / scale, so:
+    //     tx = -panX, sx = 1/scale  →  scale(1/s, 1/s) FIRST, then translate(-panX, -panY)
+    //   This is the EXACT inverse of the strokeToScreen transform.
+    // =========================================================================
+
+    // Single mutable android Matrix for rendering dry strokes — reused every frame.
+    val strokeToScreenMatrix = remember { Matrix() }
+
+    // The Compose identity matrix for strokeToWorldTransform.
+    val identityComposeMatrix = remember { androidx.compose.ui.graphics.Matrix() }
+
+    // Compose Matrix for InProgressStrokes.pointerEventToWorldTransform.
+    // Maps raw stylus screen coordinates → world coordinates.
+    // Order: scale(1/s) FIRST, then translate(-panX, -panY)
+    // Result: (screen - panX) / scale = world  ✅
+    val pointerEventToWorldMatrix = remember(scale, panX, panY) {
         androidx.compose.ui.graphics.Matrix().apply {
             reset()
-            translate(-panX, -panY)
             scale(1f / scale, 1f / scale, 1f)
+            translate(-panX, -panY)
         }
     }
 
     Box(
         modifier = modifier
             // STYLUS vs FINGER DISPATCHER:
-            // Key is strictly Unit so the gesture loop is NEVER cancelled mid-drag/pinch!
+            // pointerInput(Unit) so the coroutine is NEVER cancelled mid-drag/pinch.
             .pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
                     if (down.type == PointerType.Touch) {
-                        // FINGER GESTURE: Panning & Pinch-to-Zoom only (Never Inking!)
+                        // FINGER: pan & pinch-to-zoom ONLY — never inking!
                         down.consume()
 
                         var isTransforming = false
@@ -96,14 +119,18 @@ fun DrawingSurface(
                         while (true) {
                             val event = awaitPointerEvent(pass = PointerEventPass.Initial)
 
-                            // Palm rejection: If stylus is active on screen, don't pan!
-                            val hasStylus = event.changes.any { it.type == PointerType.Stylus || it.type == PointerType.Eraser }
+                            // Palm rejection: ignore finger if stylus is on-screen
+                            val hasStylus = event.changes.any {
+                                it.type == PointerType.Stylus || it.type == PointerType.Eraser
+                            }
                             if (hasStylus) {
                                 event.changes.forEach { if (it.type == PointerType.Touch) it.consume() }
                                 continue
                             }
 
-                            val pressedFingers = event.changes.filter { it.type == PointerType.Touch && it.pressed }
+                            val pressedFingers = event.changes.filter {
+                                it.type == PointerType.Touch && it.pressed
+                            }
                             if (pressedFingers.isEmpty()) {
                                 if (!isTransforming && accumulatedPan.getDistance() < touchSlop) {
                                     currentOnCanvasTap()
@@ -136,22 +163,22 @@ fun DrawingSurface(
                                 }
                             }
                         }
-                    } else {
-                        // STYLUS: Let InProgressStrokes or Eraser handle it!
                     }
+                    // STYLUS: handled by InProgressStrokes or Eraser Box below
                 }
             }
     ) {
-        // 1. Render Completed Strokes (Native Vector Tessellation - 100% Crisp & Sharp)
-        // Directly observes strokes (SnapshotStateList), currentScale, and currentPan!
+        // ─── Layer 1: Completed (dry) strokes rendered with scale+pan transform ───
+        // Reading currentScale/PanX/PanY inside DrawScope ensures Compose re-draws
+        // every frame that pan or zoom changes.
         Canvas(modifier = Modifier.fillMaxSize()) {
             val s = currentScale
             val px = currentPanX
             val py = currentPanY
 
-            screenMatrix.reset()
-            screenMatrix.postScale(s, s)
-            screenMatrix.postTranslate(px, py)
+            strokeToScreenMatrix.reset()
+            strokeToScreenMatrix.postScale(s, s)
+            strokeToScreenMatrix.postTranslate(px, py)
 
             val nativeCanvas = drawContext.canvas.nativeCanvas
             strokes.fastForEach { stroke ->
@@ -159,16 +186,16 @@ fun DrawingSurface(
                     canvasStrokeRenderer.draw(
                         canvas = nativeCanvas,
                         stroke = stroke,
-                        strokeToScreenTransform = screenMatrix,
+                        strokeToScreenTransform = strokeToScreenMatrix,
                     )
                 }
             }
         }
 
-        // 2. Active Inking / Eraser Layer (STYLUS ONLY)
+        // ─── Layer 2: Active inking / eraser (STYLUS ONLY) ───
         if (isDrawingEnabled) {
             if (isEraserMode) {
-                // Eraser mode for Stylus: erases nearby strokes in world coordinates
+                // Eraser: convert stylus screen position to world space, then erase
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -194,12 +221,14 @@ fun DrawingSurface(
                         }
                 )
             } else {
-                // Active Inking with AndroidX Ink (Vector-sharp with screenToWorldMatrix)
+                // Active inking via AndroidX Ink.
+                // pointerEventToWorldMatrix is the exact mathematical inverse of strokeToScreen,
+                // so "wet" (in-progress) strokes land in the same world space as "dry" strokes.
                 InProgressStrokes(
                     defaultBrush = currentBrush,
                     nextBrush = onGetNextBrush,
-                    pointerEventToWorldTransform = screenToWorldMatrix,
-                    strokeToWorldTransform = identityUiMatrix,
+                    pointerEventToWorldTransform = pointerEventToWorldMatrix,
+                    strokeToWorldTransform = identityComposeMatrix,
                     onStrokesFinished = onStrokesFinished
                 )
             }
