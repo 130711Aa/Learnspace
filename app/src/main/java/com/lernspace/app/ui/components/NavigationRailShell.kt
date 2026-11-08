@@ -56,7 +56,7 @@ fun TabletAppShell(
                     .statusBarsPadding()
                     .navigationBarsPadding()
                     .padding(vertical = 12.dp, horizontal = 4.dp),
-                verticalArrangement = Arrangement.SpaceBetween,
+                verticalArrangement = Arrangement.Top,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 // Header Logo
@@ -120,54 +120,6 @@ fun TabletAppShell(
                         )
                     }
                 }
-
-                // Bottom Section: Stylus / Quick Capture & Profile
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    // Quick Canvas Floating Action Button
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = AccentBlueContainer,
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .clickable { onQuickAdd() },
-                        border = androidx.compose.foundation.BorderStroke(1.dp, AccentBlue.copy(alpha = 0.3f))
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Filled.Create,
-                                contentDescription = "Quick Canvas",
-                                tint = AccentBlue,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
-
-                    HorizontalDivider(
-                        color = LernspaceBorder,
-                        modifier = Modifier.padding(horizontal = 12.dp)
-                    )
-
-                    // User Profile Avatar
-                    Box(
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clip(CircleShape)
-                            .background(LernspaceDark),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "U",
-                            color = Color.White,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
             }
         }
 
@@ -178,65 +130,12 @@ fun TabletAppShell(
         ) {
             // Tablet TopBar
             TopAppBar(
-                title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            text = "Active Term",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = LernspaceTextSecondary
-                        )
-                        Text(
-                            text = "/",
-                            color = LernspaceBorder
-                        )
-                        Text(
-                            text = "Sprint Horizon",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = LernspaceTextPrimary
-                        )
-                    }
-                },
+                title = {},
                 actions = {
-                    // Stylus Status Badge
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = LernspaceSurfaceLow,
-                        modifier = Modifier.padding(end = 8.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Text(
-                                text = "Stylus Ready",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = LernspaceTextPrimary
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .size(6.dp)
-                                    .clip(RoundedCornerShape(3.dp))
-                                    .background(AccentTeal)
-                            )
-                        }
-                    }
-
                     IconButton(onClick = { /* Search */ }) {
                         Icon(
                             imageVector = Icons.Filled.Search,
                             contentDescription = "Search",
-                            tint = LernspaceTextSecondary
-                        )
-                    }
-
-                    IconButton(onClick = { /* Notifications */ }) {
-                        Icon(
-                            imageVector = Icons.Filled.Notifications,
-                            contentDescription = "Notifications",
                             tint = LernspaceTextSecondary
                         )
                     }
