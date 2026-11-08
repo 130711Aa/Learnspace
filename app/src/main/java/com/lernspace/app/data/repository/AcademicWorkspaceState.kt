@@ -367,6 +367,170 @@ object AcademicWorkspaceState {
         return scheduleItems.filter { it.dayOfWeek == dayOfWeek }.sortedBy { it.startTime }
     }
 
+    // ── Fixed Weekly Class Timetable (Jadwal Mapel Mingguan) ─────────────────
+    val weeklyClasses = mutableStateListOf(
+        WeeklyClassUi(
+            id = "wclass-1",
+            subjectId = "subj-1",
+            subjectName = "Neurobiology",
+            subjectCode = "NEUR-401",
+            dayOfWeek = 1, // Monday
+            startTime = "08:30",
+            endTime = "10:00",
+            room = "BioSci Hall 201",
+            lecturer = "Dr. Aris Thorne",
+            type = "Lecture"
+        ),
+        WeeklyClassUi(
+            id = "wclass-2",
+            subjectId = "subj-3",
+            subjectName = "Advanced Statistics",
+            subjectCode = "STAT-210",
+            dayOfWeek = 1, // Monday
+            startTime = "13:00",
+            endTime = "15:00",
+            room = "Math & Data Lab 3",
+            lecturer = "Prof. Elena Rostova",
+            type = "Lab"
+        ),
+        WeeklyClassUi(
+            id = "wclass-3",
+            subjectId = "subj-4",
+            subjectName = "Organic Chemistry II",
+            subjectCode = "CHEM-222",
+            dayOfWeek = 2, // Tuesday
+            startTime = "09:00",
+            endTime = "10:45",
+            room = "Chem Annex 105",
+            lecturer = "Dr. Marcus Vance",
+            type = "Lecture"
+        ),
+        WeeklyClassUi(
+            id = "wclass-4",
+            subjectId = "subj-1",
+            subjectName = "Neurobiology",
+            subjectCode = "NEUR-401",
+            dayOfWeek = 3, // Wednesday
+            startTime = "10:00",
+            endTime = "12:00",
+            room = "Neurophysiology Lab 101",
+            lecturer = "Dr. Aris Thorne",
+            type = "Practicum"
+        ),
+        WeeklyClassUi(
+            id = "wclass-5",
+            subjectId = "subj-2",
+            subjectName = "Cognitive Psychology",
+            subjectCode = "PSYC-320",
+            dayOfWeek = 4, // Thursday
+            startTime = "11:00",
+            endTime = "12:30",
+            room = "Psychology Hall 12",
+            lecturer = "Prof. Sarah Jenkins",
+            type = "Lecture"
+        ),
+        WeeklyClassUi(
+            id = "wclass-6",
+            subjectId = "subj-3",
+            subjectName = "Advanced Statistics",
+            subjectCode = "STAT-210",
+            dayOfWeek = 5, // Friday
+            startTime = "13:30",
+            endTime = "15:00",
+            room = "Science Bldg 204",
+            lecturer = "Prof. Elena Rostova",
+            type = "Discussion"
+        )
+    )
+
+    // ── Student Tasks & Deadlines (Tugas Kuliah & Deadline) ───────────────────
+    val tasks = mutableStateListOf(
+        TaskUiModel(
+            id = "task-1",
+            title = "Problem Set #4: MCMC Sampling & Posterior Derivation",
+            subjectId = "subj-3",
+            subjectName = "Advanced Statistics",
+            dueDate = "Nov 12, 2026",
+            dueDayNumber = 12,
+            dueTime = "17:00",
+            priority = "HIGH",
+            estimatedMinutes = 120,
+            isCompleted = false,
+            notes = "Include trace plots and convergence diagnostics."
+        ),
+        TaskUiModel(
+            id = "task-2",
+            title = "Neurobiology Mid-Term Quiz (Chapters 1-3)",
+            subjectId = "subj-1",
+            subjectName = "Neurobiology",
+            topicId = "top-3",
+            topicName = "Synaptic Transmission & LTP Plasticity",
+            dueDate = "Nov 10, 2026",
+            dueDayNumber = 10,
+            dueTime = "10:00",
+            priority = "HIGH",
+            estimatedMinutes = 90,
+            isCompleted = false,
+            notes = "Focus on Nernst equation calculations and magnesium block release."
+        ),
+        TaskUiModel(
+            id = "task-3",
+            title = "Literature Review: Working Memory Capacity vs Load",
+            subjectId = "subj-2",
+            subjectName = "Cognitive Psychology",
+            topicId = "top-6",
+            topicName = "Baddeley's Multicomponent Working Memory",
+            dueDate = "Nov 16, 2026",
+            dueDayNumber = 16,
+            dueTime = "23:59",
+            priority = "MEDIUM",
+            estimatedMinutes = 180,
+            isCompleted = false,
+            notes = "Minimum 4 peer-reviewed citations from 2020-present."
+        ),
+        TaskUiModel(
+            id = "task-4",
+            title = "EAS Reaction Mechanisms & Synthetic Pathway Sheet",
+            subjectId = "subj-4",
+            subjectName = "Organic Chemistry II",
+            dueDate = "Nov 20, 2026",
+            dueDayNumber = 20,
+            dueTime = "14:00",
+            priority = "LOW",
+            estimatedMinutes = 60,
+            isCompleted = false,
+            notes = "Draw all resonance contributor structures for meta-director attacks."
+        ),
+        TaskUiModel(
+            id = "task-5",
+            title = "Daily Review: Action Potential Nernst Calculations",
+            subjectId = "subj-1",
+            subjectName = "Neurobiology",
+            dueDate = "Nov 8, 2026",
+            dueDayNumber = 8,
+            dueTime = "21:00",
+            priority = "MEDIUM",
+            estimatedMinutes = 45,
+            isCompleted = false,
+            notes = "Finish practice problem set 2 on paper canvas."
+        )
+    )
+
+    fun getTasksForDayNumber(dayNumber: Int): List<TaskUiModel> {
+        return tasks.filter { it.dueDayNumber == dayNumber }
+    }
+
+    fun getClassesForWeekday(dayOfWeek: Int): List<WeeklyClassUi> {
+        return weeklyClasses.filter { it.dayOfWeek == dayOfWeek }.sortedBy { it.startTime }
+    }
+
+    fun toggleTaskCompletion(taskId: String) {
+        val idx = tasks.indexOfFirst { it.id == taskId }
+        if (idx != -1) {
+            tasks[idx] = tasks[idx].copy(isCompleted = !tasks[idx].isCompleted)
+        }
+    }
+
     fun acceptHybridSuggestion(suggestionId: String) {
         val idx = scheduleItems.indexOfFirst { it.id == suggestionId }
         if (idx != -1) {
@@ -403,5 +567,34 @@ data class PlannerItemUi(
     val locationOrRoom: String? = null,
     val isCompleted: Boolean = false,
     val aiReason: String? = null
+)
+
+data class WeeklyClassUi(
+    val id: String = UUID.randomUUID().toString(),
+    val subjectId: String,
+    val subjectName: String,
+    val subjectCode: String,
+    val dayOfWeek: Int, // 1 = Mon ... 7 = Sun
+    val startTime: String, // "08:30"
+    val endTime: String,   // "10:00"
+    val room: String? = null,
+    val lecturer: String? = null,
+    val type: String = "Lecture" // Lecture, Lab, Practicum, Discussion
+)
+
+data class TaskUiModel(
+    val id: String = UUID.randomUUID().toString(),
+    val title: String,
+    val subjectId: String? = null,
+    val subjectName: String? = null,
+    val topicId: String? = null,
+    val topicName: String? = null,
+    val dueDate: String, // "Nov 12, 2026"
+    val dueDayNumber: Int, // 12
+    val dueTime: String = "23:59",
+    val priority: String = "HIGH", // HIGH, MEDIUM, LOW
+    val estimatedMinutes: Int = 90,
+    val isCompleted: Boolean = false,
+    val notes: String = ""
 )
 

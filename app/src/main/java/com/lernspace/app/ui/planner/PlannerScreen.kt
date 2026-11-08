@@ -10,7 +10,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -24,9 +23,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import com.lernspace.app.data.repository.AcademicWorkspaceState
-import com.lernspace.app.data.repository.PlannerItemUi
-import com.lernspace.app.data.repository.ScheduleType
+import com.lernspace.app.data.repository.*
 import com.lernspace.app.ui.theme.*
 import com.lernspace.app.ui.workspace.NoteEditorScreen
 import com.lernspace.app.ui.workspace.model.NoteUiModel
@@ -38,18 +35,22 @@ fun PlannerScreen(
     onNavigateToSyllabus: ((subjectId: String?) -> Unit)? = null
 ) {
     val scheduleItems = AcademicWorkspaceState.scheduleItems
+    val weeklyClasses = AcademicWorkspaceState.weeklyClasses
+    val tasks = AcademicWorkspaceState.tasks
     val subjects = AcademicWorkspaceState.subjects
     val topics = AcademicWorkspaceState.topics
     val notes = AcademicWorkspaceState.notes
 
     var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Day Agenda", "Week Schedule", "Month Horizon")
+    val tabs = listOf("Kalender & Deadline", "Jadwal Mapel Mingguan", "Day Agenda & Auto-Study")
 
     var activeNote by remember { mutableStateOf<NoteUiModel?>(null) }
-    var showAddEventDialog by remember { mutableStateOf(false) }
+    var showAddTaskDialog by remember { mutableStateOf(false) }
+    var showAddWeeklyClassDialog by remember { mutableStateOf(false) }
     var showHybridSuggestDialog by remember { mutableStateOf(false) }
+    var selectedCalendarDay by remember { mutableIntStateOf(8) } // Selected date in Nov 2026
 
-    // If active note is opened from a study session, display fullscreen NoteEditorScreen!
+    // If active note is opened, display fullscreen NoteEditorScreen!
     if (activeNote != null) {
         NoteEditorScreen(
             note = activeNote!!,
@@ -73,7 +74,7 @@ fun PlannerScreen(
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "Planner & Calendar",
+                        text = "Planner & Academic Schedule",
                         style = MaterialTheme.typography.headlineLarge,
                         color = LernspaceDark,
                         fontWeight = FontWeight.Bold
@@ -84,23 +85,23 @@ fun PlannerScreen(
                         border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder)
                     ) {
                         Text(
-                            text = "Deterministic Hybrid Engine Active",
+                            text = "${tasks.count { !it.isCompleted }} Active Tasks",
                             style = MaterialTheme.typography.labelSmall,
-                            color = AccentTeal,
+                            color = AccentAmber,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                         )
                     }
                 }
                 Text(
-                    text = "Smart timetable linking lectures, syllabus sub-babs, and suggested study blocks",
+                    text = "Jadwal mapel mingguan tetap, kalender deadline tugas, dan alokasi sesi belajar otomatis",
                     style = MaterialTheme.typography.bodyMedium,
                     color = LernspaceTextSecondary
                 )
             }
 
             // Top Action Controls
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 // Tab switcher
                 Surface(
                     shape = RoundedCornerShape(10.dp),
@@ -120,42 +121,62 @@ fun PlannerScreen(
                                     fontSize = 13.sp,
                                     fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Medium,
                                     color = if (selectedTab == index) LernspaceDark else LernspaceTextSecondary,
-                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
                                 )
                             }
                         }
                     }
                 }
 
-                // Auto-suggest study slot button (Hybrid Engine)
+                // Add Task / Deadline button
+                Button(
+                    onClick = { showAddTaskDialog = true },
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentAmber),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
+                ) {
+                    Icon(imageVector = Icons.Filled.AddAlert, contentDescription = null, modifier = Modifier.size(17.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Input Tugas", fontWeight = FontWeight.Bold)
+                }
+
+                // Set Weekly Class button
                 OutlinedButton(
-                    onClick = { showHybridSuggestDialog = true },
+                    onClick = { showAddWeeklyClassDialog = true },
                     shape = RoundedCornerShape(10.dp),
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
                 ) {
-                    Icon(imageVector = Icons.Filled.AutoAwesome, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(17.dp))
+                    Icon(imageVector = Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(17.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Auto-Schedule Slot", fontWeight = FontWeight.SemiBold, color = LernspaceDark)
-                }
-
-                // Plan session / Add event button
-                Button(
-                    onClick = { showAddEventDialog = true },
-                    shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)
-                ) {
-                    Icon(imageVector = Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Plan Session", fontWeight = FontWeight.SemiBold)
+                    Text("Set Jadwal Mapel", fontWeight = FontWeight.SemiBold, color = LernspaceDark)
                 }
             }
         }
 
-        // ── Main Viewport Switcher (Day Agenda vs Week vs Month) ──────────────
+        // ── Main Viewport Switcher ────────────────────────────────────────────
         when (selectedTab) {
-            0 -> DayAgendaView(
+            0 -> CalendarDeadlineFullView(
+                selectedDay = selectedCalendarDay,
+                onSelectDay = { selectedCalendarDay = it },
+                tasks = tasks,
+                weeklyClasses = weeklyClasses,
+                subjects = subjects,
+                onToggleTask = { taskId -> AcademicWorkspaceState.toggleTaskCompletion(taskId) },
+                onAddNewTaskForDay = { showAddTaskDialog = true },
+                onViewSyllabus = { subjectId -> onNavigateToSyllabus?.invoke(subjectId) }
+            )
+
+            1 -> WeeklyTimetableBuilderView(
+                weeklyClasses = weeklyClasses,
+                subjects = subjects,
+                onAddClass = { showAddWeeklyClassDialog = true },
+                onDeleteClass = { weeklyClasses.remove(it) }
+            )
+
+            2 -> DayAgendaView(
                 scheduleItems = scheduleItems,
+                weeklyClasses = weeklyClasses,
+                tasks = tasks,
                 subjects = subjects,
                 onAcceptSuggestion = { id -> AcademicWorkspaceState.acceptHybridSuggestion(id) },
                 onToggleComplete = { item ->
@@ -183,51 +204,63 @@ fun PlannerScreen(
                         onNavigateToSyllabus?.invoke(subjectId)
                     }
                 },
+                onAutoSchedule = { showHybridSuggestDialog = true },
                 onDeleteItem = { scheduleItems.remove(it) }
-            )
-
-            1 -> WeekScheduleView(
-                scheduleItems = scheduleItems,
-                subjects = subjects,
-                onOpenItem = { item ->
-                    if (item.topicId != null) {
-                        val note = notes.find { it.topicId == item.topicId }
-                        if (note != null) activeNote = note
-                    }
-                }
-            )
-
-            2 -> MonthHorizonView(
-                scheduleItems = scheduleItems,
-                onViewSyllabus = { subjectId -> onNavigateToSyllabus?.invoke(subjectId) }
             )
         }
     }
 
-    // ── Dialog: Plan New Session / Event ──────────────────────────────────────
-    if (showAddEventDialog) {
-        PlanSessionDialog(
+    // ── Dialog: Input Tugas & Set Deadline ────────────────────────────────────
+    if (showAddTaskDialog) {
+        InputTaskDialog(
             subjects = subjects,
             topics = topics,
-            onDismiss = { showAddEventDialog = false },
-            onConfirm = { title, type, startTime, endTime, dayOffset, subject, topic, room ->
-                scheduleItems.add(
-                    PlannerItemUi(
+            initialDayNumber = selectedCalendarDay,
+            onDismiss = { showAddTaskDialog = false },
+            onConfirm = { title, subject, topic, dueDayNumber, dueTime, priority, estMins, notesStr ->
+                tasks.add(
+                    TaskUiModel(
                         id = UUID.randomUUID().toString(),
                         title = title,
-                        type = type,
-                        startTime = startTime,
-                        endTime = endTime,
-                        dayOfWeek = (dayOffset % 7) + 1,
-                        dayOffset = dayOffset,
                         subjectId = subject?.id,
                         subjectName = subject?.name,
                         topicId = topic?.id,
                         topicName = topic?.title,
-                        locationOrRoom = room.ifBlank { null }
+                        dueDate = "Nov $dueDayNumber, 2026",
+                        dueDayNumber = dueDayNumber,
+                        dueTime = dueTime,
+                        priority = priority,
+                        estimatedMinutes = estMins,
+                        isCompleted = false,
+                        notes = notesStr
                     )
                 )
-                showAddEventDialog = false
+                showAddTaskDialog = false
+            }
+        )
+    }
+
+    // ── Dialog: Set Jadwal Mapel Mingguan ─────────────────────────────────────
+    if (showAddWeeklyClassDialog) {
+        SetWeeklyClassDialog(
+            subjects = subjects,
+            onDismiss = { showAddWeeklyClassDialog = false },
+            onConfirm = { subject, dayOfWeek, startTime, endTime, room, lecturer, type ->
+                weeklyClasses.add(
+                    WeeklyClassUi(
+                        id = UUID.randomUUID().toString(),
+                        subjectId = subject.id,
+                        subjectName = subject.name,
+                        subjectCode = subject.code,
+                        dayOfWeek = dayOfWeek,
+                        startTime = startTime,
+                        endTime = endTime,
+                        room = room.ifBlank { null },
+                        lecturer = lecturer.ifBlank { null },
+                        type = type
+                    )
+                )
+                showAddWeeklyClassDialog = false
             }
         )
     }
@@ -262,20 +295,646 @@ fun PlannerScreen(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// VIEW 1: Day Agenda (Timeline view with hours gutter & rich schedule cards)
+// VIEW 1: Kalender Penuh & Deadline Tugas Interaktif (Interactive Full Calendar)
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun CalendarDeadlineFullView(
+    selectedDay: Int,
+    onSelectDay: (Int) -> Unit,
+    tasks: List<TaskUiModel>,
+    weeklyClasses: List<WeeklyClassUi>,
+    subjects: List<com.lernspace.app.ui.learning.SubjectUi>,
+    onToggleTask: (String) -> Unit,
+    onAddNewTaskForDay: () -> Unit,
+    onViewSyllabus: (String?) -> Unit
+) {
+    // Determine weekday for selected day (Nov 1, 2026 was Sunday = 7; Nov 2 was Monday = 1)
+    val dayOfWeek = if (selectedDay % 7 == 1) 7 else (selectedDay % 7) - 1 // 1=Mon, 2=Tue.. 7=Sun
+    val classesOnDay = weeklyClasses.filter { it.dayOfWeek == if (dayOfWeek == 0) 7 else dayOfWeek }.sortedBy { it.startTime }
+    val tasksOnDay = tasks.filter { it.dueDayNumber == selectedDay }
+
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        shape = RoundedCornerShape(16.dp),
+        color = LernspaceSurfaceCard,
+        border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder),
+        shadowElevation = 1.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(18.dp),
+            horizontalArrangement = Arrangement.spacedBy(18.dp)
+        ) {
+            // ── Left 65%: Full November Calendar Grid ─────────────────────────
+            Column(
+                modifier = Modifier
+                    .weight(1.35f)
+                    .fillMaxHeight(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "November 2026",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = LernspaceDark
+                        )
+                        Text(
+                            text = "Klik tanggal untuk cek jadwal kuliah & deadline tugas hari itu",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = LernspaceTextSecondary
+                        )
+                    }
+
+                    // Legend
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(AccentAmber))
+                            Text("Deadline Tugas", fontSize = 11.sp, color = LernspaceTextSecondary)
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(AccentBlue))
+                            Text("Jadwal Kuliah", fontSize = 11.sp, color = LernspaceTextSecondary)
+                        }
+                    }
+                }
+
+                // Days of week header (Sun, Mon, Tue...)
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    listOf("Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab").forEach { d ->
+                        Text(
+                            text = d,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = LernspaceTextSecondary,
+                            modifier = Modifier.weight(1f),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
+                }
+
+                // 30 Days Grid for November
+                Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    val daysInNov = (1..30).toList()
+                    val weeks = daysInNov.chunked(7)
+
+                    weeks.forEach { week ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            week.forEach { dayNum ->
+                                val isSelected = dayNum == selectedDay
+                                val isToday = dayNum == 8
+                                val dayTasks = tasks.filter { it.dueDayNumber == dayNum }
+                                val dayTasksCount = dayTasks.size
+                                val hasPendingTask = dayTasks.any { !it.isCompleted }
+
+                                val dOfWeek = if (dayNum % 7 == 1) 7 else (dayNum % 7) - 1
+                                val hasClass = weeklyClasses.any { it.dayOfWeek == (if (dOfWeek == 0) 7 else dOfWeek) }
+
+                                Surface(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight()
+                                        .clickable { onSelectDay(dayNum) },
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = if (isSelected) Color(0xFFEFF6FF) else if (isToday) Color(0xFFF0FDF4) else LernspaceSurfaceLow,
+                                    border = androidx.compose.foundation.BorderStroke(
+                                        width = if (isSelected) 2.dp else if (isToday) 1.5.dp else 1.dp,
+                                        color = if (isSelected) AccentBlue else if (isToday) Color(0xFF16A34A) else LernspaceBorder.copy(alpha = 0.6f)
+                                    )
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(6.dp),
+                                        verticalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = "$dayNum",
+                                                fontSize = 12.sp,
+                                                fontWeight = if (isSelected || isToday) FontWeight.Bold else FontWeight.SemiBold,
+                                                color = if (isSelected) AccentBlue else if (isToday) Color(0xFF16A34A) else LernspaceDark
+                                            )
+                                            if (isToday) {
+                                                Surface(shape = RoundedCornerShape(4.dp), color = Color(0xFF16A34A)) {
+                                                    Text("HARI INI", fontSize = 8.sp, color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 3.dp, vertical = 1.dp))
+                                                }
+                                            }
+                                        }
+
+                                        // Badges
+                                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            // Task deadline pill
+                                            if (dayTasksCount > 0) {
+                                                Surface(
+                                                    shape = RoundedCornerShape(4.dp),
+                                                    color = if (hasPendingTask) Color(0xFFFEF3C7) else Color(0xFFD1FAE5)
+                                                ) {
+                                                    Text(
+                                                        text = "$dayTasksCount Tugas",
+                                                        fontSize = 9.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = if (hasPendingTask) Color(0xFFB45309) else Color(0xFF047857),
+                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                                    )
+                                                }
+                                            }
+
+                                            // Class indicator dot
+                                            if (hasClass) {
+                                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                                                    Box(modifier = Modifier.size(5.dp).clip(CircleShape).background(AccentBlue))
+                                                    Text("Kuliah", fontSize = 8.sp, color = LernspaceTextSecondary)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            // Filler boxes for incomplete row
+                            for (i in week.size until 7) {
+                                Box(modifier = Modifier.weight(1f).fillMaxHeight())
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── Right 35%: Selected Date Details Panel (Drilldown) ────────────
+            Surface(
+                modifier = Modifier
+                    .weight(0.9f)
+                    .fillMaxHeight(),
+                shape = RoundedCornerShape(14.dp),
+                color = LernspaceSurfaceLow,
+                border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    // Header for selected date
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "Nov $selectedDay, 2026",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = LernspaceDark
+                            )
+                            Text(
+                                text = "${classesOnDay.size} Kuliah • ${tasksOnDay.size} Deadline Tugas",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = LernspaceTextSecondary
+                            )
+                        }
+
+                        Button(
+                            onClick = onAddNewTaskForDay,
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = AccentAmber),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Icon(Icons.Filled.Add, null, modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text("Tugas", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    HorizontalDivider(color = LernspaceBorder)
+
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        // Section 1: Deadline Tugas Hari Ini
+                        item {
+                            Text(
+                                text = "DEADLINE TUGAS ($selectedDay Nov)",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = if (tasksOnDay.any { !it.isCompleted }) Color(0xFFB45309) else LernspaceDark
+                            )
+                        }
+
+                        if (tasksOnDay.isEmpty()) {
+                            item {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = Color.White,
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        text = "Tidak ada deadline tugas di tanggal ini. Waktu luang aman!",
+                                        fontSize = 11.sp,
+                                        color = LernspaceTextSecondary,
+                                        modifier = Modifier.padding(12.dp)
+                                    )
+                                }
+                            }
+                        } else {
+                            items(tasksOnDay, key = { it.id }) { task ->
+                                val subj = subjects.find { it.id == task.subjectId }
+                                val subColor = subj?.color ?: AccentAmber
+
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (task.isCompleted) Color(0xFFF8FAFC) else Color.White,
+                                    border = androidx.compose.foundation.BorderStroke(
+                                        width = 1.dp,
+                                        color = if (task.isCompleted) LernspaceBorder else subColor.copy(alpha = 0.5f)
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                IconButton(onClick = { onToggleTask(task.id) }, modifier = Modifier.size(24.dp)) {
+                                                    Icon(
+                                                        imageVector = if (task.isCompleted) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
+                                                        contentDescription = "Done",
+                                                        tint = if (task.isCompleted) Color(0xFF059669) else LernspaceTextSecondary,
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
+                                                }
+                                                Text(
+                                                    text = task.title,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (task.isCompleted) LernspaceTextSecondary else LernspaceDark,
+                                                    textDecoration = if (task.isCompleted) TextDecoration.LineThrough else TextDecoration.None
+                                                )
+                                            }
+
+                                            Surface(
+                                                shape = RoundedCornerShape(4.dp),
+                                                color = subColor.copy(alpha = 0.15f)
+                                            ) {
+                                                Text(
+                                                    text = task.dueTime,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = subColor,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+
+                                        if (task.subjectName != null) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = task.subjectName,
+                                                    fontSize = 11.sp,
+                                                    color = subColor,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                                if (task.topicName != null) {
+                                                    Text(
+                                                        text = "Bab: ${task.topicName}",
+                                                        fontSize = 10.sp,
+                                                        color = LernspaceTextSecondary
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Section 2: Jadwal Kuliah Hari Ini
+                        item {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "JADWAL KULIAH RUTIN",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = LernspaceDark
+                            )
+                        }
+
+                        if (classesOnDay.isEmpty()) {
+                            item {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = Color.White,
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        text = "Hari ini libur / tidak ada jadwal kuliah mingguan.",
+                                        fontSize = 11.sp,
+                                        color = LernspaceTextSecondary,
+                                        modifier = Modifier.padding(12.dp)
+                                    )
+                                }
+                            }
+                        } else {
+                            items(classesOnDay, key = { it.id }) { c ->
+                                val subj = subjects.find { it.id == c.subjectId }
+                                val subColor = subj?.color ?: AccentBlue
+
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = Color.White,
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(modifier = Modifier.fillMaxWidth()) {
+                                        Box(
+                                            modifier = Modifier
+                                                .width(4.dp)
+                                                .fillMaxHeight()
+                                                .background(subColor)
+                                        )
+                                        Column(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .padding(10.dp),
+                                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Text(
+                                                    text = "${c.startTime} - ${c.endTime}",
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = LernspaceDark
+                                                )
+                                                Surface(shape = RoundedCornerShape(4.dp), color = subColor.copy(alpha = 0.12f)) {
+                                                    Text(text = c.type, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = subColor, modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp))
+                                                }
+                                            }
+                                            Text(text = "${c.subjectName} (${c.subjectCode})", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                                            if (c.room != null) {
+                                                Text(text = "Ruang: ${c.room}", fontSize = 10.sp, color = LernspaceTextSecondary)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VIEW 2: Jadwal Mapel Mingguan Builder (Weekly Class Schedule Builder)
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun WeeklyTimetableBuilderView(
+    weeklyClasses: List<WeeklyClassUi>,
+    subjects: List<com.lernspace.app.ui.learning.SubjectUi>,
+    onAddClass: () -> Unit,
+    onDeleteClass: (WeeklyClassUi) -> Unit
+) {
+    val weekDays = listOf(
+        Pair(1, "Senin"),
+        Pair(2, "Selasa"),
+        Pair(3, "Rabu"),
+        Pair(4, "Kamis"),
+        Pair(5, "Jumat"),
+        Pair(6, "Sabtu"),
+        Pair(7, "Minggu")
+    )
+
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        shape = RoundedCornerShape(16.dp),
+        color = LernspaceSurfaceCard,
+        border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder),
+        shadowElevation = 1.dp
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            // Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "Jadwal Mata Pelajaran / Kuliah Mingguan",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = LernspaceDark
+                    )
+                    Text(
+                        text = "Jadwal rutin tetap tiap minggu. Menjadi acuan dasar kalender dan mesin pencari jam belajar kosong.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = LernspaceTextSecondary
+                    )
+                }
+
+                Button(
+                    onClick = onAddClass,
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                ) {
+                    Icon(Icons.Filled.Add, null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Tambah Jadwal Mapel")
+                }
+            }
+
+            // 7 Days Columns Timetable
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                weekDays.forEach { (dayIndex, dayName) ->
+                    val classes = weeklyClasses.filter { it.dayOfWeek == dayIndex }.sortedBy { it.startTime }
+
+                    Surface(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                        shape = RoundedCornerShape(10.dp),
+                        color = LernspaceSurfaceLow,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            // Day header
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = dayName,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = LernspaceDark
+                                )
+                                Text(
+                                    text = "${classes.size}",
+                                    fontSize = 10.sp,
+                                    color = LernspaceTextSecondary
+                                )
+                            }
+
+                            HorizontalDivider(color = LernspaceBorder)
+
+                            if (classes.isEmpty()) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .weight(1f),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "Kosong",
+                                        fontSize = 10.sp,
+                                        color = LernspaceTextSecondary.copy(alpha = 0.6f)
+                                    )
+                                }
+                            } else {
+                                LazyColumn(
+                                    modifier = Modifier.fillMaxSize(),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    items(classes, key = { it.id }) { c ->
+                                        val subj = subjects.find { it.id == c.subjectId }
+                                        val subColor = subj?.color ?: AccentBlue
+
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = Color.White,
+                                            border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Row(modifier = Modifier.fillMaxWidth()) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .width(3.dp)
+                                                        .fillMaxHeight()
+                                                        .background(subColor)
+                                                )
+                                                Column(
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .padding(6.dp),
+                                                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                                                ) {
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Text(
+                                                            text = "${c.startTime} - ${c.endTime}",
+                                                            fontSize = 9.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = LernspaceDark
+                                                        )
+                                                        IconButton(
+                                                            onClick = { onDeleteClass(c) },
+                                                            modifier = Modifier.size(16.dp)
+                                                        ) {
+                                                            Icon(Icons.Filled.Close, null, tint = LernspaceTextSecondary, modifier = Modifier.size(10.dp))
+                                                        }
+                                                    }
+                                                    Text(
+                                                        text = c.subjectName,
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = LernspaceDark,
+                                                        maxLines = 1
+                                                    )
+                                                    Text(
+                                                        text = c.subjectCode,
+                                                        fontSize = 8.sp,
+                                                        color = subColor
+                                                    )
+                                                    if (c.room != null) {
+                                                        Text(
+                                                            text = c.room,
+                                                            fontSize = 8.sp,
+                                                            color = LernspaceTextSecondary,
+                                                            maxLines = 1
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VIEW 3: Day Agenda & Auto-Schedule (Timeline Harian & Mesin Jadwal Otomatis)
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun DayAgendaView(
     scheduleItems: List<PlannerItemUi>,
+    weeklyClasses: List<WeeklyClassUi>,
+    tasks: List<TaskUiModel>,
     subjects: List<com.lernspace.app.ui.learning.SubjectUi>,
     onAcceptSuggestion: (String) -> Unit,
     onToggleComplete: (PlannerItemUi) -> Unit,
     onOpenNoteForTopic: (topicId: String, topicTitle: String, subjectId: String?, subjectName: String?) -> Unit,
     onViewInSyllabus: (String?) -> Unit,
+    onAutoSchedule: () -> Unit,
     onDeleteItem: (PlannerItemUi) -> Unit
 ) {
-    var selectedDayOffset by remember { mutableIntStateOf(0) } // 0 = Today, 1 = Tomorrow, 2 = Wed...
-    val dayNames = listOf("Today, Nov 8 (Mon)", "Tomorrow, Nov 9 (Tue)", "Wednesday, Nov 10", "Thursday, Nov 11", "Friday, Nov 12")
+    var selectedDayOffset by remember { mutableIntStateOf(0) } // 0 = Today
+    val dayNames = listOf("Hari Ini (Senin, 8 Nov)", "Besok (Selasa, 9 Nov)", "Rabu, 10 Nov", "Kamis, 11 Nov", "Jumat, 12 Nov")
 
     val dayItems = remember(scheduleItems.size, selectedDayOffset) {
         scheduleItems.filter { it.dayOffset == selectedDayOffset }.sortedBy { it.startTime }
@@ -294,7 +953,7 @@ private fun DayAgendaView(
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Day selector tabs
+            // Header Bar
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -311,66 +970,42 @@ private fun DayAgendaView(
                     }
                 }
 
-                Text(
-                    text = "${dayItems.size} scheduled blocks",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = LernspaceTextSecondary
-                )
+                Button(
+                    onClick = onAutoSchedule,
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentAmber),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Icon(Icons.Filled.AutoAwesome, null, modifier = Modifier.size(15.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Auto-Schedule Jam Belajar", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
             }
 
             // Timeline Items List
-            if (dayItems.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(LernspaceSurfaceLow),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(Icons.Filled.EventAvailable, null, tint = AccentTeal, modifier = Modifier.size(44.dp))
-                        Text(
-                            text = "No scheduled blocks for this day",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = LernspaceDark
-                        )
-                        Text(
-                            text = "Use '+ Plan Session' or 'Auto-Schedule Slot' to allocate study time",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = LernspaceTextSecondary
-                        )
-                    }
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    items(dayItems, key = { it.id }) { item ->
-                        val matchingSubject = subjects.find { it.id == item.subjectId }
-                        val subjectColor = matchingSubject?.color ?: AccentBlue
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                items(dayItems, key = { it.id }) { item ->
+                    val matchingSubject = subjects.find { it.id == item.subjectId }
+                    val subjectColor = matchingSubject?.color ?: AccentBlue
 
-                        AgendaTimelineCard(
-                            item = item,
-                            subjectColor = subjectColor,
-                            onAcceptSuggestion = { onAcceptSuggestion(item.id) },
-                            onToggleComplete = { onToggleComplete(item) },
-                            onOpenNote = {
-                                if (item.topicId != null) {
-                                    onOpenNoteForTopic(item.topicId, item.topicName ?: item.title, item.subjectId, item.subjectName)
-                                }
-                            },
-                            onViewSyllabus = { onViewInSyllabus(item.subjectId) },
-                            onDelete = { onDeleteItem(item) }
-                        )
-                    }
+                    AgendaTimelineCard(
+                        item = item,
+                        subjectColor = subjectColor,
+                        onAcceptSuggestion = { onAcceptSuggestion(item.id) },
+                        onToggleComplete = { onToggleComplete(item) },
+                        onOpenNote = {
+                            if (item.topicId != null) {
+                                onOpenNoteForTopic(item.topicId, item.topicName ?: item.title, item.subjectId, item.subjectName)
+                            }
+                        },
+                        onViewSyllabus = { onViewInSyllabus(item.subjectId) },
+                        onDelete = { onDeleteItem(item) }
+                    )
                 }
             }
         }
@@ -407,7 +1042,7 @@ private fun AgendaTimelineCard(
         Row(
             modifier = Modifier.fillMaxWidth()
         ) {
-            // Left Ribbon (colored by subject or hybrid amber)
+            // Left Ribbon
             Box(
                 modifier = Modifier
                     .width(6.dp)
@@ -421,7 +1056,6 @@ private fun AgendaTimelineCard(
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // Row 1: Time, Type Chip, Subject, Checkbox & Actions
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -431,7 +1065,6 @@ private fun AgendaTimelineCard(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        // Time badge
                         Surface(
                             shape = RoundedCornerShape(6.dp),
                             color = LernspaceDark
@@ -445,7 +1078,6 @@ private fun AgendaTimelineCard(
                             )
                         }
 
-                        // Type chip
                         Surface(
                             shape = RoundedCornerShape(6.dp),
                             color = item.type.chipBg
@@ -467,7 +1099,6 @@ private fun AgendaTimelineCard(
                             }
                         }
 
-                        // Subject tag
                         if (item.subjectName != null) {
                             Text(
                                 text = "•  ${item.subjectName}",
@@ -477,7 +1108,6 @@ private fun AgendaTimelineCard(
                             )
                         }
 
-                        // Location
                         if (item.locationOrRoom != null) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -489,7 +1119,6 @@ private fun AgendaTimelineCard(
                         }
                     }
 
-                    // Checkbox / Delete
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -511,7 +1140,6 @@ private fun AgendaTimelineCard(
                     }
                 }
 
-                // Row 2: Title
                 Text(
                     text = item.title,
                     style = MaterialTheme.typography.titleMedium,
@@ -520,7 +1148,6 @@ private fun AgendaTimelineCard(
                     textDecoration = if (item.isCompleted) TextDecoration.LineThrough else TextDecoration.None
                 )
 
-                // Row 3: Hybrid Engine Reasoning OR Attached Topic Actions
                 if (isHybrid && item.aiReason != null) {
                     Surface(
                         shape = RoundedCornerShape(8.dp),
@@ -554,13 +1181,12 @@ private fun AgendaTimelineCard(
                                 colors = ButtonDefaults.buttonColors(containerColor = AccentAmber),
                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                             ) {
-                                Text("Accept & Schedule", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text("Accept & Jadwalkan", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
                 }
 
-                // Row 4: Connected Syllabus Sub-bab & Note Launch Link
                 if (item.topicName != null) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -581,17 +1207,15 @@ private fun AgendaTimelineCard(
                         }
 
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            // View Syllabus
                             TextButton(
                                 onClick = onViewSyllabus,
                                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
                             ) {
                                 Icon(Icons.AutoMirrored.Filled.MenuBook, null, modifier = Modifier.size(14.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("View Syllabus", fontSize = 11.sp)
+                                Text("Cek Silabus", fontSize = 11.sp)
                             }
 
-                            // Open Lecture Note
                             Button(
                                 onClick = onOpenNote,
                                 shape = RoundedCornerShape(6.dp),
@@ -600,7 +1224,7 @@ private fun AgendaTimelineCard(
                             ) {
                                 Icon(Icons.Filled.Create, null, modifier = Modifier.size(13.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("Open Note Canvas", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                Text("Buka Catatan Canvas", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                             }
                         }
                     }
@@ -611,416 +1235,43 @@ private fun AgendaTimelineCard(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// VIEW 2: Week Schedule (7 Columns Landscape Timetable)
+// DIALOG: Input Tugas & Set Deadline
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
-private fun WeekScheduleView(
-    scheduleItems: List<PlannerItemUi>,
-    subjects: List<com.lernspace.app.ui.learning.SubjectUi>,
-    onOpenItem: (PlannerItemUi) -> Unit
-) {
-    val weekDays = listOf(
-        Pair(1, "Mon (Nov 8)"),
-        Pair(2, "Tue (Nov 9)"),
-        Pair(3, "Wed (Nov 10)"),
-        Pair(4, "Thu (Nov 11)"),
-        Pair(5, "Fri (Nov 12)"),
-        Pair(6, "Sat (Nov 13)"),
-        Pair(7, "Sun (Nov 14)")
-    )
-
-    Surface(
-        modifier = Modifier.fillMaxSize(),
-        shape = RoundedCornerShape(16.dp),
-        color = LernspaceSurfaceCard,
-        border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder),
-        shadowElevation = 1.dp
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text(
-                text = "Week of Nov 8 - Nov 14, 2026",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = LernspaceDark
-            )
-
-            // 7 Columns Grid
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                weekDays.forEach { (dayIndex, dayLabel) ->
-                    val isToday = dayIndex == 1
-                    val dayCommitments = scheduleItems.filter { it.dayOfWeek == dayIndex }.sortedBy { it.startTime }
-
-                    Surface(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight(),
-                        shape = RoundedCornerShape(10.dp),
-                        color = if (isToday) Color(0xFFF0FDF4) else LernspaceSurfaceLow,
-                        border = androidx.compose.foundation.BorderStroke(
-                            width = if (isToday) 1.5.dp else 1.dp,
-                            color = if (isToday) Color(0xFF86EFAC) else LernspaceBorder
-                        )
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            // Column Header
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = dayLabel,
-                                    fontSize = 11.sp,
-                                    fontWeight = if (isToday) FontWeight.Bold else FontWeight.SemiBold,
-                                    color = if (isToday) Color(0xFF166534) else LernspaceDark
-                                )
-                                if (isToday) {
-                                    Surface(shape = CircleShape, color = Color(0xFF166534)) {
-                                        Box(modifier = Modifier.size(6.dp))
-                                    }
-                                }
-                            }
-
-                            Divider(color = LernspaceBorder.copy(alpha = 0.6f))
-
-                            // Items in this day
-                            LazyColumn(
-                                modifier = Modifier.fillMaxSize(),
-                                verticalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                items(dayCommitments, key = { it.id }) { item ->
-                                    val subj = subjects.find { it.id == item.subjectId }
-                                    val barColor = subj?.color ?: if (item.type == ScheduleType.EXAM) Color(0xFFE11D48) else AccentBlue
-
-                                    Surface(
-                                        shape = RoundedCornerShape(6.dp),
-                                        color = Color.White,
-                                        border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clickable { onOpenItem(item) }
-                                    ) {
-                                        Row(modifier = Modifier.fillMaxWidth()) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .width(3.dp)
-                                                    .fillMaxHeight()
-                                                    .background(barColor)
-                                            )
-                                            Column(modifier = Modifier.padding(6.dp)) {
-                                                Text(text = item.startTime, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
-                                                Text(
-                                                    text = item.title,
-                                                    fontSize = 10.sp,
-                                                    fontWeight = FontWeight.SemiBold,
-                                                    color = LernspaceDark,
-                                                    maxLines = 2,
-                                                    lineHeight = 12.sp
-                                                )
-                                                if (item.locationOrRoom != null) {
-                                                    Text(text = item.locationOrRoom, fontSize = 8.sp, color = LernspaceTextSecondary, maxLines = 1)
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// VIEW 3: Month Horizon (35-day grid with deadlines & exam highlights)
-// ─────────────────────────────────────────────────────────────────────────────
-@Composable
-private fun MonthHorizonView(
-    scheduleItems: List<PlannerItemUi>,
-    onViewSyllabus: (String?) -> Unit
-) {
-    Surface(
-        modifier = Modifier.fillMaxSize(),
-        shape = RoundedCornerShape(16.dp),
-        color = LernspaceSurfaceCard,
-        border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder),
-        shadowElevation = 1.dp
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(20.dp),
-            horizontalArrangement = Arrangement.spacedBy(20.dp)
-        ) {
-            // Left 70%: Calendar Grid for November 2026
-            Column(
-                modifier = Modifier
-                    .weight(1.3f)
-                    .fillMaxHeight(),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "November 2026",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = LernspaceDark
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(AccentBlue))
-                            Text("Lecture", fontSize = 11.sp, color = LernspaceTextSecondary)
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Color(0xFFE11D48)))
-                            Text("Exam", fontSize = 11.sp, color = LernspaceTextSecondary)
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(AccentTeal))
-                            Text("Study Block", fontSize = 11.sp, color = LernspaceTextSecondary)
-                        }
-                    }
-                }
-
-                // Month Grid Header (Sun to Sat)
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    listOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat").forEach { d ->
-                        Text(
-                            text = d,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = LernspaceTextSecondary,
-                            modifier = Modifier.weight(1f),
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                        )
-                    }
-                }
-
-                // Days (Nov 1 is Sunday)
-                Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    val daysInNov = (1..30).toList()
-                    val weeks = daysInNov.chunked(7)
-
-                    weeks.forEach { week ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1f),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            week.forEach { dayNumber ->
-                                val isToday = dayNumber == 8
-                                val hasExam = dayNumber == 10
-                                val hasDeadline = dayNumber == 12
-
-                                Surface(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .fillMaxHeight(),
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = if (isToday) Color(0xFFEFF6FF) else LernspaceSurfaceLow,
-                                    border = androidx.compose.foundation.BorderStroke(
-                                        width = if (isToday) 1.5.dp else 1.dp,
-                                        color = if (isToday) AccentBlue else LernspaceBorder.copy(alpha = 0.5f)
-                                    )
-                                ) {
-                                    Column(
-                                        modifier = Modifier.padding(6.dp),
-                                        verticalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Text(
-                                            text = "$dayNumber",
-                                            fontSize = 11.sp,
-                                            fontWeight = if (isToday) FontWeight.Bold else FontWeight.SemiBold,
-                                            color = if (isToday) AccentBlue else LernspaceDark
-                                        )
-
-                                        // Event indicator dots
-                                        Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                                            if (dayNumber in listOf(2, 4, 8, 9, 11, 15, 17, 22)) {
-                                                Box(modifier = Modifier.size(5.dp).clip(CircleShape).background(AccentBlue))
-                                            }
-                                            if (hasExam) {
-                                                Box(modifier = Modifier.size(5.dp).clip(CircleShape).background(Color(0xFFE11D48)))
-                                            }
-                                            if (hasDeadline) {
-                                                Box(modifier = Modifier.size(5.dp).clip(CircleShape).background(AccentAmber))
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            // Fill remaining row if week < 7 days
-                            for (i in week.size until 7) {
-                                Box(modifier = Modifier.weight(1f).fillMaxHeight())
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Right 30%: Academic Milestones & Deadlines List
-            Surface(
-                modifier = Modifier
-                    .weight(0.7f)
-                    .fillMaxHeight(),
-                shape = RoundedCornerShape(12.dp),
-                color = LernspaceSurfaceLow,
-                border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Text(
-                        text = "Upcoming Milestones",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = LernspaceDark
-                    )
-
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        item {
-                            MilestoneCard(
-                                title = "Neurobiology Mid-Term Quiz",
-                                subject = "NEUR-401",
-                                date = "Wed, Nov 10 • 10:00 AM",
-                                typeColor = Color(0xFFE11D48),
-                                onViewSyllabus = { onViewSyllabus("subj-1") }
-                            )
-                        }
-                        item {
-                            MilestoneCard(
-                                title = "Stats Problem Set #4 Due",
-                                subject = "STAT-210",
-                                date = "Fri, Nov 12 • 5:00 PM",
-                                typeColor = AccentAmber,
-                                onViewSyllabus = { onViewSyllabus("subj-3") }
-                            )
-                        }
-                        item {
-                            MilestoneCard(
-                                title = "Cognitive Psych Essay Draft",
-                                subject = "PSYC-320",
-                                date = "Tue, Nov 16 • 11:59 PM",
-                                typeColor = AccentBlue,
-                                onViewSyllabus = { onViewSyllabus("subj-2") }
-                            )
-                        }
-                        item {
-                            MilestoneCard(
-                                title = "Orgo II Synthesis Project",
-                                subject = "CHEM-222",
-                                date = "Fri, Nov 20 • 2:00 PM",
-                                typeColor = Color(0xFF8B5CF6),
-                                onViewSyllabus = { onViewSyllabus("subj-4") }
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun MilestoneCard(
-    title: String,
-    subject: String,
-    date: String,
-    typeColor: Color,
-    onViewSyllabus: () -> Unit
-) {
-    Surface(
-        shape = RoundedCornerShape(8.dp),
-        color = Color.White,
-        border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder),
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onViewSyllabus() }
-    ) {
-        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Surface(shape = RoundedCornerShape(4.dp), color = typeColor.copy(alpha = 0.15f)) {
-                    Text(
-                        text = subject,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = typeColor,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                    )
-                }
-                Text(text = date, fontSize = 10.sp, color = LernspaceTextSecondary)
-            }
-            Text(text = title, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
-        }
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// DIALOG: Plan Session / Add Event
-// ─────────────────────────────────────────────────────────────────────────────
-@Composable
-private fun PlanSessionDialog(
+private fun InputTaskDialog(
     subjects: List<com.lernspace.app.ui.learning.SubjectUi>,
     topics: List<com.lernspace.app.ui.learning.TopicUi>,
+    initialDayNumber: Int,
     onDismiss: () -> Unit,
     onConfirm: (
         title: String,
-        type: ScheduleType,
-        startTime: String,
-        endTime: String,
-        dayOffset: Int,
         subject: com.lernspace.app.ui.learning.SubjectUi?,
         topic: com.lernspace.app.ui.learning.TopicUi?,
-        room: String
+        dueDayNumber: Int,
+        dueTime: String,
+        priority: String,
+        estMinutes: Int,
+        notes: String
     ) -> Unit
 ) {
     var title by remember { mutableStateOf("") }
-    var selectedType by remember { mutableStateOf(ScheduleType.STUDY_SESSION) }
-    var startTime by remember { mutableStateOf("10:00") }
-    var endTime by remember { mutableStateOf("11:30") }
-    var dayOffset by remember { mutableIntStateOf(0) } // 0 = Today, 1 = Tomorrow
     var selectedSubject by remember { mutableStateOf(subjects.firstOrNull()) }
-    var selectedTopic by remember { mutableStateOf<com.lernspace.app.ui.learning.TopicUi?>(null) }
-    var room by remember { mutableStateOf("") }
-
     val subjectTopics = remember(selectedSubject) {
         if (selectedSubject != null) topics.filter { it.subjectId == selectedSubject!!.id } else emptyList()
     }
+    var selectedTopic by remember { mutableStateOf<com.lernspace.app.ui.learning.TopicUi?>(null) }
+    var dueDayNumber by remember { mutableIntStateOf(initialDayNumber) }
+    var dueTime by remember { mutableStateOf("23:59") }
+    var priority by remember { mutableStateOf("HIGH") } // HIGH, MEDIUM, LOW
+    var estMinutes by remember { mutableIntStateOf(90) }
+    var notesStr by remember { mutableStateOf("") }
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             shape = RoundedCornerShape(16.dp),
             color = Color.White,
             shadowElevation = 6.dp,
-            modifier = Modifier.width(460.dp)
+            modifier = Modifier.width(480.dp)
         ) {
             Column(
                 modifier = Modifier.padding(24.dp),
@@ -1031,36 +1282,24 @@ private fun PlanSessionDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Plan Session / Add Event", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                    Text("Input Tugas & Set Deadline", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = LernspaceDark)
                     IconButton(onClick = onDismiss, modifier = Modifier.size(24.dp)) {
                         Icon(Icons.Filled.Close, null)
-                    }
-                }
-
-                // Type selector chips
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(ScheduleType.values()) { t ->
-                        FilterChip(
-                            selected = selectedType == t,
-                            onClick = { selectedType = t },
-                            label = { Text(t.label, fontSize = 11.sp) },
-                            shape = RoundedCornerShape(8.dp)
-                        )
                     }
                 }
 
                 OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
-                    label = { Text("Title (e.g. Chapter 4 Practice Problems)") },
+                    label = { Text("Judul Tugas (misal: Laporan Praktikum Enzim)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(8.dp)
                 )
 
-                // Subject picker
+                // Select Subject
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Subject", style = MaterialTheme.typography.labelSmall, color = LernspaceTextSecondary)
+                    Text("Mata Kuliah / Pelajaran", style = MaterialTheme.typography.labelSmall, color = LernspaceTextSecondary)
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         items(subjects) { s ->
                             FilterChip(
@@ -1076,20 +1315,15 @@ private fun PlanSessionDialog(
                     }
                 }
 
-                // Topic picker
+                // Select Topic
                 if (subjectTopics.isNotEmpty()) {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Sub-bab / Topic", style = MaterialTheme.typography.labelSmall, color = LernspaceTextSecondary)
+                        Text("Sub-bab / Topik Silabus (Opsional)", style = MaterialTheme.typography.labelSmall, color = LernspaceTextSecondary)
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             items(subjectTopics) { t ->
                                 FilterChip(
                                     selected = selectedTopic == t,
-                                    onClick = {
-                                        selectedTopic = if (selectedTopic == t) null else t
-                                        if (title.isBlank() && selectedTopic != null) {
-                                            title = "Study: ${t.title}"
-                                        }
-                                    },
+                                    onClick = { selectedTopic = if (selectedTopic == t) null else t },
                                     label = { Text(t.title, fontSize = 11.sp) },
                                     shape = RoundedCornerShape(8.dp)
                                 )
@@ -1098,28 +1332,194 @@ private fun PlanSessionDialog(
                     }
                 }
 
-                // Time & Day Inputs
+                // Deadline inputs (Tanggal di November & Jam)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = "$dueDayNumber",
+                        onValueChange = { str -> str.toIntOrNull()?.let { dueDayNumber = it.coerceIn(1, 30) } },
+                        label = { Text("Tgl Nov (1-30)") },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(8.dp)
+                    )
+
+                    OutlinedTextField(
+                        value = dueTime,
+                        onValueChange = { dueTime = it },
+                        label = { Text("Jam Deadline") },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                }
+
+                // Priority chips
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Prioritas Tugas", style = MaterialTheme.typography.labelMedium, color = LernspaceDark)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf(
+                            Triple("HIGH", "Tinggi (Urgent)", Color(0xFFE11D48)),
+                            Triple("MEDIUM", "Sedang", AccentAmber),
+                            Triple("LOW", "Rendah", Color(0xFF64748B))
+                        ).forEach { (pKey, pLabel, pColor) ->
+                            FilterChip(
+                                selected = priority == pKey,
+                                onClick = { priority = pKey },
+                                label = { Text(pLabel, fontSize = 11.sp, color = if (priority == pKey) pColor else LernspaceDark) },
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                        }
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss) { Text("Batal") }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            if (title.isNotBlank()) {
+                                onConfirm(title.trim(), selectedSubject, selectedTopic, dueDayNumber, dueTime.trim(), priority, estMinutes, notesStr.trim())
+                            }
+                        },
+                        enabled = title.isNotBlank(),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentAmber)
+                    ) {
+                        Text("Simpan & Pasang di Kalender", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DIALOG: Set Jadwal Mapel Mingguan Baru
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun SetWeeklyClassDialog(
+    subjects: List<com.lernspace.app.ui.learning.SubjectUi>,
+    onDismiss: () -> Unit,
+    onConfirm: (
+        subject: com.lernspace.app.ui.learning.SubjectUi,
+        dayOfWeek: Int,
+        startTime: String,
+        endTime: String,
+        room: String,
+        lecturer: String,
+        type: String
+    ) -> Unit
+) {
+    var selectedSubject by remember { mutableStateOf(subjects.firstOrNull()) }
+    var dayOfWeek by remember { mutableIntStateOf(1) } // 1=Senin, 2=Selasa...
+    var startTime by remember { mutableStateOf("08:00") }
+    var endTime by remember { mutableStateOf("10:00") }
+    var room by remember { mutableStateOf("") }
+    var lecturer by remember { mutableStateOf("") }
+    var classType by remember { mutableStateOf("Lecture") } // Lecture, Lab, Practicum, Discussion
+
+    val weekDays = listOf(
+        Pair(1, "Senin"),
+        Pair(2, "Selasa"),
+        Pair(3, "Rabu"),
+        Pair(4, "Kamis"),
+        Pair(5, "Jumat"),
+        Pair(6, "Sabtu"),
+        Pair(7, "Minggu")
+    )
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = Color.White,
+            shadowElevation = 6.dp,
+            modifier = Modifier.width(480.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Set Jadwal Mapel Mingguan", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(24.dp)) {
+                        Icon(Icons.Filled.Close, null)
+                    }
+                }
+
+                // Subject picker
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Pilih Mata Kuliah / Pelajaran", style = MaterialTheme.typography.labelSmall, color = LernspaceTextSecondary)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(subjects) { s ->
+                            FilterChip(
+                                selected = selectedSubject == s,
+                                onClick = { selectedSubject = s },
+                                label = { Text("${s.name} (${s.code})", fontSize = 11.sp) },
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Hari picker (Senin - Minggu)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Hari Perkuliahan Rutin", style = MaterialTheme.typography.labelSmall, color = LernspaceTextSecondary)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(weekDays) { (dIdx, dName) ->
+                            FilterChip(
+                                selected = dayOfWeek == dIdx,
+                                onClick = { dayOfWeek = dIdx },
+                                label = { Text(dName, fontSize = 11.sp) },
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Jam mulai & selesai
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
                         value = startTime,
                         onValueChange = { startTime = it },
-                        label = { Text("Start Time") },
+                        label = { Text("Jam Mulai (08:00)") },
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(8.dp)
                     )
                     OutlinedTextField(
                         value = endTime,
                         onValueChange = { endTime = it },
-                        label = { Text("End Time") },
+                        label = { Text("Jam Selesai (10:00)") },
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(8.dp)
                     )
                 }
 
+                // Tipe Kuliah
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("Kuliah (Teori)", "Praktikum / Lab", "Diskusi / Tutorial").forEach { t ->
+                        FilterChip(
+                            selected = classType == t,
+                            onClick = { classType = t },
+                            label = { Text(t, fontSize = 11.sp) },
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                    }
+                }
+
                 OutlinedTextField(
                     value = room,
                     onValueChange = { room = it },
-                    label = { Text("Location / Room (Optional)") },
+                    label = { Text("Ruangan / Lab (misal: BioSci Hall 201)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(8.dp)
@@ -1130,17 +1530,19 @@ private fun PlanSessionDialog(
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    TextButton(onClick = onDismiss) { Text("Batal") }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = {
-                            val finalTitle = title.ifBlank { selectedTopic?.title ?: "Study Session" }
-                            onConfirm(finalTitle.trim(), selectedType, startTime.trim(), endTime.trim(), dayOffset, selectedSubject, selectedTopic, room.trim())
+                            if (selectedSubject != null) {
+                                onConfirm(selectedSubject!!, dayOfWeek, startTime.trim(), endTime.trim(), room.trim(), lecturer.trim(), classType)
+                            }
                         },
+                        enabled = selectedSubject != null,
                         shape = RoundedCornerShape(8.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark)
                     ) {
-                        Text("Add to Schedule")
+                        Text("Simpan Jadwal Mapel", fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -1170,7 +1572,6 @@ private fun HybridSuggestDialog(
         if (selectedSubject != null) topics.filter { it.subjectId == selectedSubject!!.id } else emptyList()
     }
     var selectedTopic by remember { mutableStateOf(subjectTopics.firstOrNull()) }
-
     var durationMinutes by remember { mutableIntStateOf(60) }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -1199,14 +1600,14 @@ private fun HybridSuggestDialog(
                 }
 
                 Text(
-                    text = "The deterministic Hybrid Study Engine searches your calendar for optimal open intervals between classes, prioritizing topics that need review.",
+                    text = "Mesin Hybrid menganalisis jadwal kuliah mingguan dan tenggat waktu tugas Anda untuk menemukan celah belajar bebas bentrok.",
                     style = MaterialTheme.typography.bodySmall,
                     color = LernspaceTextSecondary
                 )
 
                 // Select Subject
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Select Subject to Study", style = MaterialTheme.typography.labelSmall, color = LernspaceTextSecondary)
+                    Text("Pilih Mata Kuliah untuk Dipelajari", style = MaterialTheme.typography.labelSmall, color = LernspaceTextSecondary)
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         items(subjects) { s ->
                             FilterChip(
@@ -1225,7 +1626,7 @@ private fun HybridSuggestDialog(
                 // Select Topic
                 if (subjectTopics.isNotEmpty()) {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Target Topic / Sub-bab", style = MaterialTheme.typography.labelSmall, color = LernspaceTextSecondary)
+                        Text("Target Sub-bab / Materi", style = MaterialTheme.typography.labelSmall, color = LernspaceTextSecondary)
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             items(subjectTopics) { t ->
                                 FilterChip(
@@ -1245,7 +1646,7 @@ private fun HybridSuggestDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Target Duration", style = MaterialTheme.typography.labelMedium, color = LernspaceDark)
+                    Text("Durasi Belajar", style = MaterialTheme.typography.labelMedium, color = LernspaceDark)
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         listOf(45, 60, 90).forEach { mins ->
                             FilterChip(
@@ -1270,13 +1671,13 @@ private fun HybridSuggestDialog(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Recommended Slot Found", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF92400E))
+                            Text("Slot Rekomendasi Bebas Bentrok", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF92400E))
                             Surface(shape = RoundedCornerShape(4.dp), color = AccentAmber) {
                                 Text("10:30 - 11:30", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
                             }
                         }
                         Text(
-                            text = "Detected 90m open gap between Neurobiology Lecture and Lunch. Fully buffered, zero conflict.",
+                            text = "Terdeteksi jeda 90 menit setelah Kuliah Neurobiology sebelum istirahat siang. Buffer 15 menit aman.",
                             fontSize = 11.sp,
                             color = Color(0xFF78350F)
                         )
@@ -1288,7 +1689,7 @@ private fun HybridSuggestDialog(
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    TextButton(onClick = onDismiss) { Text("Batal") }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = {
@@ -1299,7 +1700,7 @@ private fun HybridSuggestDialog(
                                     durationMinutes,
                                     "10:30",
                                     "11:30",
-                                    "Deterministic suggestion: 60m study slot scheduled between morning classes."
+                                    "Saran deterministik: Slot belajar 60m dijadwalkan di antara jam kuliah pagi."
                                 )
                             }
                         },
@@ -1307,7 +1708,7 @@ private fun HybridSuggestDialog(
                         shape = RoundedCornerShape(8.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = AccentAmber)
                     ) {
-                        Text("Accept & Schedule", fontWeight = FontWeight.Bold)
+                        Text("Jadwalkan Sekarang", fontWeight = FontWeight.Bold)
                     }
                 }
             }
