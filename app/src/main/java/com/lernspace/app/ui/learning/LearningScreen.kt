@@ -114,15 +114,13 @@ fun LearningScreen(
 
     val activeSubject = subjects.find { it.id == selectedSubjectId } ?: subjects.firstOrNull()
 
-    // Filtered topics for active subject
-    val filteredTopics = remember(topics.size, selectedSubjectId, searchQuery, selectedStatusFilter) {
-        topics.filter { topic ->
-            topic.subjectId == selectedSubjectId &&
-                    (selectedStatusFilter == null || topic.status == selectedStatusFilter) &&
-                    (searchQuery.isBlank() ||
-                            topic.title.contains(searchQuery, ignoreCase = true) ||
-                            topic.description.contains(searchQuery, ignoreCase = true))
-        }
+    // Filtered topics for active subject (directly observed from SnapshotStateList)
+    val filteredTopics = topics.filter { topic ->
+        topic.subjectId == selectedSubjectId &&
+                (selectedStatusFilter == null || topic.status == selectedStatusFilter) &&
+                (searchQuery.isBlank() ||
+                        topic.title.contains(searchQuery, ignoreCase = true) ||
+                        topic.description.contains(searchQuery, ignoreCase = true))
     }
 
     // Progress metrics
@@ -425,10 +423,7 @@ fun LearningScreen(
                                             AcademicWorkspaceState.openNoteEditor(newNote)
                                         },
                                         onStatusChange = { newStatus ->
-                                            val idx = topics.indexOfFirst { it.id == topic.id }
-                                            if (idx != -1) {
-                                                topics[idx] = topics[idx].copy(status = newStatus)
-                                            }
+                                            AcademicWorkspaceState.updateTopicStatus(topic.id, newStatus)
                                         },
                                         onEdit = { topicToEdit = topic },
                                         onDelete = {

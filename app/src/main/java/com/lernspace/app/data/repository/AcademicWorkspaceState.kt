@@ -270,6 +270,13 @@ object AcademicWorkspaceState {
         return newNote
     }
 
+    fun updateTopicStatus(topicId: String, newStatus: TopicStatus) {
+        val idx = topics.indexOfFirst { it.id == topicId }
+        if (idx != -1) {
+            topics[idx] = topics[idx].copy(status = newStatus)
+        }
+    }
+
     // ── Planner & Calendar Schedule State ─────────────────────────────────────
     val scheduleItems = mutableStateListOf(
         PlannerItemUi(

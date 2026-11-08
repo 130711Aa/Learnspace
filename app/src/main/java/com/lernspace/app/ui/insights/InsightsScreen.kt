@@ -36,15 +36,13 @@ fun InsightsScreen(
     val notes = AcademicWorkspaceState.notes
     val weeklyClasses = AcademicWorkspaceState.weeklyClasses
 
-    // Memoized metrics
-    val totalTopics = remember(topics.size) { topics.size }
-    val masteredTopics = remember(topics.size) {
-        topics.count { it.status == TopicStatus.MASTERED || it.status == TopicStatus.COMFORTABLE }
-    }
+    // Live metrics directly observed from SnapshotStateList
+    val totalTopics = topics.size
+    val masteredTopics = topics.count { it.status == TopicStatus.MASTERED || it.status == TopicStatus.COMFORTABLE }
     val masteryRate = if (totalTopics > 0) (masteredTopics.toFloat() / totalTopics) else 0f
 
-    val totalTasks = remember(tasks.size) { tasks.size }
-    val completedTasks = remember(tasks.size) { tasks.count { it.isCompleted } }
+    val totalTasks = tasks.size
+    val completedTasks = tasks.count { it.isCompleted }
     val taskRate = if (totalTasks > 0) (completedTasks.toFloat() / totalTasks) else 0f
 
     val totalWeeklyHours = remember(weeklyClasses.size) {
