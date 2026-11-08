@@ -114,7 +114,17 @@ fun LernspaceTabHost(
                     .fillMaxSize()
                     .keepAliveTab(currentRoute == Screen.Insights.route)
             ) {
-                InsightsScreen()
+                InsightsScreen(
+                    onNavigateToSyllabus = { _ ->
+                        onNavigate(Screen.Learning.route)
+                    },
+                    onNavigateToPlanner = {
+                        onNavigate(Screen.Planner.route)
+                    },
+                    onNavigateToWorkspace = {
+                        onNavigate(Screen.Workspace.route)
+                    }
+                )
             }
         }
     }
