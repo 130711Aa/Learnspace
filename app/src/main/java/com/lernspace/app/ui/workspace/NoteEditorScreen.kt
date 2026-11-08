@@ -499,45 +499,61 @@ fun NoteEditorScreen(
         )
 
         // 8. Floating Zoom Percentage Indicator (Bottom-Left Corner of Canvas)
-        Surface(
-            shape = RoundedCornerShape(20.dp),
-            color = Color.White.copy(alpha = 0.95f),
-            shadowElevation = 3.dp,
-            border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+        ZoomIndicator(
+            scale = scale,
+            panX = panX,
+            panY = panY,
+            onReset = {
+                scale = 1f
+                panX = 0f
+                panY = 0f
+            },
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .padding(start = 20.dp, bottom = 20.dp)
-                .clickable {
-                    scale = 1f
-                    panX = 0f
-                    panY = 0f
-                }
+        )
+    }
+}
+
+@Composable
+private fun ZoomIndicator(
+    scale: Float,
+    panX: Float,
+    panY: Float,
+    onReset: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = Color.White.copy(alpha = 0.95f),
+        shadowElevation = 3.dp,
+        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+        modifier = modifier.clickable { onReset() }
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.ZoomIn,
-                    contentDescription = "Zoom",
-                    tint = Color(0xFF2563EB),
-                    modifier = Modifier.size(16.dp)
-                )
+            Icon(
+                imageVector = Icons.Filled.ZoomIn,
+                contentDescription = "Zoom",
+                tint = Color(0xFF2563EB),
+                modifier = Modifier.size(16.dp)
+            )
+            Text(
+                text = "${(scale * 100).roundToInt()}%",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF1E293B)
+            )
+            if (scale != 1f || panX != 0f || panY != 0f) {
                 Text(
-                    text = "${(scale * 100).roundToInt()}%",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF1E293B)
+                    text = "Reset",
+                    fontSize = 11.sp,
+                    color = Color(0xFF2563EB),
+                    fontWeight = FontWeight.SemiBold
                 )
-                if (scale != 1f || panX != 0f || panY != 0f) {
-                    Text(
-                        text = "Reset",
-                        fontSize = 11.sp,
-                        color = Color(0xFF2563EB),
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
             }
         }
     }
