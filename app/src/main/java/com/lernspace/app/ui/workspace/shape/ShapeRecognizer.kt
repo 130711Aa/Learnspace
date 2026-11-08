@@ -309,49 +309,50 @@ object ShapeRecognizer {
             val simplified = douglasPeucker(rawPoints, epsilon = diagonal * 0.08f)
             val cornerCount = maxOf(3, simplified.size - 1)
 
-            // 1. Measure circular/elliptical deviation
-            // Ideal circle/oval = 0.0. Hand-drawn circle/oval = 0.03 - 0.09.
-            // Mathematical square/rectangle has corner points at sqrt(2)*r = 1.414*r,
-            // producing an unavoidable theoretical average deviation of >= 0.148!
-            val rx = width / 2f
-            val ry = height / 2f
+            // ── 1. NORMALIZED RADIAL METRICS ──
+            // For any ellipse/circle: dxNorm^2 + dyNorm^2 = 1.0 everywhere on the perimeter.
+            // Ideal circle/oval: maxNormDist = 1.0, minNormDist = 1.0, spread = 0.0.
+            // Hand-drawn circle/oval: maxNormDist is always in [1.02, 1.18], spread < 0.22.
+            // Ideal rectangle/square: corner points have distance sqrt(1^2 + 1^2) = 1.414!
+            // Hand-drawn rectangle/square: maxNormDist is always in [1.30, 1.48], spread > 0.28!
+            val rx = maxOf(1f, width / 2f)
+            val ry = maxOf(1f, height / 2f)
+            var maxNormDist = 0f
+            var minNormDist = Float.MAX_VALUE
             var sumNormalizedDistDiff = 0f
+
             for (p in rawPoints) {
-                val dxNorm = (p.x - cx) / maxOf(1f, rx)
-                val dyNorm = (p.y - cy) / maxOf(1f, ry)
+                val dxNorm = (p.x - cx) / rx
+                val dyNorm = (p.y - cy) / ry
                 val distNorm = sqrt(dxNorm * dxNorm + dyNorm * dyNorm)
+                if (distNorm > maxNormDist) maxNormDist = distNorm
+                if (distNorm < minNormDist) minNormDist = distNorm
                 sumNormalizedDistDiff += abs(distNorm - 1f)
             }
             val avgCircleDeviation = sumNormalizedDistDiff / rawPoints.size
+            val radialSpread = maxNormDist - minNormDist
 
-            // 2. Measure proximity to the 4 bounding box edges (Perimeter Edge Ratio)
-            // A rectangle has points along its 4 straight sides, yielding edgeRatio >= 0.65 (usually 0.75 - 0.95).
-            // A circle/oval curves inward at diagonals, yielding edgeRatio <= 0.52.
-            val edgeTol = maxOf(10f, minOf(width, height) * 0.15f)
-            var edgeCount = 0
-            for (p in rawPoints) {
-                val dLeft = abs(p.x - minX)
-                val dRight = abs(p.x - maxX)
-                val dTop = abs(p.y - minY)
-                val dBottom = abs(p.y - maxY)
-                if (minOf(dLeft, dRight, dTop, dBottom) <= edgeTol) {
-                    edgeCount++
+            // ── 2. CORNER SHARPNESS ANALYSIS (Douglas-Peucker) ──
+            // In a rectangle, adjacent edges form sharp turns near 90 degrees (60° - 120°).
+            // In a circle/oval, all vertices have very obtuse angles (> 135°), so sharpTurns == 0.
+            val dpePts = if (simplified.size >= 4) simplified else rawPoints
+            var sharpCornerCount = 0
+            for (i in dpePts.indices) {
+                val prev = dpePts[(i - 1 + dpePts.size) % dpePts.size]
+                val curr = dpePts[i]
+                val next = dpePts[(i + 1) % dpePts.size]
+                val v1 = prev - curr
+                val v2 = next - curr
+                val len1 = v1.getDistance()
+                val len2 = v2.getDistance()
+                if (len1 > 12f && len2 > 12f) {
+                    val dot = (v1.x * v2.x + v1.y * v2.y) / (len1 * len2)
+                    val angleDeg = Math.toDegrees(kotlin.math.acos(dot.coerceIn(-1f, 1f)).toDouble()).toFloat()
+                    if (angleDeg in 60f..120f) {
+                        sharpCornerCount++
+                    }
                 }
             }
-            val edgeRatio = edgeCount.toFloat() / rawPoints.size
-
-            // 3. Test if points enter the 4 bounding box corners
-            // Rectangle drawers touch all 4 corners (cornersHit >= 3).
-            // Circle never enters corners (closest distance is 0.293*r), so cornersHit == 0.
-            val cornerTol = maxOf(14f, minOf(width, height) * 0.22f)
-            val hasTopLeft = rawPoints.any { hypot(it.x - minX, it.y - minY) <= cornerTol }
-            val hasTopRight = rawPoints.any { hypot(it.x - maxX, it.y - minY) <= cornerTol }
-            val hasBottomRight = rawPoints.any { hypot(it.x - maxX, it.y - maxY) <= cornerTol }
-            val hasBottomLeft = rawPoints.any { hypot(it.x - minX, it.y - maxY) <= cornerTol }
-            val cornersHit = (if (hasTopLeft) 1 else 0) + (if (hasTopRight) 1 else 0) +
-                             (if (hasBottomRight) 1 else 0) + (if (hasBottomLeft) 1 else 0)
-
-            val isDefiniteRectangle = (cornersHit >= 3 && areaRatio >= 0.70f) || (edgeRatio >= 0.64f && areaRatio >= 0.68f)
 
             // ── CHECK A: TRIANGLE ──
             // Area of a triangle can NEVER exceed 0.50-0.62 of its bounding box.
@@ -406,10 +407,12 @@ object ShapeRecognizer {
                 return createStrokeFromPoints(sampleTriangle(pts[0], pts[1], pts[2]), stroke.brush)
             }
 
-            // ── CHECK B: RECTANGLE / SQUARE ──
-            // Tested before circle because rectangles have high edgeRatio, cornersHit >= 3,
-            // and fill >= 0.70 of bounding box area.
-            if (isDefiniteRectangle || (areaRatio >= 0.72f && edgeRatio >= 0.60f)) {
+            // ── CHECK B: RECTANGLE / SQUARE vs CIRCLE / OVAL ──
+            // If corner distance reaches >= 1.25 and spread >= 0.24, or has >= 3 sharp 90-deg corners -> RECTANGLE!
+            // Otherwise, it is a smooth CIRCLE / OVAL!
+            val isRectangle = (maxNormDist >= 1.25f && radialSpread >= 0.24f) || (sharpCornerCount >= 3 && areaRatio >= 0.68f)
+
+            if (isRectangle) {
                 val isSquare = abs(width - height) / maxOf(width, height) < 0.18f
                 val finalW = if (isSquare) maxOf(width, height) else width
                 val finalH = if (isSquare) maxOf(width, height) else height
@@ -418,12 +421,8 @@ object ShapeRecognizer {
                 val fMinY = if (isSquare) cy - finalH / 2f else minY
                 val fMaxY = if (isSquare) cy + finalH / 2f else maxY
                 return createStrokeFromPoints(sampleRectangle(fMinX, fMinY, fMaxX, fMaxY), stroke.brush)
-            }
-
-            // ── CHECK C: CIRCLE / OVAL ──
-            // Circle/oval has low variance from ellipse formula (avgCircleDeviation < 0.12),
-            // does NOT hit box corners, and edgeRatio < 0.60.
-            if (avgCircleDeviation < 0.12f && edgeRatio < 0.60f && cornersHit <= 2) {
+            } else {
+                // Circle / Oval
                 val isNearSquare = abs(width - height) / maxOf(width, height) < 0.22f
                 val finalRx = if (isNearSquare) (rx + ry) / 2f else rx
                 val finalRy = if (isNearSquare) (rx + ry) / 2f else ry
