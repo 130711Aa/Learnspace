@@ -16,6 +16,11 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -42,6 +47,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke as DrawStroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalContext
@@ -362,8 +369,80 @@ fun NoteEditorScreen(
     }
 
     Box(modifier = modifier.fillMaxSize()) {
-        // 1. Vector Note Canvas Viewport
-        Box(modifier = Modifier.fillMaxSize()) {
+        // 1. Vector Note Canvas Viewport (Handles 1-finger pan & 2-finger zoom across ALL tools!)
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
+                        if (down.type == PointerType.Touch) {
+                            down.consume()
+
+                            var isTransforming = false
+                            var accumulatedPan = Offset.Zero
+                            val touchSlop = viewConfiguration.touchSlop
+
+                            while (true) {
+                                val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+
+                                // Palm rejection: ignore finger if stylus is on-screen
+                                val hasStylus = event.changes.any {
+                                    it.type == PointerType.Stylus || it.type == PointerType.Eraser
+                                }
+                                if (hasStylus) {
+                                    event.changes.forEach { if (it.type == PointerType.Touch) it.consume() }
+                                    continue
+                                }
+
+                                val pressedFingers = event.changes.filter {
+                                    it.type == PointerType.Touch && it.pressed
+                                }
+                                if (pressedFingers.isEmpty()) {
+                                    if (!isTransforming && accumulatedPan.getDistance() < touchSlop) {
+                                        deselectAll()
+                                    }
+                                    break
+                                }
+
+                                if (pressedFingers.size >= 2) {
+                                    // 2-finger pinch-to-zoom & pan
+                                    isTransforming = true
+                                    val zoom = event.calculateZoom()
+                                    val pan = event.calculatePan()
+                                    val centroid = event.calculateCentroid(useCurrent = false)
+                                    event.changes.forEach { it.consume() }
+
+                                    if (centroid != Offset.Unspecified && !zoom.isNaN() && zoom > 0f) {
+                                        val newScale = (scale * zoom).coerceIn(0.5f, 3.5f)
+                                        val effectiveZoom = newScale / scale
+                                        panX = centroid.x - (centroid.x - panX) * effectiveZoom + pan.x
+                                        panY = centroid.y - (centroid.y - panY) * effectiveZoom + pan.y
+                                        scale = newScale
+                                    }
+                                } else if (pressedFingers.size == 1) {
+                                    // 1-finger pan
+                                    val change = pressedFingers[0]
+                                    val panDelta = change.positionChange()
+                                    change.consume()
+
+                                    if (!isTransforming) {
+                                        accumulatedPan += panDelta
+                                        if (accumulatedPan.getDistance() > touchSlop) {
+                                            isTransforming = true
+                                            panX += accumulatedPan.x
+                                            panY += accumulatedPan.y
+                                        }
+                                    } else {
+                                        panX += panDelta.x
+                                        panY += panDelta.y
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+        ) {
             // Background Layer: Either PDF Document Page or Paper Style
             if (note.canvasType == NoteCanvasType.PDF_DOCUMENT) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
@@ -430,16 +509,6 @@ fun NoteEditorScreen(
                 panX = panX,
                 panY = panY,
                 onErase = { worldX, worldY -> eraseNear(worldX, worldY) },
-                onTransform = { centroid, pan, zoom ->
-                    val newScale = (scale * zoom).coerceIn(0.5f, 3.5f)
-                    val effectiveZoom = newScale / scale
-                    panX = centroid.x - (centroid.x - panX) * effectiveZoom + pan.x
-                    panY = centroid.y - (centroid.y - panY) * effectiveZoom + pan.y
-                    scale = newScale
-                },
-                onCanvasTap = {
-                    deselectAll()
-                },
                 modifier = Modifier.fillMaxSize()
             )
 
