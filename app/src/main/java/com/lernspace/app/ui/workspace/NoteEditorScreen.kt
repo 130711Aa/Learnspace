@@ -451,13 +451,20 @@ fun NoteEditorScreen(
                         .pointerInput(selectedShapeType, currentBrush) {
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false)
+                                // STYLUS ONLY: Fingers are for canvas pan & zoom!
+                                if (down.type != androidx.compose.ui.input.pointer.PointerType.Stylus && down.type != androidx.compose.ui.input.pointer.PointerType.Eraser) {
+                                    return@awaitEachGesture
+                                }
+
                                 val worldStart = Offset((down.position.x - panX) / scale, (down.position.y - panY) / scale)
                                 shapeDrawStart = worldStart
                                 shapeDrawCurrent = worldStart
 
                                 drag(down.id) { change ->
-                                    change.consume()
-                                    shapeDrawCurrent = Offset((change.position.x - panX) / scale, (change.position.y - panY) / scale)
+                                    if (change.type == androidx.compose.ui.input.pointer.PointerType.Stylus || change.type == androidx.compose.ui.input.pointer.PointerType.Eraser) {
+                                        change.consume()
+                                        shapeDrawCurrent = Offset((change.position.x - panX) / scale, (change.position.y - panY) / scale)
+                                    }
                                 }
 
                                 val start = shapeDrawStart
@@ -578,6 +585,11 @@ fun NoteEditorScreen(
                         .pointerInput(activeTool, lassoSelection == null) {
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false)
+                                // STYLUS ONLY: Fingers are for canvas pan & zoom!
+                                if (down.type != androidx.compose.ui.input.pointer.PointerType.Stylus && down.type != androidx.compose.ui.input.pointer.PointerType.Eraser) {
+                                    return@awaitEachGesture
+                                }
+
                                 val screenPoint = down.position
                                 val worldPoint = Offset((screenPoint.x - panX) / scale, (screenPoint.y - panY) / scale)
 
@@ -592,57 +604,61 @@ fun NoteEditorScreen(
                                     if (screenBounds.contains(screenPoint)) {
                                         val strokeIndices = curSel.selectedStrokes.map { strokes.indexOf(it) }
 
-                                        // Drag inside selection bounding box to MOVE selected items!
+                                        // Drag inside selection bounding box with stylus to MOVE selected items!
                                         drag(down.id) { change ->
-                                            val delta = change.positionChange()
-                                            change.consume()
-                                            val dx = delta.x / scale
-                                            val dy = delta.y / scale
+                                            if (change.type == androidx.compose.ui.input.pointer.PointerType.Stylus || change.type == androidx.compose.ui.input.pointer.PointerType.Eraser) {
+                                                val delta = change.positionChange()
+                                                change.consume()
+                                                val dx = delta.x / scale
+                                                val dy = delta.y / scale
 
-                                            if (dx != 0f || dy != 0f) {
-                                                // 1. Move selected strokes
-                                                for (i in curSel.selectedStrokes.indices) {
-                                                    val oldStroke = curSel.selectedStrokes[i]
-                                                    val newStroke = ShapeRecognizer.translateStroke(oldStroke, dx, dy)
-                                                    val idxInMain = strokeIndices[i]
-                                                    if (idxInMain != -1 && idxInMain < strokes.size) {
-                                                        strokes[idxInMain] = newStroke
+                                                if (dx != 0f || dy != 0f) {
+                                                    // 1. Move selected strokes
+                                                    for (i in curSel.selectedStrokes.indices) {
+                                                        val oldStroke = curSel.selectedStrokes[i]
+                                                        val newStroke = ShapeRecognizer.translateStroke(oldStroke, dx, dy)
+                                                        val idxInMain = strokeIndices[i]
+                                                        if (idxInMain != -1 && idxInMain < strokes.size) {
+                                                            strokes[idxInMain] = newStroke
+                                                        }
+                                                        curSel.selectedStrokes[i] = newStroke
                                                     }
-                                                    curSel.selectedStrokes[i] = newStroke
-                                                }
 
-                                                // 2. Move selected text boxes
-                                                for (box in curSel.selectedTextBoxes) {
-                                                    box.x += dx
-                                                    box.y += dy
-                                                }
+                                                    // 2. Move selected text boxes
+                                                    for (box in curSel.selectedTextBoxes) {
+                                                        box.x += dx
+                                                        box.y += dy
+                                                    }
 
-                                                // 3. Move selected images
-                                                for (img in curSel.selectedImages) {
-                                                    img.x += dx
-                                                    img.y += dy
-                                                }
+                                                    // 3. Move selected images
+                                                    for (img in curSel.selectedImages) {
+                                                        img.x += dx
+                                                        img.y += dy
+                                                    }
 
-                                                curSel.bounds = curSel.bounds.translate(Offset(dx, dy))
-                                                lassoSelection = curSel.copy(bounds = curSel.bounds)
+                                                    curSel.bounds = curSel.bounds.translate(Offset(dx, dy))
+                                                    lassoSelection = curSel.copy(bounds = curSel.bounds)
+                                                }
                                             }
                                         }
                                         return@awaitEachGesture
                                     } else {
-                                        // Tapped outside bounding box -> deselect!
+                                        // Stylus tapped outside bounding box -> deselect!
                                         lassoSelection = null
                                     }
                                 }
 
                                 if (activeTool == NoteTool.LASSO) {
-                                    // Draw new lasso loop
+                                    // Draw new lasso loop with stylus
                                     currentLassoLoop.clear()
                                     currentLassoLoop.add(worldPoint)
 
                                     drag(down.id) { change ->
-                                        change.consume()
-                                        val curWorld = Offset((change.position.x - panX) / scale, (change.position.y - panY) / scale)
-                                        currentLassoLoop.add(curWorld)
+                                        if (change.type == androidx.compose.ui.input.pointer.PointerType.Stylus || change.type == androidx.compose.ui.input.pointer.PointerType.Eraser) {
+                                            change.consume()
+                                            val curWorld = Offset((change.position.x - panX) / scale, (change.position.y - panY) / scale)
+                                            currentLassoLoop.add(curWorld)
+                                        }
                                     }
 
                                     // Finished drawing lasso loop: calculate matches!
