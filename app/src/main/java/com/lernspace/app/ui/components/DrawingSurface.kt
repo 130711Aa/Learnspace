@@ -84,7 +84,7 @@ fun DrawingSurface(
     //   This is the EXACT inverse of the strokeToScreen transform.
     // =========================================================================
 
-    val identityAndroidMatrix = remember { Matrix() }
+    val strokeToScreenMatrix = remember { Matrix() }
     val identityComposeMatrix = remember { androidx.compose.ui.graphics.Matrix() }
 
     // Mathematically exact inverse computed by android.graphics.Matrix.invert()
@@ -169,23 +169,25 @@ fun DrawingSurface(
                 }
             }
     ) {
-        // ─── Layer 1: Completed (dry) strokes rendered with hardware canvas transform ───
-        // Uses nativeCanvas.translate & nativeCanvas.scale so strokes track paper 100% physically!
+        // ─── Layer 1: Completed (dry) strokes rendered with dynamic vector LOD & antialiasing ───
+        // Passing strokeToScreenMatrix ensures CanvasStrokeRenderer tessellates vector curves
+        // natively at full screen resolution — ZERO BLUR at any zoom level!
         Canvas(modifier = Modifier.fillMaxSize()) {
             val s = currentScale
             val px = currentPanX
             val py = currentPanY
 
-            val nativeCanvas = drawContext.canvas.nativeCanvas
-            nativeCanvas.withSave {
-                nativeCanvas.translate(px, py)
-                nativeCanvas.scale(s, s)
+            strokeToScreenMatrix.reset()
+            strokeToScreenMatrix.postScale(s, s)
+            strokeToScreenMatrix.postTranslate(px, py)
 
-                strokes.fastForEach { stroke ->
+            val nativeCanvas = drawContext.canvas.nativeCanvas
+            strokes.fastForEach { stroke ->
+                nativeCanvas.withSave {
                     canvasStrokeRenderer.draw(
                         canvas = nativeCanvas,
                         stroke = stroke,
-                        strokeToScreenTransform = identityAndroidMatrix,
+                        strokeToScreenTransform = strokeToScreenMatrix,
                     )
                 }
             }
