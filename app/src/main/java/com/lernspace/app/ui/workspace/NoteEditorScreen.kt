@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
@@ -13,6 +14,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.*
@@ -20,8 +22,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
@@ -30,21 +34,30 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlin.math.roundToInt
 import androidx.ink.brush.Brush
 import androidx.ink.brush.StockBrushes
 import androidx.ink.brush.compose.createWithComposeColor
 import androidx.ink.rendering.android.canvas.CanvasStrokeRenderer
 import androidx.ink.strokes.Stroke
 import com.lernspace.app.ui.components.DrawingSurface
+import com.lernspace.app.ui.theme.AccentBlue
+import com.lernspace.app.ui.theme.LernspaceBorder
 import com.lernspace.app.ui.theme.LernspaceDark
+import com.lernspace.app.ui.theme.LernspaceSurfaceLow
 import com.lernspace.app.ui.workspace.components.DraggableImage
 import com.lernspace.app.ui.workspace.components.DraggableTextBox
 import com.lernspace.app.ui.workspace.components.NoteFloatingToolbar
 import com.lernspace.app.ui.workspace.components.PaperBackground
 import com.lernspace.app.ui.workspace.model.*
+import com.lernspace.app.ui.workspace.pdf.PdfNoteHelper
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 
 @Composable
 fun NoteEditorScreen(
@@ -53,29 +66,126 @@ fun NoteEditorScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
 
     // Note Meta
     var noteTitle by remember { mutableStateOf(note.title) }
-    var paperStyle by remember { mutableStateOf(PaperStyle.RULED) }
+    val paperStyle = note.paperStyle // Locked/Immutable format set from creation!
+
+    // Multi-page state
+    var currentPageIndex by remember { mutableIntStateOf(0) }
+    var totalPages by remember {
+        mutableIntStateOf(
+            if (note.canvasType == NoteCanvasType.PDF_DOCUMENT) maxOf(1, note.pdfTotalPages)
+            else maxOf(1, note.pages.size)
+        )
+    }
 
     // Tool State
     var activeTool by remember { mutableStateOf(NoteTool.PEN) }
     var selectedColor by remember { mutableStateOf(Color(0xFF16A34A)) } // Green default
     var selectedThickness by remember { mutableFloatStateOf(7f) }
 
-    // Inking State
+    // Inking State for the active page
     val strokes = remember { mutableStateListOf<Stroke>() }
     val undoneStrokes = remember { mutableStateListOf<Stroke>() }
     val canvasStrokeRenderer = remember { CanvasStrokeRenderer.create() }
 
-    // Text Boxes & Images
+    // Text Boxes & Images for the active page
     val textBoxes = remember { mutableStateListOf<TextBoxElement>() }
     val imageElements = remember { mutableStateListOf<ImageElement>() }
+
+    // PDF Page background bitmap state
+    var pdfPageBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
+    var isExporting by remember { mutableStateOf(false) }
 
     // Canvas Viewport Pan & Zoom State (Fingers only for Pan & Zoom, Stylus dedicated to Inking!)
     var scale by remember { mutableFloatStateOf(1f) }
     var panX by remember { mutableFloatStateOf(0f) }
     var panY by remember { mutableFloatStateOf(0f) }
+
+    // Page Synchronization Functions
+    fun saveActivePageData() {
+        while (note.pages.size <= currentPageIndex) {
+            note.pages.add(NotePageData(pageIndex = note.pages.size))
+        }
+        val target = note.pages[currentPageIndex]
+        target.strokes.clear()
+        target.strokes.addAll(strokes)
+        target.textBoxes.clear()
+        target.textBoxes.addAll(textBoxes)
+        target.imageElements.clear()
+        target.imageElements.addAll(imageElements)
+    }
+
+    fun loadActivePageData(index: Int) {
+        strokes.clear()
+        undoneStrokes.clear()
+        textBoxes.clear()
+        imageElements.clear()
+
+        while (note.pages.size <= index) {
+            note.pages.add(NotePageData(pageIndex = note.pages.size))
+        }
+        val source = note.pages[index]
+        strokes.addAll(source.strokes)
+        textBoxes.addAll(source.textBoxes)
+        imageElements.addAll(source.imageElements)
+    }
+
+    // Load initial page
+    LaunchedEffect(Unit) {
+        loadActivePageData(0)
+    }
+
+    // Load PDF Page Bitmap when currentPageIndex changes
+    LaunchedEffect(currentPageIndex, note.pdfUri) {
+        if (note.canvasType == NoteCanvasType.PDF_DOCUMENT && note.pdfUri != null) {
+            withContext(Dispatchers.IO) {
+                val bmp = PdfNoteHelper.renderPdfPage(context, Uri.parse(note.pdfUri), currentPageIndex, targetWidth = 1800)
+                if (bmp != null) {
+                    pdfPageBitmap = bmp.asImageBitmap()
+                }
+            }
+        }
+    }
+
+    // Multi-page navigation helpers
+    fun goToPage(targetIndex: Int) {
+        if (targetIndex != currentPageIndex && targetIndex in 0 until totalPages) {
+            saveActivePageData()
+            currentPageIndex = targetIndex
+            loadActivePageData(targetIndex)
+        }
+    }
+
+    fun addNewPage() {
+        saveActivePageData()
+        val newPage = NotePageData(pageIndex = note.pages.size)
+        note.pages.add(newPage)
+        totalPages = note.pages.size
+        currentPageIndex = note.pages.size - 1
+        loadActivePageData(currentPageIndex)
+    }
+
+    fun handleBack() {
+        saveActivePageData()
+        onBack()
+    }
+
+    fun handleExportPdf() {
+        saveActivePageData()
+        isExporting = true
+        coroutineScope.launch(Dispatchers.IO) {
+            val file = PdfNoteHelper.exportNoteToPdf(context, note, canvasStrokeRenderer)
+            withContext(Dispatchers.Main) {
+                isExporting = false
+                if (file != null) {
+                    PdfNoteHelper.sharePdf(context, file)
+                }
+            }
+        }
+    }
 
     // Helper: Deselect all objects
     fun deselectAll() {
@@ -185,18 +295,34 @@ fun NoteEditorScreen(
     }
 
     Box(modifier = modifier.fillMaxSize()) {
-        // 1. Vector Note Canvas Viewport (100% Vector Rendering - Zero Blur at Any Zoom Level!)
+        // 1. Vector Note Canvas Viewport
         Box(modifier = Modifier.fillMaxSize()) {
-            // Paper Background (Rendered at full native tablet display resolution)
-            PaperBackground(
-                style = paperStyle,
-                scale = scale,
-                panX = panX,
-                panY = panY,
-                modifier = Modifier.fillMaxSize()
-            )
+            // Background Layer: Either PDF Document Page or Paper Style
+            if (note.canvasType == NoteCanvasType.PDF_DOCUMENT) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    drawRect(Color(0xFFE2E8F0)) // desk canvas background
+                    if (pdfPageBitmap != null) {
+                        val bmp = pdfPageBitmap!!
+                        val dstW = bmp.width * scale
+                        val dstH = bmp.height * scale
+                        drawImage(
+                            image = bmp,
+                            dstOffset = IntOffset(panX.toInt(), panY.toInt()),
+                            dstSize = IntSize(dstW.toInt(), dstH.toInt())
+                        )
+                    }
+                }
+            } else {
+                PaperBackground(
+                    style = paperStyle,
+                    scale = scale,
+                    panX = panX,
+                    panY = panY,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
 
-            // Inking Layer (AndroidX Ink Native Vector Tessellation - STYLUS ONLY for Inking, FINGER for Pan & Zoom)
+            // Inking Layer (AndroidX Ink Native Vector Tessellation)
             DrawingSurface(
                 strokes = strokes,
                 canvasStrokeRenderer = canvasStrokeRenderer,
@@ -225,7 +351,7 @@ fun NoteEditorScreen(
                 modifier = Modifier.fillMaxSize()
             )
 
-            // Placed Images Layer (Rendered on top of DrawingSurface so gestures work cleanly!)
+            // Placed Images Layer
             imageElements.forEachIndexed { index, img ->
                 DraggableImage(
                     image = img,
@@ -252,7 +378,7 @@ fun NoteEditorScreen(
                 )
             }
 
-            // Placed Draggable Text Boxes Layer (MS Word Style - Crisp Vector Fonts)
+            // Placed Draggable Text Boxes Layer
             textBoxes.forEachIndexed { index, boxElement ->
                 DraggableTextBox(
                     box = boxElement,
@@ -288,7 +414,7 @@ fun NoteEditorScreen(
             }
         }
 
-        // 6. Unified Top App Bar (Title Capsule + Center Tools Toolbar + Action Capsule)
+        // 2. Unified Top App Bar (Title Capsule + Center Tools Toolbar + Action Capsule)
         UnifiedNoteTopBar(
             title = noteTitle,
             onTitleChange = {
@@ -296,8 +422,10 @@ fun NoteEditorScreen(
                 note.title = it
             },
             subject = note.subject,
+            canvasType = note.canvasType,
             paperStyle = paperStyle,
-            onSelectPaperStyle = { paperStyle = it },
+            currentPage = currentPageIndex + 1,
+            totalPages = totalPages,
             activeTool = activeTool,
             onSelectTool = { tool ->
                 activeTool = tool
@@ -352,13 +480,30 @@ fun NoteEditorScreen(
                 textBoxes.clear()
                 imageElements.clear()
             },
-            onBack = onBack,
+            onExportPdf = { handleExportPdf() },
+            isExporting = isExporting,
+            onBack = { handleBack() },
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
         )
 
-        // 7. Floating Zoom Percentage Indicator (Bottom-Left Corner of Canvas)
+        // 3. Floating Page Navigator Bar (Bottom Center) - Multi-Page and PDF Document
+        if (note.canvasType != NoteCanvasType.INFINITE_SCRATCHPAD) {
+            PageNavigatorBar(
+                currentPage = currentPageIndex + 1,
+                totalPages = totalPages,
+                canAddPage = note.canvasType == NoteCanvasType.PAGED_NOTE,
+                onPrevPage = { goToPage(currentPageIndex - 1) },
+                onNextPage = { goToPage(currentPageIndex + 1) },
+                onAddPage = { addNewPage() },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 16.dp)
+            )
+        }
+
+        // 4. Floating Zoom Percentage Indicator (Bottom-Left Corner of Canvas)
         ZoomIndicator(
             scale = scale,
             panX = panX,
@@ -375,57 +520,18 @@ fun NoteEditorScreen(
     }
 }
 
-@Composable
-private fun ZoomIndicator(
-    scale: Float,
-    panX: Float,
-    panY: Float,
-    onReset: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        shape = RoundedCornerShape(20.dp),
-        color = Color.White.copy(alpha = 0.95f),
-        shadowElevation = 3.dp,
-        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-        modifier = modifier.clickable { onReset() }
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Filled.ZoomIn,
-                contentDescription = "Zoom",
-                tint = Color(0xFF2563EB),
-                modifier = Modifier.size(16.dp)
-            )
-            Text(
-                text = "${(scale * 100).roundToInt()}%",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFF1E293B)
-            )
-            if (scale != 1f || panX != 0f || panY != 0f) {
-                Text(
-                    text = "Reset",
-                    fontSize = 11.sp,
-                    color = Color(0xFF2563EB),
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-        }
-    }
-}
-
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPONENT: Unified Floating Note Top Bar
+// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun UnifiedNoteTopBar(
     title: String,
     onTitleChange: (String) -> Unit,
     subject: String,
+    canvasType: NoteCanvasType,
     paperStyle: PaperStyle,
-    onSelectPaperStyle: (PaperStyle) -> Unit,
+    currentPage: Int,
+    totalPages: Int,
     activeTool: NoteTool,
     onSelectTool: (NoteTool) -> Unit,
     selectedColor: Color,
@@ -438,11 +544,11 @@ private fun UnifiedNoteTopBar(
     canRedo: Boolean,
     onRedo: () -> Unit,
     onClearAll: () -> Unit,
+    onExportPdf: () -> Unit,
+    isExporting: Boolean,
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var showPaperMenu by remember { mutableStateOf(false) }
-
     Row(
         modifier = modifier
             .statusBarsPadding()
@@ -450,7 +556,7 @@ private fun UnifiedNoteTopBar(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // ── 1. LEFT CAPSULE: Back Button + Constrained Title (Max 300dp) ────────
+        // ── 1. LEFT CAPSULE: Back Button + Title & Immutable Format Label (Max 300dp) ──
         Surface(
             shape = RoundedCornerShape(24.dp),
             color = Color.White.copy(alpha = 0.95f),
@@ -498,7 +604,11 @@ private fun UnifiedNoteTopBar(
                         modifier = Modifier.fillMaxWidth()
                     )
                     Text(
-                        text = "$subject · ${paperStyle.displayName}",
+                        text = when (canvasType) {
+                            NoteCanvasType.PDF_DOCUMENT -> "$subject · PDF Document (Hal $currentPage/$totalPages)"
+                            NoteCanvasType.PAGED_NOTE -> "$subject · ${paperStyle.displayName} (Hal $currentPage/$totalPages)"
+                            NoteCanvasType.INFINITE_SCRATCHPAD -> "$subject · Scratchpad Bebas"
+                        },
                         fontSize = 11.sp,
                         color = Color(0xFF64748B),
                         maxLines = 1,
@@ -519,7 +629,7 @@ private fun UnifiedNoteTopBar(
             onPickImage = onPickImage
         )
 
-        // ── 3. RIGHT CAPSULE: Paper Style, Undo, Redo, Clear ────────────────────
+        // ── 3. RIGHT CAPSULE: Export PDF, Undo, Redo, Clear ────────────────────
         Surface(
             shape = RoundedCornerShape(24.dp),
             color = Color.White.copy(alpha = 0.95f),
@@ -531,36 +641,23 @@ private fun UnifiedNoteTopBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                // Paper Style Selector
-                Box {
-                    Surface(
-                        shape = CircleShape,
-                        color = Color(0xFFF1F5F9),
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clickable { showPaperMenu = true }
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
+                // Export PDF Button
+                Surface(
+                    shape = CircleShape,
+                    color = Color(0xFFEFF6FF),
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clickable(enabled = !isExporting, onClick = onExportPdf)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        if (isExporting) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = AccentBlue)
+                        } else {
                             Icon(
-                                imageVector = Icons.Filled.Layers,
-                                contentDescription = "Paper style",
-                                tint = LernspaceDark,
+                                imageVector = Icons.Filled.Share,
+                                contentDescription = "Export PDF",
+                                tint = AccentBlue,
                                 modifier = Modifier.size(17.dp)
-                            )
-                        }
-                    }
-
-                    DropdownMenu(
-                        expanded = showPaperMenu,
-                        onDismissRequest = { showPaperMenu = false }
-                    ) {
-                        PaperStyle.values().forEach { style ->
-                            DropdownMenuItem(
-                                text = { Text(style.displayName) },
-                                onClick = {
-                                    onSelectPaperStyle(style)
-                                    showPaperMenu = false
-                                }
                             )
                         }
                     }
@@ -620,6 +717,159 @@ private fun UnifiedNoteTopBar(
                     }
                 }
             }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPONENT: Floating Page Navigator Bar (Bottom Center)
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun PageNavigatorBar(
+    currentPage: Int,
+    totalPages: Int,
+    canAddPage: Boolean,
+    onPrevPage: () -> Unit,
+    onNextPage: () -> Unit,
+    onAddPage: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        shape = RoundedCornerShape(24.dp),
+        color = Color.White.copy(alpha = 0.95f),
+        shadowElevation = 6.dp,
+        border = BorderStroke(1.dp, LernspaceBorder),
+        modifier = modifier
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            // Previous Page Button
+            Surface(
+                shape = CircleShape,
+                color = if (currentPage > 1) LernspaceSurfaceLow else Color.Transparent,
+                modifier = Modifier
+                    .size(34.dp)
+                    .clickable(enabled = currentPage > 1, onClick = onPrevPage)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Halaman Sebelumnya",
+                        tint = if (currentPage > 1) LernspaceDark else Color(0xFFCBD5E1),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+
+            // Page Indicator Label
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = LernspaceSurfaceLow,
+                modifier = Modifier.padding(horizontal = 2.dp)
+            ) {
+                Text(
+                    text = "Halaman $currentPage / $totalPages",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = LernspaceDark,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                )
+            }
+
+            // Next Page Button
+            Surface(
+                shape = CircleShape,
+                color = if (currentPage < totalPages) LernspaceSurfaceLow else Color.Transparent,
+                modifier = Modifier
+                    .size(34.dp)
+                    .clickable(enabled = currentPage < totalPages, onClick = onNextPage)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = "Halaman Berikutnya",
+                        tint = if (currentPage < totalPages) LernspaceDark else Color(0xFFCBD5E1),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+
+            // Add Page Button (for Paged Notes)
+            if (canAddPage) {
+                VerticalDivider(
+                    modifier = Modifier.height(18.dp),
+                    color = LernspaceBorder
+                )
+
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = LernspaceDark,
+                    modifier = Modifier.clickable(onClick = onAddPage)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            Icons.Filled.Add,
+                            contentDescription = "Tambah Halaman",
+                            tint = Color.White,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Text(
+                            text = "Tambah Hal",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPONENT: Zoom Percentage Indicator (Bottom-Left)
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun ZoomIndicator(
+    scale: Float,
+    panX: Float,
+    panY: Float,
+    onReset: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val percent = (scale * 100).roundToInt()
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = Color.White.copy(alpha = 0.92f),
+        shadowElevation = 4.dp,
+        border = BorderStroke(1.dp, LernspaceBorder),
+        modifier = modifier
+            .clickable(onClick = onReset)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Filled.ZoomIn,
+                contentDescription = "Zoom",
+                tint = LernspaceDark,
+                modifier = Modifier.size(16.dp)
+            )
+            Text(
+                text = "$percent%",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = LernspaceDark
+            )
         }
     }
 }

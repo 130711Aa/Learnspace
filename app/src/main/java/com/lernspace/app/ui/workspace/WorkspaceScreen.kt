@@ -1,5 +1,8 @@
 package com.lernspace.app.ui.workspace
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -21,13 +24,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.lernspace.app.data.repository.AcademicWorkspaceState
 import com.lernspace.app.ui.theme.*
-import com.lernspace.app.ui.workspace.model.NoteUiModel
+import com.lernspace.app.ui.workspace.model.*
+import com.lernspace.app.ui.workspace.pdf.PdfNoteHelper
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -38,6 +43,7 @@ import java.util.UUID
 fun WorkspaceScreen(
     onNavigateToSyllabus: ((subjectId: String?) -> Unit)? = null
 ) {
+    val context = LocalContext.current
     val notes = AcademicWorkspaceState.notes
     val subjects = AcademicWorkspaceState.subjects
     val topics = AcademicWorkspaceState.topics
@@ -45,6 +51,31 @@ fun WorkspaceScreen(
     var selectedFilterKey by remember { mutableStateOf("ALL") } // "ALL", "SCRATCHPAD", or subjectId
     var searchQuery by remember { mutableStateOf("") }
     var showNewNoteDialog by remember { mutableStateOf(false) }
+
+    // Direct PDF Import Launcher
+    val importPdfLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri?.let {
+            val fileName = PdfNoteHelper.getFileName(context, it).removeSuffix(".pdf")
+            val pageCount = PdfNoteHelper.getPdfPageCount(context, it)
+            val timeStr = "Today, " + SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
+            val newNote = NoteUiModel(
+                id = UUID.randomUUID().toString(),
+                title = fileName,
+                subject = "PDF Document",
+                date = timeStr,
+                snippet = "Anotasi PDF ($pageCount Halaman)...",
+                canvasType = NoteCanvasType.PDF_DOCUMENT,
+                paperStyle = PaperStyle.BLANK,
+                pdfUri = it.toString(),
+                pdfTotalPages = pageCount,
+                pages = mutableListOf(NotePageData(pageIndex = 0))
+            )
+            notes.add(0, newNote)
+            AcademicWorkspaceState.openNoteEditor(newNote)
+        }
+    }
 
     // Filtered notes
     val filteredNotes = remember(notes.size, selectedFilterKey, searchQuery) {
@@ -106,8 +137,19 @@ fun WorkspaceScreen(
                 )
             }
 
-            // Action Buttons
+            // Action Buttons (Impor PDF, Quick Scratchpad, New Note)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Import PDF Button
+                OutlinedButton(
+                    onClick = { importPdfLauncher.launch(arrayOf("application/pdf")) },
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
+                ) {
+                    Icon(imageVector = Icons.Filled.PictureAsPdf, contentDescription = null, modifier = Modifier.size(17.dp), tint = Color(0xFFDC2626))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Impor PDF", fontWeight = FontWeight.SemiBold, color = LernspaceDark)
+                }
+
                 // Quick Scratchpad Button
                 OutlinedButton(
                     onClick = {
@@ -300,18 +342,23 @@ fun WorkspaceScreen(
             subjects = subjects,
             topics = topics,
             onDismiss = { showNewNoteDialog = false },
-            onConfirm = { title, subject, topic, isScratchpad ->
+            onConfirm = { title, subject, topic, canvasType, paperStyle, pdfUri, pdfPages ->
                 val timeStr = "Today, " + SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
                 val newNote = NoteUiModel(
                     id = UUID.randomUUID().toString(),
                     title = title,
-                    subject = if (isScratchpad) "Quick Scratchpad" else (subject?.name ?: "General Study"),
+                    subject = if (canvasType == NoteCanvasType.INFINITE_SCRATCHPAD) "Quick Scratchpad" else (subject?.name ?: "General Study"),
                     date = timeStr,
-                    snippet = "Start handwriting or typing lecture notes...",
-                    subjectId = if (isScratchpad) null else subject?.id,
-                    topicId = if (isScratchpad) null else topic?.id,
-                    topicName = if (isScratchpad) null else topic?.title,
-                    isScratchpad = isScratchpad
+                    snippet = if (canvasType == NoteCanvasType.PDF_DOCUMENT) "Dokumen PDF ($pdfPages Halaman)..." else "Catatan ${paperStyle.displayName}...",
+                    subjectId = if (canvasType == NoteCanvasType.INFINITE_SCRATCHPAD) null else subject?.id,
+                    topicId = if (canvasType == NoteCanvasType.INFINITE_SCRATCHPAD) null else topic?.id,
+                    topicName = if (canvasType == NoteCanvasType.INFINITE_SCRATCHPAD) null else topic?.title,
+                    canvasType = canvasType,
+                    paperStyle = paperStyle,
+                    pdfUri = pdfUri,
+                    pdfTotalPages = pdfPages,
+                    pages = mutableListOf(NotePageData(pageIndex = 0)),
+                    isScratchpad = (canvasType == NoteCanvasType.INFINITE_SCRATCHPAD)
                 )
                 notes.add(0, newNote)
                 showNewNoteDialog = false
@@ -524,11 +571,36 @@ private fun CreateNoteDialog(
         title: String,
         subject: com.lernspace.app.ui.learning.SubjectUi?,
         topic: com.lernspace.app.ui.learning.TopicUi?,
-        isScratchpad: Boolean
+        canvasType: NoteCanvasType,
+        paperStyle: PaperStyle,
+        pdfUri: String?,
+        pdfPages: Int
     ) -> Unit
 ) {
+    val context = LocalContext.current
     var title by remember { mutableStateOf("") }
-    var isScratchpad by remember { mutableStateOf(false) }
+    var selectedCanvasType by remember { mutableStateOf(NoteCanvasType.PAGED_NOTE) }
+    var selectedPaperStyle by remember { mutableStateOf(PaperStyle.RULED) }
+
+    var selectedPdfUri by remember { mutableStateOf<String?>(null) }
+    var selectedPdfName by remember { mutableStateOf<String?>(null) }
+    var selectedPdfPages by remember { mutableIntStateOf(1) }
+
+    val pdfPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri?.let {
+            val fileName = PdfNoteHelper.getFileName(context, it).removeSuffix(".pdf")
+            val pages = PdfNoteHelper.getPdfPageCount(context, it)
+            selectedPdfUri = it.toString()
+            selectedPdfName = fileName
+            selectedPdfPages = pages
+            if (title.isBlank()) {
+                title = fileName
+            }
+        }
+    }
+
     var selectedSubject by remember { mutableStateOf(subjects.firstOrNull()) }
     var selectedTopic by remember { mutableStateOf<com.lernspace.app.ui.learning.TopicUi?>(null) }
 
@@ -545,83 +617,174 @@ private fun CreateNoteDialog(
             shape = RoundedCornerShape(16.dp),
             color = Color.White,
             shadowElevation = 6.dp,
-            modifier = Modifier.width(460.dp)
+            modifier = Modifier.width(520.dp)
         ) {
             Column(
                 modifier = Modifier.padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Create New Note", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                    Column {
+                        Text("Create New Note / Document", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                        Text("Pilih format media di awal (terkunci permanen untuk konsistensi)", style = MaterialTheme.typography.labelSmall, color = LernspaceTextSecondary)
+                    }
                     IconButton(onClick = onDismiss, modifier = Modifier.size(24.dp)) {
                         Icon(Icons.Filled.Close, null)
                     }
                 }
 
-                // Note Type Switcher (Lecture Note vs Quick Scratchpad)
+                // 1. FORMAT MEDIA SELECTOR (3 OPTIONS)
+                Text("1. Pilih Format Media Kanvas:", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = LernspaceDark)
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(LernspaceSurfaceLow)
-                        .padding(4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    // Option A: Paged Note
                     Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = if (!isScratchpad) Color.White else Color.Transparent,
-                        shadowElevation = if (!isScratchpad) 1.dp else 0.dp,
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (selectedCanvasType == NoteCanvasType.PAGED_NOTE) Color(0xFFEFF6FF) else LernspaceSurfaceLow,
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (selectedCanvasType == NoteCanvasType.PAGED_NOTE) AccentBlue else Color.Transparent
+                        ),
                         modifier = Modifier
                             .weight(1f)
-                            .clickable { isScratchpad = false }
+                            .clickable { selectedCanvasType = NoteCanvasType.PAGED_NOTE }
                     ) {
-                        Box(modifier = Modifier.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
-                            Text(
-                                text = "Course Lecture Note",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = if (!isScratchpad) FontWeight.Bold else FontWeight.Normal,
-                                color = if (!isScratchpad) LernspaceDark else LernspaceTextSecondary
-                            )
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(Icons.Filled.AutoStories, null, tint = if (selectedCanvasType == NoteCanvasType.PAGED_NOTE) AccentBlue else LernspaceDark, modifier = Modifier.size(20.dp))
+                            Text("Buku Berhalaman", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                            Text("Page 1 of N", fontSize = 9.sp, color = LernspaceTextSecondary)
                         }
                     }
 
+                    // Option B: PDF Document
                     Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = if (isScratchpad) Color.White else Color.Transparent,
-                        shadowElevation = if (isScratchpad) 1.dp else 0.dp,
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (selectedCanvasType == NoteCanvasType.PDF_DOCUMENT) Color(0xFFFEE2E2) else LernspaceSurfaceLow,
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (selectedCanvasType == NoteCanvasType.PDF_DOCUMENT) Color(0xFFDC2626) else Color.Transparent
+                        ),
                         modifier = Modifier
                             .weight(1f)
-                            .clickable { isScratchpad = true }
+                            .clickable {
+                                selectedCanvasType = NoteCanvasType.PDF_DOCUMENT
+                                if (selectedPdfUri == null) {
+                                    pdfPickerLauncher.launch(arrayOf("application/pdf"))
+                                }
+                            }
                     ) {
-                        Box(modifier = Modifier.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
-                            Text(
-                                text = "Quick Scratchpad",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = if (isScratchpad) FontWeight.Bold else FontWeight.Normal,
-                                color = if (isScratchpad) LernspaceDark else LernspaceTextSecondary
-                            )
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(Icons.Filled.PictureAsPdf, null, tint = if (selectedCanvasType == NoteCanvasType.PDF_DOCUMENT) Color(0xFFDC2626) else LernspaceDark, modifier = Modifier.size(20.dp))
+                            Text("Anotasi PDF", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                            Text("Impor PDF", fontSize = 9.sp, color = LernspaceTextSecondary)
+                        }
+                    }
+
+                    // Option C: Infinite Scratchpad
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (selectedCanvasType == NoteCanvasType.INFINITE_SCRATCHPAD) Color(0xFFFEF3C7) else LernspaceSurfaceLow,
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (selectedCanvasType == NoteCanvasType.INFINITE_SCRATCHPAD) AccentAmber else Color.Transparent
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { selectedCanvasType = NoteCanvasType.INFINITE_SCRATCHPAD }
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(Icons.Filled.Draw, null, tint = if (selectedCanvasType == NoteCanvasType.INFINITE_SCRATCHPAD) AccentAmber else LernspaceDark, modifier = Modifier.size(20.dp))
+                            Text("Scratchpad", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                            Text("Kanvas Bebas", fontSize = 9.sp, color = LernspaceTextSecondary)
                         }
                     }
                 }
 
+                // 2. SUB-SELECTOR BASED ON TYPE
+                if (selectedCanvasType == NoteCanvasType.PAGED_NOTE) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Template Kertas (Terkunci Permanen):", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = LernspaceTextSecondary)
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            PaperStyle.values().forEach { style ->
+                                FilterChip(
+                                    selected = selectedPaperStyle == style,
+                                    onClick = { selectedPaperStyle = style },
+                                    label = { Text(style.displayName, fontSize = 11.sp) },
+                                    shape = RoundedCornerShape(8.dp)
+                                )
+                            }
+                        }
+                    }
+                } else if (selectedCanvasType == NoteCanvasType.PDF_DOCUMENT) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = LernspaceSurfaceLow,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = selectedPdfName ?: "Belum ada file PDF yang dipilih",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = LernspaceDark,
+                                    maxLines = 1
+                                )
+                                Text(
+                                    text = if (selectedPdfUri != null) "$selectedPdfPages Halaman terdeteksi" else "Ketuk tombol untuk memilih dokumen",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = LernspaceTextSecondary
+                                )
+                            }
+                            OutlinedButton(
+                                onClick = { pdfPickerLauncher.launch(arrayOf("application/pdf")) },
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Text("Pilih PDF", fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+
+                // 3. TITLE INPUT
                 OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
-                    label = { Text(if (isScratchpad) "Scratchpad Title" else "Note Title") },
-                    placeholder = { Text(if (isScratchpad) "e.g. Brainstorming session" else "e.g. Action Potential & Ion Flux") },
+                    label = { Text("Judul Catatan") },
+                    placeholder = { Text("e.g. Action Potential & Ion Flux") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(8.dp)
                 )
 
-                if (!isScratchpad) {
-                    // Subject Selector
+                // 4. SUBJECT SELECTOR
+                if (selectedCanvasType != NoteCanvasType.INFINITE_SCRATCHPAD) {
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("Select Subject", style = MaterialTheme.typography.labelMedium, color = LernspaceTextSecondary)
+                        Text("Hubungkan ke Mata Kuliah:", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = LernspaceTextSecondary)
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             items(subjects) { subj ->
                                 FilterChip(
@@ -638,17 +801,17 @@ private fun CreateNoteDialog(
                                                 .background(subj.color)
                                         )
                                     },
-                                    label = { Text(subj.name, fontSize = 12.sp) },
+                                    label = { Text(subj.name, fontSize = 11.sp) },
                                     shape = RoundedCornerShape(8.dp)
                                 )
                             }
                         }
                     }
 
-                    // Topic / Sub-bab Selector
+                    // 5. TOPIC SELECTOR
                     if (subjectTopics.isNotEmpty()) {
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("Link to Sub-bab / Topic (Optional)", style = MaterialTheme.typography.labelMedium, color = LernspaceTextSecondary)
+                            Text("Hubungkan ke Sub-bab / Topik (Opsional):", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = LernspaceTextSecondary)
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 items(subjectTopics) { top ->
                                     FilterChip(
@@ -659,7 +822,7 @@ private fun CreateNoteDialog(
                                                 title = top.title
                                             }
                                         },
-                                        label = { Text(top.title, fontSize = 11.sp) },
+                                        label = { Text(top.title, fontSize = 10.sp) },
                                         shape = RoundedCornerShape(8.dp)
                                     )
                                 }
@@ -675,19 +838,31 @@ private fun CreateNoteDialog(
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    TextButton(onClick = onDismiss) { Text("Batal") }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = {
                             val finalTitle = title.ifBlank {
-                                if (isScratchpad) "Untitled Scratchpad" else selectedTopic?.title ?: "Untitled Note"
+                                when (selectedCanvasType) {
+                                    NoteCanvasType.PDF_DOCUMENT -> selectedPdfName ?: "Dokumen PDF"
+                                    NoteCanvasType.INFINITE_SCRATCHPAD -> "Untitled Scratchpad"
+                                    NoteCanvasType.PAGED_NOTE -> selectedTopic?.title ?: "Buku Catatan"
+                                }
                             }
-                            onConfirm(finalTitle.trim(), selectedSubject, selectedTopic, isScratchpad)
+                            onConfirm(
+                                finalTitle.trim(),
+                                selectedSubject,
+                                selectedTopic,
+                                selectedCanvasType,
+                                selectedPaperStyle,
+                                selectedPdfUri,
+                                selectedPdfPages
+                            )
                         },
                         shape = RoundedCornerShape(8.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark)
                     ) {
-                        Text("Open Canvas")
+                        Text("Buka Kanvas")
                     }
                 }
             }
