@@ -37,7 +37,13 @@ fun LernspaceNavHost(
             )
         }
         composable(Screen.Planner.route) {
-            PlannerScreen()
+            PlannerScreen(
+                onNavigateToSyllabus = { subjectId ->
+                    navController.navigate(Screen.Learning.route) {
+                        launchSingleTop = true
+                    }
+                }
+            )
         }
         composable(Screen.Learning.route) {
             LearningScreen(

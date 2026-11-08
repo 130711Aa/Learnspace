@@ -255,5 +255,153 @@ object AcademicWorkspaceState {
         notes.add(0, newNote)
         return newNote
     }
+
+    // ── Planner & Calendar Schedule State ─────────────────────────────────────
+    val scheduleItems = mutableStateListOf(
+        PlannerItemUi(
+            id = "sched-1",
+            title = "Neurobiology: Action Potentials & Ion Channels",
+            type = ScheduleType.LECTURE,
+            startTime = "08:30",
+            endTime = "10:00",
+            dayOfWeek = 1,
+            dayOffset = 0,
+            subjectId = "subj-1",
+            subjectName = "Neurobiology",
+            locationOrRoom = "BioSci Hall 201"
+        ),
+        PlannerItemUi(
+            id = "sched-2",
+            title = "Hybrid Review: Synaptic Transmission & LTP",
+            type = ScheduleType.HYBRID_SUGGESTION,
+            startTime = "10:30",
+            endTime = "11:45",
+            dayOfWeek = 1,
+            dayOffset = 0,
+            subjectId = "subj-1",
+            subjectName = "Neurobiology",
+            topicId = "top-3",
+            topicName = "Synaptic Transmission & LTP Plasticity",
+            aiReason = "Deterministic suggestion: 75m open gap detected. Topic marked NEEDS_REVIEW prior to Wednesday's quiz."
+        ),
+        PlannerItemUi(
+            id = "sched-3",
+            title = "Advanced Statistics: MCMC Simulation Lab",
+            type = ScheduleType.LAB,
+            startTime = "13:00",
+            endTime = "15:00",
+            dayOfWeek = 1,
+            dayOffset = 0,
+            subjectId = "subj-3",
+            subjectName = "Advanced Statistics",
+            locationOrRoom = "Math & Data Lab 3"
+        ),
+        PlannerItemUi(
+            id = "sched-4",
+            title = "Cognitive Psych: Working Memory Model Recap",
+            type = ScheduleType.STUDY_SESSION,
+            startTime = "15:30",
+            endTime = "16:45",
+            dayOfWeek = 1,
+            dayOffset = 0,
+            subjectId = "subj-2",
+            subjectName = "Cognitive Psychology",
+            topicId = "top-6",
+            topicName = "Baddeley's Multicomponent Working Memory",
+            locationOrRoom = "Library 2F Quiet Zone"
+        ),
+        PlannerItemUi(
+            id = "sched-5",
+            title = "Organic Chemistry II: Aromatic Synthesis & EAS",
+            type = ScheduleType.LECTURE,
+            startTime = "09:00",
+            endTime = "10:45",
+            dayOfWeek = 2,
+            dayOffset = 1,
+            subjectId = "subj-4",
+            subjectName = "Organic Chemistry II",
+            locationOrRoom = "Chem Annex 105"
+        ),
+        PlannerItemUi(
+            id = "sched-6",
+            title = "Neurobiology Mid-Term Quiz (Chapters 1-3)",
+            type = ScheduleType.EXAM,
+            startTime = "10:00",
+            endTime = "11:30",
+            dayOfWeek = 3,
+            dayOffset = 2,
+            subjectId = "subj-1",
+            subjectName = "Neurobiology",
+            locationOrRoom = "Auditorium B"
+        ),
+        PlannerItemUi(
+            id = "sched-7",
+            title = "Cognitive Psychology: Attention & Feature Integration",
+            type = ScheduleType.LECTURE,
+            startTime = "11:00",
+            endTime = "12:30",
+            dayOfWeek = 4,
+            dayOffset = 3,
+            subjectId = "subj-2",
+            subjectName = "Cognitive Psychology",
+            locationOrRoom = "Psychology Hall 12"
+        ),
+        PlannerItemUi(
+            id = "sched-8",
+            title = "Bayesian Inference Problem Set #4 Due",
+            type = ScheduleType.ASSIGNMENT_DEADLINE,
+            startTime = "17:00",
+            endTime = "17:00",
+            dayOfWeek = 5,
+            dayOffset = 4,
+            subjectId = "subj-3",
+            subjectName = "Advanced Statistics"
+        )
+    )
+
+    fun getItemsForDay(dayOffset: Int): List<PlannerItemUi> {
+        return scheduleItems.filter { it.dayOffset == dayOffset }.sortedBy { it.startTime }
+    }
+
+    fun getItemsForWeekday(dayOfWeek: Int): List<PlannerItemUi> {
+        return scheduleItems.filter { it.dayOfWeek == dayOfWeek }.sortedBy { it.startTime }
+    }
+
+    fun acceptHybridSuggestion(suggestionId: String) {
+        val idx = scheduleItems.indexOfFirst { it.id == suggestionId }
+        if (idx != -1) {
+            val item = scheduleItems[idx]
+            scheduleItems[idx] = item.copy(
+                type = ScheduleType.STUDY_SESSION,
+                title = item.title.replace("Hybrid Review:", "Study Session:")
+            )
+        }
+    }
 }
+
+enum class ScheduleType(val label: String, val chipBg: Color, val chipFg: Color) {
+    LECTURE("Lecture", Color(0xFFDBEAFE), Color(0xFF1D4ED8)),
+    LAB("Lab Session", Color(0xFFEDE9FE), Color(0xFF7C3AED)),
+    STUDY_SESSION("Self Study", Color(0xFFD1FAE5), Color(0xFF059669)),
+    HYBRID_SUGGESTION("Hybrid Suggestion", Color(0xFFFEF3C7), Color(0xFFD97706)),
+    EXAM("Exam / Quiz", Color(0xFFFFE4E6), Color(0xFFE11D48)),
+    ASSIGNMENT_DEADLINE("Deadline", Color(0xFFF1F5F9), Color(0xFF475569))
+}
+
+data class PlannerItemUi(
+    val id: String = UUID.randomUUID().toString(),
+    val title: String,
+    val type: ScheduleType,
+    val startTime: String, // e.g. "08:30"
+    val endTime: String,   // e.g. "10:00"
+    val dayOfWeek: Int = 1, // 1 = Mon ... 7 = Sun
+    val dayOffset: Int = 0, // 0 = Today, 1 = Tomorrow, etc.
+    val subjectId: String? = null,
+    val subjectName: String? = null,
+    val topicId: String? = null,
+    val topicName: String? = null,
+    val locationOrRoom: String? = null,
+    val isCompleted: Boolean = false,
+    val aiReason: String? = null
+)
 
