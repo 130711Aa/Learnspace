@@ -42,7 +42,11 @@ fun PlannerScreen(
     val notes = AcademicWorkspaceState.notes
 
     var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Kalender & Deadline", "Jadwal Mapel Mingguan", "Day Agenda & Auto-Study")
+    val tabs = listOf(
+        Pair("Kalender & Deadline", Icons.Filled.CalendarMonth),
+        Pair("Jadwal Mapel Mingguan", Icons.Filled.AccessTime),
+        Pair("Day Agenda & Auto-Study", Icons.Filled.Today)
+    )
 
     var activeNote by remember { mutableStateOf<NoteUiModel?>(null) }
     var showAddTaskDialog by remember { mutableStateOf(false) }
@@ -60,10 +64,8 @@ fun PlannerScreen(
     }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         // ── Top Header Navigation Bar ─────────────────────────────────────────
         Row(
@@ -71,142 +73,159 @@ fun PlannerScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "Planner & Academic Schedule",
-                        style = MaterialTheme.typography.headlineLarge,
-                        color = LernspaceDark,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = LernspaceSurfaceLow,
-                        border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder)
-                    ) {
-                        Text(
-                            text = "${tasks.count { !it.isCompleted }} Active Tasks",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = AccentAmber,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                        )
-                    }
-                }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 Text(
-                    text = "Jadwal mapel mingguan tetap, kalender deadline tugas, dan alokasi sesi belajar otomatis",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = LernspaceTextSecondary
+                    text = "Planner & Academic Schedule",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = LernspaceDark,
+                    fontWeight = FontWeight.Bold
                 )
-            }
-
-            // Top Action Controls
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                // Tab switcher
                 Surface(
-                    shape = RoundedCornerShape(10.dp),
+                    shape = RoundedCornerShape(12.dp),
                     color = LernspaceSurfaceLow,
                     border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder)
                 ) {
-                    Row(modifier = Modifier.padding(3.dp), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                        tabs.forEachIndexed { index, title ->
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = if (selectedTab == index) Color.White else Color.Transparent,
-                                shadowElevation = if (selectedTab == index) 1.dp else 0.dp,
-                                modifier = Modifier.clickable { selectedTab = index }
-                            ) {
-                                Text(
-                                    text = title,
-                                    fontSize = 13.sp,
-                                    fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Medium,
-                                    color = if (selectedTab == index) LernspaceDark else LernspaceTextSecondary,
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
-                                )
-                            }
-                        }
-                    }
+                    Text(
+                        text = "${tasks.count { !it.isCompleted }} Active Tasks",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = AccentAmber,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    )
                 }
+            }
 
+            // Top Action Controls
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 // Add Task / Deadline button
                 Button(
                     onClick = { showAddTaskDialog = true },
                     shape = RoundedCornerShape(10.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = AccentAmber),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
                 ) {
-                    Icon(imageVector = Icons.Filled.AddAlert, contentDescription = null, modifier = Modifier.size(17.dp))
+                    Icon(imageVector = Icons.Filled.AddAlert, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Input Tugas", fontWeight = FontWeight.Bold)
+                    Text("Input Tugas", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
 
                 // Set Weekly Class button
                 OutlinedButton(
                     onClick = { showAddWeeklyClassDialog = true },
                     shape = RoundedCornerShape(10.dp),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
                 ) {
-                    Icon(imageVector = Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(17.dp))
+                    Icon(imageVector = Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Set Jadwal Mapel", fontWeight = FontWeight.SemiBold, color = LernspaceDark)
+                    Text("Set Jadwal Mapel", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = LernspaceDark)
                 }
             }
         }
 
-        // ── Main Viewport Switcher ────────────────────────────────────────────
-        when (selectedTab) {
-            0 -> CalendarDeadlineFullView(
-                selectedDay = selectedCalendarDay,
-                onSelectDay = { selectedCalendarDay = it },
-                tasks = tasks,
-                weeklyClasses = weeklyClasses,
-                subjects = subjects,
-                onToggleTask = { taskId -> AcademicWorkspaceState.toggleTaskCompletion(taskId) },
-                onAddNewTaskForDay = { showAddTaskDialog = true },
-                onViewSyllabus = { subjectId -> onNavigateToSyllabus?.invoke(subjectId) }
-            )
-
-            1 -> WeeklyTimetableBuilderView(
-                weeklyClasses = weeklyClasses,
-                subjects = subjects,
-                onAddClass = { showAddWeeklyClassDialog = true },
-                onDeleteClass = { weeklyClasses.remove(it) }
-            )
-
-            2 -> DayAgendaView(
-                scheduleItems = scheduleItems,
-                weeklyClasses = weeklyClasses,
-                tasks = tasks,
-                subjects = subjects,
-                onAcceptSuggestion = { id -> AcademicWorkspaceState.acceptHybridSuggestion(id) },
-                onToggleComplete = { item ->
-                    val idx = scheduleItems.indexOfFirst { it.id == item.id }
-                    if (idx != -1) {
-                        scheduleItems[idx] = item.copy(isCompleted = !item.isCompleted)
-                    }
-                },
-                onOpenNoteForTopic = { topicId, topicTitle, subjectId, subjectName ->
-                    val existingNote = notes.find { it.topicId == topicId }
-                    if (existingNote != null) {
-                        activeNote = existingNote
-                    } else {
-                        val subj = subjects.find { it.id == subjectId }
-                        val top = topics.find { it.id == topicId }
-                        if (subj != null && top != null) {
-                            activeNote = AcademicWorkspaceState.createNoteForTopic(subj, top)
-                        } else {
-                            activeNote = AcademicWorkspaceState.createScratchpad(topicTitle)
+        // ── Navigation Tabs Switcher Bar ──────────────────────────────────────
+        Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = LernspaceSurfaceLow,
+            border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder),
+            modifier = Modifier.wrapContentWidth()
+        ) {
+            Row(modifier = Modifier.padding(3.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                tabs.forEachIndexed { index, (title, icon) ->
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (selectedTab == index) Color.White else Color.Transparent,
+                        shadowElevation = if (selectedTab == index) 1.dp else 0.dp,
+                        modifier = Modifier.clickable { selectedTab = index }
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+                        ) {
+                            Icon(
+                                imageVector = icon,
+                                contentDescription = null,
+                                tint = if (selectedTab == index) AccentBlue else LernspaceTextSecondary,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Text(
+                                text = title,
+                                fontSize = 12.sp,
+                                fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Medium,
+                                color = if (selectedTab == index) LernspaceDark else LernspaceTextSecondary
+                            )
                         }
                     }
-                },
-                onViewInSyllabus = { subjectId ->
-                    if (subjectId != null) {
-                        onNavigateToSyllabus?.invoke(subjectId)
-                    }
-                },
-                onAutoSchedule = { showHybridSuggestDialog = true },
-                onDeleteItem = { scheduleItems.remove(it) }
-            )
+                }
+            }
+        }
+
+        // ── Main Viewport Switcher (Fills 100% of remaining vertical space!) ───
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+        ) {
+            when (selectedTab) {
+                0 -> CalendarDeadlineFullView(
+                    selectedDay = selectedCalendarDay,
+                    onSelectDay = { selectedCalendarDay = it },
+                    tasks = tasks,
+                    weeklyClasses = weeklyClasses,
+                    subjects = subjects,
+                    onToggleTask = { taskId -> AcademicWorkspaceState.toggleTaskCompletion(taskId) },
+                    onAddNewTaskForDay = { showAddTaskDialog = true },
+                    onViewSyllabus = { subjectId -> onNavigateToSyllabus?.invoke(subjectId) }
+                )
+
+                1 -> WeeklyTimetableBuilderView(
+                    weeklyClasses = weeklyClasses,
+                    subjects = subjects,
+                    onAddClass = { showAddWeeklyClassDialog = true },
+                    onDeleteClass = { weeklyClasses.remove(it) }
+                )
+
+                2 -> DayAgendaView(
+                    scheduleItems = scheduleItems,
+                    weeklyClasses = weeklyClasses,
+                    tasks = tasks,
+                    subjects = subjects,
+                    onAcceptSuggestion = { id -> AcademicWorkspaceState.acceptHybridSuggestion(id) },
+                    onToggleComplete = { item ->
+                        val idx = scheduleItems.indexOfFirst { it.id == item.id }
+                        if (idx != -1) {
+                            scheduleItems[idx] = item.copy(isCompleted = !item.isCompleted)
+                        }
+                    },
+                    onOpenNoteForTopic = { topicId, topicTitle, subjectId, subjectName ->
+                        val existingNote = notes.find { it.topicId == topicId }
+                        if (existingNote != null) {
+                            activeNote = existingNote
+                        } else {
+                            val subj = subjects.find { it.id == subjectId }
+                            val top = topics.find { it.id == topicId }
+                            if (subj != null && top != null) {
+                                activeNote = AcademicWorkspaceState.createNoteForTopic(subj, top)
+                            } else {
+                                activeNote = AcademicWorkspaceState.createScratchpad(topicTitle)
+                            }
+                        }
+                    },
+                    onViewInSyllabus = { subjectId ->
+                        if (subjectId != null) {
+                            onNavigateToSyllabus?.invoke(subjectId)
+                        }
+                    },
+                    onAutoSchedule = { showHybridSuggestDialog = true },
+                    onDeleteItem = { scheduleItems.remove(it) }
+                )
+            }
         }
     }
 
@@ -380,7 +399,12 @@ private fun CalendarDeadlineFullView(
                 }
 
                 // 30 Days Grid for November
-                Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
                     val daysInNov = (1..30).toList()
                     val weeks = daysInNov.chunked(7)
 
@@ -523,7 +547,9 @@ private fun CalendarDeadlineFullView(
                     HorizontalDivider(color = LernspaceBorder)
 
                     LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         // Section 1: Deadline Tugas Hari Ini
@@ -782,7 +808,7 @@ private fun WeeklyTimetableBuilderView(
             // 7 Days Columns Timetable
             Row(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .fillMaxWidth()
                     .weight(1f),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
@@ -827,7 +853,7 @@ private fun WeeklyTimetableBuilderView(
                             if (classes.isEmpty()) {
                                 Box(
                                     modifier = Modifier
-                                        .fillMaxSize()
+                                        .fillMaxWidth()
                                         .weight(1f),
                                     contentAlignment = Alignment.Center
                                 ) {
@@ -839,7 +865,9 @@ private fun WeeklyTimetableBuilderView(
                                 }
                             } else {
                                 LazyColumn(
-                                    modifier = Modifier.fillMaxSize(),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .weight(1f),
                                     verticalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     items(classes, key = { it.id }) { c ->

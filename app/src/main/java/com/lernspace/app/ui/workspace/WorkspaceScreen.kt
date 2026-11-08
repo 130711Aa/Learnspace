@@ -230,7 +230,8 @@ fun WorkspaceScreen(
         if (filteredNotes.isEmpty()) {
             Box(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .fillMaxWidth()
+                    .weight(1f)
                     .clip(RoundedCornerShape(16.dp))
                     .background(LernspaceSurfaceCard)
                     .border(1.dp, LernspaceBorder, RoundedCornerShape(16.dp)),
@@ -277,7 +278,9 @@ fun WorkspaceScreen(
                 columns = GridCells.Fixed(3),
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
             ) {
                 items(filteredNotes, key = { it.id }) { note ->
                     val matchingSubject = subjects.find { it.id == note.subjectId }

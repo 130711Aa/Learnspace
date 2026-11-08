@@ -210,7 +210,9 @@ fun LearningScreen(
 
         // ── Landscape 2-Column Core Viewport ──────────────────────────────────
         Row(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             // ── Left Column: Enrolled Subjects List (Width: ~340dp) ────────────

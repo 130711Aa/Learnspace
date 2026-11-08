@@ -277,7 +277,7 @@ fun TabletAppShell(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(24.dp)
+                    .padding(horizontal = 24.dp, vertical = 14.dp)
             ) {
                 content()
             }
