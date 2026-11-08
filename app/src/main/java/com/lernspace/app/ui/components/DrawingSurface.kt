@@ -89,58 +89,72 @@ fun DrawingSurface(
     val currentOnEraseEnd by rememberUpdatedState(onEraseEnd)
     val currentOnTransform by rememberUpdatedState(onTransform)
     val currentOnCanvasTap by rememberUpdatedState(onCanvasTap)
+    val currentScale by rememberUpdatedState(scale)
+    val currentPanX by rememberUpdatedState(panX)
+    val currentPanY by rememberUpdatedState(panY)
 
-    val screenToWorldMatrix = remember(scale, panX, panY) {
-        androidx.compose.ui.graphics.Matrix().apply {
-            reset()
-            scale(1f / scale, 1f / scale, 1f)
-            translate(-panX, -panY)
-        }
-    }
+    val screenToWorldMatrix = remember { androidx.compose.ui.graphics.Matrix() }
+    screenToWorldMatrix.reset()
+    screenToWorldMatrix.scale(1f / scale, 1f / scale, 1f)
+    screenToWorldMatrix.translate(-panX, -panY)
+
     val identityUiMatrix = remember { androidx.compose.ui.graphics.Matrix() }
 
     Box(
         modifier = modifier
             // STYLUS vs FINGER DISPATCHER:
-            // 1. All PointerType.Touch (Finger) events are consumed here for Pan & Pinch-to-Zoom.
-            //    Fingers NEVER draw ink!
-            // 2. All PointerType.Stylus (Stylus) events pass straight through to InProgressStrokes!
-            .pointerInput(scale, panX, panY) {
+            // Key is strictly Unit so the gesture loop is NEVER cancelled mid-drag/pinch!
+            .pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
                     if (down.type == PointerType.Touch) {
-                        // FINGER GESTURE: Panning & Pinch-to-Zoom only
+                        // FINGER GESTURE: Panning & Pinch-to-Zoom only (Never Inking!)
                         down.consume()
 
-                        var isPinching = false
-                        var totalPan = Offset.Zero
+                        var isTransforming = false
+                        var accumulatedPan = Offset.Zero
                         val touchSlop = viewConfiguration.touchSlop
 
                         while (true) {
                             val event = awaitPointerEvent(pass = PointerEventPass.Initial)
-                            event.changes.forEach { it.consume() }
 
-                            val pressed = event.changes.filter { it.pressed }
-                            if (pressed.isEmpty()) {
-                                if (!isPinching && totalPan.getDistance() < touchSlop) {
+                            // Palm rejection: If stylus is active on screen, don't pan!
+                            val hasStylus = event.changes.any { it.type == PointerType.Stylus || it.type == PointerType.Eraser }
+                            if (hasStylus) {
+                                event.changes.forEach { if (it.type == PointerType.Touch) it.consume() }
+                                continue
+                            }
+
+                            val pressedFingers = event.changes.filter { it.type == PointerType.Touch && it.pressed }
+                            if (pressedFingers.isEmpty()) {
+                                if (!isTransforming && accumulatedPan.getDistance() < touchSlop) {
                                     currentOnCanvasTap()
                                 }
                                 break
                             }
 
-                            if (pressed.size >= 2) {
+                            if (pressedFingers.size >= 2) {
                                 // 2-finger pinch-to-zoom & pan
-                                isPinching = true
+                                isTransforming = true
                                 val zoom = event.calculateZoom()
                                 val pan = event.calculatePan()
                                 val centroid = event.calculateCentroid(useCurrent = true)
+                                event.changes.forEach { it.consume() }
                                 currentOnTransform(centroid, pan, zoom)
-                            } else if (pressed.size == 1) {
+                            } else if (pressedFingers.size == 1) {
                                 // 1-finger pan
-                                val pan = pressed[0].positionChange()
-                                totalPan += pan
-                                if (totalPan.getDistance() > touchSlop || isPinching) {
-                                    currentOnTransform(pressed[0].position, pan, 1f)
+                                val change = pressedFingers[0]
+                                val panDelta = change.positionChange()
+                                change.consume()
+
+                                if (!isTransforming) {
+                                    accumulatedPan += panDelta
+                                    if (accumulatedPan.getDistance() > touchSlop) {
+                                        isTransforming = true
+                                        currentOnTransform(change.position, accumulatedPan, 1f)
+                                    }
+                                } else {
+                                    currentOnTransform(change.position, panDelta, 1f)
                                 }
                             }
                         }
@@ -171,19 +185,19 @@ fun DrawingSurface(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .pointerInput(scale, panX, panY) {
+                        .pointerInput(Unit) {
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false)
                                 if (down.type == PointerType.Stylus || down.type == PointerType.Eraser) {
                                     currentOnEraseStart()
-                                    val worldX = (down.position.x - panX) / scale
-                                    val worldY = (down.position.y - panY) / scale
+                                    val worldX = (down.position.x - currentPanX) / currentScale
+                                    val worldY = (down.position.y - currentPanY) / currentScale
                                     currentOnErase(worldX, worldY)
                                     drag(down.id) { change ->
                                         if (change.type == PointerType.Stylus || change.type == PointerType.Eraser) {
                                             change.consume()
-                                            val curWorldX = (change.position.x - panX) / scale
-                                            val curWorldY = (change.position.y - panY) / scale
+                                            val curWorldX = (change.position.x - currentPanX) / currentScale
+                                            val curWorldY = (change.position.y - currentPanY) / currentScale
                                             currentOnErase(curWorldX, curWorldY)
                                         }
                                     }
