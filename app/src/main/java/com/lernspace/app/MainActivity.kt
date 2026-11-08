@@ -2,6 +2,7 @@ package com.lernspace.app
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.*
@@ -10,10 +11,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.navigation.NavGraph.Companion.findStartDestination
-import androidx.navigation.compose.currentBackStackEntryAsState
-import androidx.navigation.compose.rememberNavController
-import com.lernspace.app.navigation.LernspaceNavHost
+import com.lernspace.app.navigation.LernspaceTabHost
 import com.lernspace.app.navigation.Screen
 import com.lernspace.app.ui.components.TabletAppShell
 import com.lernspace.app.ui.home.HomeViewModel
@@ -31,41 +29,44 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             LernspaceTheme {
-                val navController = rememberNavController()
-                val navBackStackEntry by navController.currentBackStackEntryAsState()
-                val currentRoute = navBackStackEntry?.destination?.route ?: Screen.Home.route
+                // Instant keep-alive route state
+                var currentRoute by remember { mutableStateOf(Screen.Home.route) }
+                val visitedTabs = remember { mutableStateListOf(Screen.Home.route) }
+                val backStack = remember { mutableStateListOf(Screen.Home.route) }
+
+                fun navigateTo(route: String) {
+                    if (route == currentRoute) return
+                    if (!visitedTabs.contains(route)) {
+                        visitedTabs.add(route)
+                    }
+                    if (route == Screen.Home.route) {
+                        backStack.clear()
+                        backStack.add(Screen.Home.route)
+                    } else {
+                        backStack.removeAll { it == route }
+                        backStack.add(route)
+                    }
+                    currentRoute = route
+                }
+
+                // Native Android tablet back handling
+                BackHandler(enabled = backStack.size > 1) {
+                    backStack.removeLast()
+                    currentRoute = backStack.last()
+                }
 
                 var showQuickAddDialog by remember { mutableStateOf(false) }
 
                 TabletAppShell(
                     currentRoute = currentRoute,
-                    onNavigate = { route ->
-                        if (route == currentRoute) return@TabletAppShell
-                        if (route == Screen.Home.route) {
-                            val popped = navController.popBackStack(Screen.Home.route, inclusive = false)
-                            if (!popped) {
-                                navController.navigate(Screen.Home.route) {
-                                    popUpTo(navController.graph.findStartDestination().id) {
-                                        inclusive = false
-                                    }
-                                    launchSingleTop = true
-                                }
-                            }
-                        } else {
-                            navController.navigate(route) {
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = false
-                                }
-                                launchSingleTop = true
-                                restoreState = false
-                            }
-                        }
-                    },
+                    onNavigate = { route -> navigateTo(route) },
                     onQuickAdd = { showQuickAddDialog = true },
                     onStartFocusSession = { /* Start timer/focus mode */ }
                 ) {
-                    LernspaceNavHost(
-                        navController = navController,
+                    LernspaceTabHost(
+                        currentRoute = currentRoute,
+                        visitedTabs = visitedTabs,
+                        onNavigate = { route -> navigateTo(route) },
                         homeViewModel = homeViewModel,
                         onQuickAdd = { showQuickAddDialog = true }
                     )
