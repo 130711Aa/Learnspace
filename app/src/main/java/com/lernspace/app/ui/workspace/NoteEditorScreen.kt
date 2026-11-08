@@ -139,23 +139,43 @@ fun NoteEditorScreen(
         }
     }
 
-    // Erase helper function
-    fun eraseNear(touchX: Float, touchY: Float, radius: Float = 36f) {
-        val radiusSquared = radius * radius
+    // Erase helper function with segment-distance checking & zoom compensation
+    fun eraseNear(touchX: Float, touchY: Float) {
+        val effectiveRadius = 40f / scale
+        val radiusSquared = effectiveRadius * effectiveRadius
         strokes.removeAll { stroke ->
             val inputs = stroke.inputs
-            var hit = false
             val count = inputs.size
-            for (i in 0 until count) {
-                val pt = inputs.get(i)
+            if (count == 0) return@removeAll false
+            if (count == 1) {
+                val pt = inputs.get(0)
                 val dx = pt.x - touchX
                 val dy = pt.y - touchY
-                if ((dx * dx + dy * dy) <= radiusSquared) {
-                    hit = true
-                    break
+                return@removeAll (dx * dx + dy * dy) <= radiusSquared
+            }
+            for (i in 0 until count - 1) {
+                val p1 = inputs.get(i)
+                val p2 = inputs.get(i + 1)
+                val dx = p2.x - p1.x
+                val dy = p2.y - p1.y
+                val l2 = dx * dx + dy * dy
+                val d2 = if (l2 == 0f) {
+                    val ex = touchX - p1.x
+                    val ey = touchY - p1.y
+                    ex * ex + ey * ey
+                } else {
+                    val t = (((touchX - p1.x) * dx + (touchY - p1.y) * dy) / l2).coerceIn(0f, 1f)
+                    val projX = p1.x + t * dx
+                    val projY = p1.y + t * dy
+                    val ex = touchX - projX
+                    val ey = touchY - projY
+                    ex * ex + ey * ey
+                }
+                if (d2 <= radiusSquared) {
+                    return@removeAll true
                 }
             }
-            hit
+            false
         }
     }
 

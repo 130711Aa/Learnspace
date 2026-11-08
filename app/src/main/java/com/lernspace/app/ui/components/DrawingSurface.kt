@@ -56,33 +56,8 @@ fun DrawingSurface(
     onTransform: (centroid: Offset, pan: Offset, zoom: Float) -> Unit = { _, _, _ -> },
     onCanvasTap: () -> Unit = {}
 ) {
-    var pendingStrokes by remember { mutableStateOf<List<Stroke>>(emptyList()) }
-
-    SideEffect {
-        if (pendingStrokes.isNotEmpty()) {
-            pendingStrokes = if (strokes.isEmpty()) {
-                emptyList()
-            } else {
-                pendingStrokes.filter { pending -> strokes.none { it === pending } }
-            }
-        }
-    }
-
-    val strokesToDraw = remember(strokes, pendingStrokes) {
-        if (pendingStrokes.isEmpty()) {
-            strokes
-        } else {
-            strokes + pendingStrokes.filter { pending -> strokes.none { it === pending } }
-        }
-    }
-
-    // High-Precision Vector Transform Matrix:
-    // Transforms vector strokes to screen coordinates dynamically at native resolution.
-    // ZERO BLUR at any zoom level!
     val screenMatrix = remember { Matrix() }
-    screenMatrix.reset()
-    screenMatrix.postScale(scale, scale)
-    screenMatrix.postTranslate(panX, panY)
+    val identityUiMatrix = remember { androidx.compose.ui.graphics.Matrix() }
 
     val currentOnErase by rememberUpdatedState(onErase)
     val currentOnEraseStart by rememberUpdatedState(onEraseStart)
@@ -93,12 +68,15 @@ fun DrawingSurface(
     val currentPanX by rememberUpdatedState(panX)
     val currentPanY by rememberUpdatedState(panY)
 
-    val screenToWorldMatrix = remember { androidx.compose.ui.graphics.Matrix() }
-    screenToWorldMatrix.reset()
-    screenToWorldMatrix.scale(1f / scale, 1f / scale, 1f)
-    screenToWorldMatrix.translate(-panX, -panY)
-
-    val identityUiMatrix = remember { androidx.compose.ui.graphics.Matrix() }
+    // Accurate Screen-to-World Inverse Matrix:
+    // First subtract pan, then divide by scale: (screen - pan) / scale
+    val screenToWorldMatrix = remember(scale, panX, panY) {
+        androidx.compose.ui.graphics.Matrix().apply {
+            reset()
+            translate(-panX, -panY)
+            scale(1f / scale, 1f / scale, 1f)
+        }
+    }
 
     Box(
         modifier = modifier
@@ -165,9 +143,18 @@ fun DrawingSurface(
             }
     ) {
         // 1. Render Completed Strokes (Native Vector Tessellation - 100% Crisp & Sharp)
+        // Directly observes strokes (SnapshotStateList), currentScale, and currentPan!
         Canvas(modifier = Modifier.fillMaxSize()) {
+            val s = currentScale
+            val px = currentPanX
+            val py = currentPanY
+
+            screenMatrix.reset()
+            screenMatrix.postScale(s, s)
+            screenMatrix.postTranslate(px, py)
+
             val nativeCanvas = drawContext.canvas.nativeCanvas
-            strokesToDraw.fastForEach { stroke ->
+            strokes.fastForEach { stroke ->
                 nativeCanvas.withSave {
                     canvasStrokeRenderer.draw(
                         canvas = nativeCanvas,
@@ -213,10 +200,7 @@ fun DrawingSurface(
                     nextBrush = onGetNextBrush,
                     pointerEventToWorldTransform = screenToWorldMatrix,
                     strokeToWorldTransform = identityUiMatrix,
-                    onStrokesFinished = { newStrokes ->
-                        pendingStrokes = pendingStrokes + newStrokes
-                        onStrokesFinished(newStrokes)
-                    }
+                    onStrokesFinished = onStrokesFinished
                 )
             }
         }

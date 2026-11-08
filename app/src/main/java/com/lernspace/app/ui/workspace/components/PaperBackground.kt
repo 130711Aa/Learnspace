@@ -8,6 +8,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.lernspace.app.ui.workspace.model.PaperStyle
+import kotlin.math.floor
 
 @Composable
 fun PaperBackground(
@@ -23,7 +24,7 @@ fun PaperBackground(
                 // Warm paper background
                 drawRect(Color(0xFFFAFAFA))
 
-                // Red margin line on the left (typical notebook margin)
+                // Left red notebook margin line (relative to world coordinate 72dp)
                 val marginX = (72.dp.toPx() * scale) + panX
                 if (marginX in 0f..size.width) {
                     drawLine(
@@ -34,22 +35,24 @@ fun PaperBackground(
                     )
                 }
 
-                // Ruled horizontal lines
+                // Ruled horizontal lines (relative to world coordinate origin)
+                val firstLineY = (56.dp.toPx() * scale) + panY
                 val lineSpacing = 32.dp.toPx() * scale
                 if (lineSpacing > 4f) {
-                    val rem = panY % lineSpacing
-                    val startY = if (rem > 0) rem - lineSpacing else rem
-                    var currentY = startY
-                    while (currentY < size.height) {
-                        if (currentY >= 0f) {
+                    val kMin = floor(-firstLineY / lineSpacing).toInt()
+                    var k = kMin
+                    while (true) {
+                        val y = firstLineY + (k * lineSpacing)
+                        if (y > size.height) break
+                        if (y >= 0f) {
                             drawLine(
                                 color = Color(0xFFE2E8F0),
-                                start = Offset(0f, currentY),
-                                end = Offset(size.width, currentY),
+                                start = Offset(0f, y),
+                                end = Offset(size.width, y),
                                 strokeWidth = 1f
                             )
                         }
-                        currentY += lineSpacing
+                        k++
                     }
                 }
             }
@@ -58,10 +61,12 @@ fun PaperBackground(
                 drawRect(Color(0xFFFAFAFA))
                 val spacing = 28.dp.toPx() * scale
                 if (spacing > 4f) {
-                    val remX = panX % spacing
-                    val startX = if (remX > 0) remX - spacing else remX
-                    var x = startX
-                    while (x < size.width) {
+                    val firstX = panX
+                    val kMinX = floor(-firstX / spacing).toInt()
+                    var kx = kMinX
+                    while (true) {
+                        val x = firstX + (kx * spacing)
+                        if (x > size.width) break
                         if (x >= 0f) {
                             drawLine(
                                 color = Color(0xFFEEF2F6),
@@ -70,13 +75,15 @@ fun PaperBackground(
                                 strokeWidth = 1f
                             )
                         }
-                        x += spacing
+                        kx++
                     }
 
-                    val remY = panY % spacing
-                    val startY = if (remY > 0) remY - spacing else remY
-                    var y = startY
-                    while (y < size.height) {
+                    val firstY = panY
+                    val kMinY = floor(-firstY / spacing).toInt()
+                    var ky = kMinY
+                    while (true) {
+                        val y = firstY + (ky * spacing)
+                        if (y > size.height) break
                         if (y >= 0f) {
                             drawLine(
                                 color = Color(0xFFEEF2F6),
@@ -85,7 +92,7 @@ fun PaperBackground(
                                 strokeWidth = 1f
                             )
                         }
-                        y += spacing
+                        ky++
                     }
                 }
             }
@@ -94,15 +101,20 @@ fun PaperBackground(
                 drawRect(Color(0xFFFAFAFA))
                 val spacing = 28.dp.toPx() * scale
                 if (spacing > 8f) {
-                    val remX = panX % spacing
-                    val startX = if (remX > 0) remX - spacing else remX
-                    var x = startX
-                    while (x < size.width) {
+                    val firstX = panX
+                    val kMinX = floor(-firstX / spacing).toInt()
+                    val firstY = panY
+                    val kMinY = floor(-firstY / spacing).toInt()
+
+                    var kx = kMinX
+                    while (true) {
+                        val x = firstX + (kx * spacing)
+                        if (x > size.width) break
                         if (x >= 0f) {
-                            val remY = panY % spacing
-                            val startY = if (remY > 0) remY - spacing else remY
-                            var y = startY
-                            while (y < size.height) {
+                            var ky = kMinY
+                            while (true) {
+                                val y = firstY + (ky * spacing)
+                                if (y > size.height) break
                                 if (y >= 0f) {
                                     drawCircle(
                                         color = Color(0xFFCBD5E1),
@@ -110,10 +122,10 @@ fun PaperBackground(
                                         center = Offset(x, y)
                                     )
                                 }
-                                y += spacing
+                                ky++
                             }
                         }
-                        x += spacing
+                        kx++
                     }
                 }
             }
