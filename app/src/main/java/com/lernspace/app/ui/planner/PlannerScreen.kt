@@ -44,6 +44,7 @@ fun PlannerScreen(
     var selectedTab by remember { mutableIntStateOf(0) }
     val tabs = listOf(
         Pair("Kalender & Deadline", Icons.Filled.CalendarMonth),
+        Pair("Daftar Tugas", Icons.Filled.Checklist),
         Pair("Jadwal Mapel Mingguan", Icons.Filled.AccessTime),
         Pair("Day Agenda & Auto-Study", Icons.Filled.Today)
     )
@@ -184,14 +185,39 @@ fun PlannerScreen(
                     onViewSyllabus = { subjectId -> onNavigateToSyllabus?.invoke(subjectId) }
                 )
 
-                1 -> WeeklyTimetableBuilderView(
+                1 -> TaskListView(
+                    tasks = tasks,
+                    subjects = subjects,
+                    topics = topics,
+                    notes = notes,
+                    onToggleTask = { taskId -> AcademicWorkspaceState.toggleTaskCompletion(taskId) },
+                    onDeleteTask = { task -> tasks.remove(task) },
+                    onAddNewTask = { showAddTaskDialog = true },
+                    onOpenNoteForTopic = { topicId, topicTitle, subjectId, subjectName ->
+                        val existingNote = notes.find { it.topicId == topicId }
+                        if (existingNote != null) {
+                            activeNote = existingNote
+                        } else {
+                            val subj = subjects.find { it.id == subjectId }
+                            val top = topics.find { it.id == topicId }
+                            if (subj != null && top != null) {
+                                activeNote = AcademicWorkspaceState.createNoteForTopic(subj, top)
+                            } else {
+                                activeNote = AcademicWorkspaceState.createScratchpad(topicTitle)
+                            }
+                        }
+                    },
+                    onViewSyllabus = { subjectId -> onNavigateToSyllabus?.invoke(subjectId) }
+                )
+
+                2 -> WeeklyTimetableBuilderView(
                     weeklyClasses = weeklyClasses,
                     subjects = subjects,
                     onAddClass = { showAddWeeklyClassDialog = true },
                     onDeleteClass = { weeklyClasses.remove(it) }
                 )
 
-                2 -> DayAgendaView(
+                3 -> DayAgendaView(
                     scheduleItems = scheduleItems,
                     weeklyClasses = weeklyClasses,
                     tasks = tasks,
@@ -732,6 +758,620 @@ private fun CalendarDeadlineFullView(
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VIEW: Daftar Semua Tugas (Interactive Task & Assignment Manager)
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun TaskListView(
+    tasks: List<TaskUiModel>,
+    subjects: List<com.lernspace.app.ui.learning.SubjectUi>,
+    topics: List<com.lernspace.app.ui.learning.TopicUi>,
+    notes: List<NoteUiModel>,
+    onToggleTask: (String) -> Unit,
+    onDeleteTask: (TaskUiModel) -> Unit,
+    onAddNewTask: () -> Unit,
+    onOpenNoteForTopic: (topicId: String, topicTitle: String, subjectId: String?, subjectName: String?) -> Unit,
+    onViewSyllabus: (String?) -> Unit
+) {
+    var searchQuery by remember { mutableStateOf("") }
+    var selectedStatusFilter by remember { mutableStateOf("ALL") } // "ALL", "PENDING", "COMPLETED"
+    var selectedPriorityFilter by remember { mutableStateOf("ALL") } // "ALL", "HIGH", "MEDIUM", "LOW"
+    var selectedSubjectId by remember { mutableStateOf("ALL") } // "ALL" or subject.id
+    var sortBy by remember { mutableStateOf("DUE_DATE") } // "DUE_DATE", "PRIORITY", "TITLE"
+
+    val totalCount = tasks.size
+    val pendingCount = tasks.count { !it.isCompleted }
+    val completedCount = tasks.count { it.isCompleted }
+    val highPriorityPending = tasks.count { it.priority.uppercase() == "HIGH" && !it.isCompleted }
+
+    // Filtered and sorted tasks
+    val filteredTasks = remember(tasks.size, tasks.map { it.isCompleted }, searchQuery, selectedStatusFilter, selectedPriorityFilter, selectedSubjectId, sortBy) {
+        tasks.filter { task ->
+            val matchQuery = searchQuery.isBlank() ||
+                    task.title.contains(searchQuery, ignoreCase = true) ||
+                    (task.subjectName?.contains(searchQuery, ignoreCase = true) == true) ||
+                    (task.topicName?.contains(searchQuery, ignoreCase = true) == true) ||
+                    task.notes.contains(searchQuery, ignoreCase = true)
+
+            val matchStatus = when (selectedStatusFilter) {
+                "PENDING" -> !task.isCompleted
+                "COMPLETED" -> task.isCompleted
+                else -> true
+            }
+
+            val matchPriority = when (selectedPriorityFilter) {
+                "ALL" -> true
+                else -> task.priority.equals(selectedPriorityFilter, ignoreCase = true)
+            }
+
+            val matchSubject = when (selectedSubjectId) {
+                "ALL" -> true
+                else -> task.subjectId == selectedSubjectId
+            }
+
+            matchQuery && matchStatus && matchPriority && matchSubject
+        }.sortedWith { a, b ->
+            when (sortBy) {
+                "PRIORITY" -> {
+                    val pA = if (a.priority.uppercase() == "HIGH") 0 else if (a.priority.uppercase() == "MEDIUM") 1 else 2
+                    val pB = if (b.priority.uppercase() == "HIGH") 0 else if (b.priority.uppercase() == "MEDIUM") 1 else 2
+                    if (pA != pB) pA.compareTo(pB) else a.dueDayNumber.compareTo(b.dueDayNumber)
+                }
+                "TITLE" -> a.title.compareTo(b.title, ignoreCase = true)
+                else -> {
+                    // DUE_DATE: pending first, then by dueDayNumber
+                    if (a.isCompleted != b.isCompleted) {
+                        a.isCompleted.compareTo(b.isCompleted)
+                    } else {
+                        a.dueDayNumber.compareTo(b.dueDayNumber)
+                    }
+                }
+            }
+        }
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        shape = RoundedCornerShape(16.dp),
+        color = LernspaceSurfaceCard,
+        border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder),
+        shadowElevation = 1.dp
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            // ── Top Bar: Search + Stats Badges + Input Button ─────────────────
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    // Search field
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder = { Text("Cari tugas, mata kuliah, catatan...", fontSize = 12.sp) },
+                        leadingIcon = { Icon(Icons.Filled.Search, null, tint = LernspaceTextSecondary, modifier = Modifier.size(17.dp)) },
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { searchQuery = "" }, modifier = Modifier.size(20.dp)) {
+                                    Icon(Icons.Filled.Close, null, modifier = Modifier.size(13.dp))
+                                }
+                            }
+                        },
+                        singleLine = true,
+                        shape = RoundedCornerShape(10.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = LernspaceDark,
+                            unfocusedBorderColor = LernspaceBorder,
+                            focusedContainerColor = Color.White,
+                            unfocusedContainerColor = LernspaceSurfaceLow
+                        ),
+                        modifier = Modifier
+                            .width(320.dp)
+                            .height(44.dp)
+                    )
+
+                    // Quick Stat summary pills
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = LernspaceSurfaceLow,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Total: $totalCount", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                            Text("•", color = LernspaceBorder)
+                            Text("Pending: $pendingCount", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (pendingCount > 0) Color(0xFFD97706) else LernspaceTextSecondary)
+                            Text("•", color = LernspaceBorder)
+                            Text("Selesai: $completedCount", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF16A34A))
+                            if (highPriorityPending > 0) {
+                                Text("•", color = LernspaceBorder)
+                                Text("Urgent: $highPriorityPending", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFFDC2626))
+                            }
+                        }
+                    }
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Sort switcher
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = LernspaceSurfaceLow,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder)
+                    ) {
+                        Row(modifier = Modifier.padding(2.dp)) {
+                            listOf(
+                                Pair("DUE_DATE", "Urut Deadline"),
+                                Pair("PRIORITY", "Urut Prioritas")
+                            ).forEach { (key, label) ->
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = if (sortBy == key) Color.White else Color.Transparent,
+                                    shadowElevation = if (sortBy == key) 1.dp else 0.dp,
+                                    modifier = Modifier.clickable { sortBy = key }
+                                ) {
+                                    Text(
+                                        text = label,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (sortBy == key) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (sortBy == key) LernspaceDark else LernspaceTextSecondary,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Button Input Tugas Baru
+                    Button(
+                        onClick = onAddNewTask,
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentAmber),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                    ) {
+                        Icon(Icons.Filled.Add, null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Tugas Baru", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
+            // ── Filter Chips Bar ──────────────────────────────────────────────
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Status Filter
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    listOf(
+                        Pair("ALL", "Semua ($totalCount)"),
+                        Pair("PENDING", "Belum Selesai ($pendingCount)"),
+                        Pair("COMPLETED", "Selesai ($completedCount)")
+                    ).forEach { (key, label) ->
+                        FilterChip(
+                            selected = selectedStatusFilter == key,
+                            onClick = { selectedStatusFilter = key },
+                            label = { Text(label, fontSize = 11.sp, fontWeight = if (selectedStatusFilter == key) FontWeight.Bold else FontWeight.Normal) },
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                    }
+                }
+
+                Box(modifier = Modifier.height(20.dp).width(1.dp).background(LernspaceBorder))
+
+                // Priority Filter
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    listOf(
+                        Pair("ALL", "Semua Prio"),
+                        Pair("HIGH", "High"),
+                        Pair("MEDIUM", "Med"),
+                        Pair("LOW", "Low")
+                    ).forEach { (key, label) ->
+                        FilterChip(
+                            selected = selectedPriorityFilter == key,
+                            onClick = { selectedPriorityFilter = key },
+                            label = { Text(label, fontSize = 11.sp, fontWeight = if (selectedPriorityFilter == key) FontWeight.Bold else FontWeight.Normal) },
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                    }
+                }
+
+                Box(modifier = Modifier.height(20.dp).width(1.dp).background(LernspaceBorder))
+
+                // Subject filter row
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    item {
+                        FilterChip(
+                            selected = selectedSubjectId == "ALL",
+                            onClick = { selectedSubjectId = "ALL" },
+                            label = { Text("Semua Mapel", fontSize = 11.sp) },
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                    }
+                    items(subjects, key = { it.id }) { subject ->
+                        val count = tasks.count { it.subjectId == subject.id }
+                        FilterChip(
+                            selected = selectedSubjectId == subject.id,
+                            onClick = { selectedSubjectId = subject.id },
+                            leadingIcon = {
+                                Box(
+                                    modifier = Modifier
+                                        .size(7.dp)
+                                        .clip(CircleShape)
+                                        .background(subject.color)
+                                )
+                            },
+                            label = { Text("${subject.name} ($count)", fontSize = 11.sp) },
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                    }
+                }
+            }
+
+            HorizontalDivider(color = LernspaceBorder.copy(alpha = 0.6f))
+
+            // ── Tasks Scrollable List ─────────────────────────────────────────
+            if (filteredTasks.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Checklist,
+                            contentDescription = null,
+                            tint = LernspaceTextSecondary,
+                            modifier = Modifier.size(48.dp)
+                        )
+                        Text(
+                            text = if (searchQuery.isNotEmpty())
+                                "Tidak ada tugas yang cocok dengan '$searchQuery'"
+                            else if (selectedStatusFilter == "COMPLETED")
+                                "Belum ada tugas yang diselesaikan"
+                            else if (selectedStatusFilter == "PENDING")
+                                "Hebat! Semua tugas sudah selesai!"
+                            else
+                                "Belum ada tugas terdaftar",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = LernspaceDark,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "Tekan tombol '+ Tugas Baru' di atas untuk mencatat tugas dan deadline baru.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = LernspaceTextSecondary
+                        )
+                        Button(
+                            onClick = onAddNewTask,
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = AccentAmber)
+                        ) {
+                            Icon(Icons.Filled.Add, null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Input Tugas Sekarang")
+                        }
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    items(filteredTasks, key = { it.id }) { task ->
+                        val matchingSubject = subjects.find { it.id == task.subjectId }
+                        val subjectColor = matchingSubject?.color ?: AccentAmber
+
+                        TaskListItemCard(
+                            task = task,
+                            subjectColor = subjectColor,
+                            onToggleComplete = { onToggleTask(task.id) },
+                            onDelete = { onDeleteTask(task) },
+                            onOpenNote = {
+                                if (task.topicId != null) {
+                                    onOpenNoteForTopic(task.topicId, task.topicName ?: task.title, task.subjectId, task.subjectName)
+                                } else {
+                                    onOpenNoteForTopic(UUID.randomUUID().toString(), task.title, task.subjectId, task.subjectName)
+                                }
+                            },
+                            onViewSyllabus = {
+                                if (task.subjectId != null) {
+                                    onViewSyllabus(task.subjectId)
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPONENT: Task List Item Card
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun TaskListItemCard(
+    task: TaskUiModel,
+    subjectColor: Color,
+    onToggleComplete: () -> Unit,
+    onDelete: () -> Unit,
+    onOpenNote: () -> Unit,
+    onViewSyllabus: () -> Unit
+) {
+    val isDone = task.isCompleted
+
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = if (isDone) Color(0xFFF8FAFC) else Color.White,
+        border = androidx.compose.foundation.BorderStroke(
+            width = if (isDone) 1.dp else 1.5.dp,
+            color = if (isDone) LernspaceBorder else subjectColor.copy(alpha = 0.4f)
+        ),
+        shadowElevation = if (isDone) 0.dp else 1.dp,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            // Checkbox button
+            IconButton(
+                onClick = onToggleComplete,
+                modifier = Modifier
+                    .size(28.dp)
+                    .padding(top = 2.dp)
+            ) {
+                Icon(
+                    imageVector = if (isDone) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
+                    contentDescription = if (isDone) "Selesai" else "Belum Selesai",
+                    tint = if (isDone) Color(0xFF16A34A) else LernspaceTextSecondary,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+
+            // Main Info Column
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Top line: Title & Urgency badges
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = task.title,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isDone) LernspaceTextSecondary else LernspaceDark,
+                        textDecoration = if (isDone) TextDecoration.LineThrough else TextDecoration.None,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+
+                    // Right Badges
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Priority Badge
+                        val priorityBg = when (task.priority.uppercase()) {
+                            "HIGH" -> Color(0xFFFEE2E2)
+                            "MEDIUM" -> Color(0xFFFEF3C7)
+                            else -> Color(0xFFDBEAFE)
+                        }
+                        val priorityFg = when (task.priority.uppercase()) {
+                            "HIGH" -> Color(0xFFDC2626)
+                            "MEDIUM" -> Color(0xFFD97706)
+                            else -> Color(0xFF2563EB)
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = if (isDone) LernspaceSurfaceLow else priorityBg
+                        ) {
+                            Text(
+                                text = "Prio: ${task.priority.uppercase()}",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isDone) LernspaceTextSecondary else priorityFg,
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                            )
+                        }
+
+                        // Estimated Minutes Pill
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = LernspaceSurfaceLow,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(3.dp)
+                            ) {
+                                Icon(Icons.Filled.Schedule, null, tint = LernspaceTextSecondary, modifier = Modifier.size(11.dp))
+                                Text(
+                                    text = "${task.estimatedMinutes} Menit",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = LernspaceTextSecondary
+                                )
+                            }
+                        }
+
+                        // Due Date & Time Pill
+                        val isNearDue = task.dueDayNumber <= 9 && !isDone
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = if (isDone) LernspaceSurfaceLow else if (isNearDue) Color(0xFFFEF2F2) else Color(0xFFEFF6FF),
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                if (isDone) LernspaceBorder else if (isNearDue) Color(0xFFFCA5A5) else Color(0xFFBFDBFE)
+                            )
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (isNearDue) Icons.Filled.AddAlert else Icons.Filled.CalendarMonth,
+                                    contentDescription = null,
+                                    tint = if (isDone) LernspaceTextSecondary else if (isNearDue) Color(0xFFDC2626) else AccentBlue,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Text(
+                                    text = "${task.dueDate} • ${task.dueTime}",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isDone) LernspaceTextSecondary else if (isNearDue) Color(0xFFDC2626) else AccentBlue
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Middle line: Subject & Topic integration
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (task.subjectName != null) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = subjectColor.copy(alpha = 0.12f)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(subjectColor))
+                                Text(
+                                    text = task.subjectName,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = subjectColor
+                                )
+                            }
+                        }
+                    }
+
+                    if (task.topicName != null) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = LernspaceSurfaceLow,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder),
+                            modifier = Modifier.clickable { onViewSyllabus() }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = "📌 Sub-bab: ${task.topicName}",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = LernspaceDark
+                                )
+                                Text(
+                                    text = "• Lihat Silabus",
+                                    fontSize = 10.sp,
+                                    color = AccentBlue,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.weight(1f))
+
+                    // Action: Write/Open Note on Canvas for this Task
+                    OutlinedButton(
+                        onClick = onOpenNote,
+                        shape = RoundedCornerShape(6.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier.height(28.dp)
+                    ) {
+                        Icon(Icons.Filled.Draw, null, modifier = Modifier.size(13.dp), tint = AccentBlue)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Catatan Canvas", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = AccentBlue)
+                    }
+
+                    // Delete Task button
+                    IconButton(
+                        onClick = onDelete,
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.DeleteOutline,
+                            contentDescription = "Hapus Tugas",
+                            tint = LernspaceTextSecondary.copy(alpha = 0.7f),
+                            modifier = Modifier.size(17.dp)
+                        )
+                    }
+                }
+
+                // Notes / Instruction snippet if present
+                if (task.notes.isNotBlank()) {
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = LernspaceSurfaceLow,
+                        border = androidx.compose.foundation.BorderStroke(0.5.dp, LernspaceBorder)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text("Catatan:", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = LernspaceTextSecondary)
+                            Text(
+                                text = task.notes,
+                                fontSize = 11.sp,
+                                color = LernspaceDark
+                            )
                         }
                     }
                 }
