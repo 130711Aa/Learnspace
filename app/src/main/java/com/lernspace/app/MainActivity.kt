@@ -11,12 +11,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.lernspace.app.data.repository.AcademicWorkspaceState
 import com.lernspace.app.navigation.LernspaceTabHost
 import com.lernspace.app.navigation.Screen
 import com.lernspace.app.ui.components.TabletAppShell
 import com.lernspace.app.ui.home.HomeViewModel
 import com.lernspace.app.ui.theme.LernspaceDark
 import com.lernspace.app.ui.theme.LernspaceTheme
+import com.lernspace.app.ui.workspace.NoteEditorScreen
 
 class MainActivity : ComponentActivity() {
 
@@ -49,37 +51,50 @@ class MainActivity : ComponentActivity() {
                     currentRoute = route
                 }
 
-                // Native Android tablet back handling
-                BackHandler(enabled = backStack.size > 1) {
-                    backStack.removeLast()
-                    currentRoute = backStack.last()
-                }
+                val activeEditingNote = AcademicWorkspaceState.activeEditingNote
 
-                var showQuickAddDialog by remember { mutableStateOf(false) }
+                // ── IMMERSIVE FULL-SCREEN NOTE CANVAS (Zero Rail, 100% Display) ──
+                if (activeEditingNote != null) {
+                    BackHandler {
+                        AcademicWorkspaceState.closeNoteEditor()
+                    }
+                    NoteEditorScreen(
+                        note = activeEditingNote,
+                        onBack = { AcademicWorkspaceState.closeNoteEditor() }
+                    )
+                } else {
+                    // ── TABLET APP SHELL WITH NAVIGATION RAIL ────────────────────
+                    BackHandler(enabled = backStack.size > 1) {
+                        backStack.removeLast()
+                        currentRoute = backStack.last()
+                    }
 
-                TabletAppShell(
-                    currentRoute = currentRoute,
-                    onNavigate = { route -> navigateTo(route) },
-                    onQuickAdd = { showQuickAddDialog = true },
-                    onStartFocusSession = { /* Start timer/focus mode */ }
-                ) {
-                    LernspaceTabHost(
+                    var showQuickAddDialog by remember { mutableStateOf(false) }
+
+                    TabletAppShell(
                         currentRoute = currentRoute,
-                        visitedTabs = visitedTabs,
                         onNavigate = { route -> navigateTo(route) },
-                        homeViewModel = homeViewModel,
-                        onQuickAdd = { showQuickAddDialog = true }
-                    )
-                }
+                        onQuickAdd = { showQuickAddDialog = true },
+                        onStartFocusSession = { /* Start timer/focus mode */ }
+                    ) {
+                        LernspaceTabHost(
+                            currentRoute = currentRoute,
+                            visitedTabs = visitedTabs,
+                            onNavigate = { route -> navigateTo(route) },
+                            homeViewModel = homeViewModel,
+                            onQuickAdd = { showQuickAddDialog = true }
+                        )
+                    }
 
-                if (showQuickAddDialog) {
-                    QuickAddTaskDialog(
-                        onDismiss = { showQuickAddDialog = false },
-                        onConfirm = { taskTitle ->
-                            homeViewModel.quickAddTask(taskTitle)
-                            showQuickAddDialog = false
-                        }
-                    )
+                    if (showQuickAddDialog) {
+                        QuickAddTaskDialog(
+                            onDismiss = { showQuickAddDialog = false },
+                            onConfirm = { taskTitle ->
+                                homeViewModel.quickAddTask(taskTitle)
+                                showQuickAddDialog = false
+                            }
+                        )
+                    }
                 }
             }
         }

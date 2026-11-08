@@ -1,6 +1,9 @@
 package com.lernspace.app.data.repository
 
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import com.lernspace.app.ui.learning.SubjectUi
 import com.lernspace.app.ui.learning.TopicStatus
@@ -18,6 +21,17 @@ import java.util.UUID
  * Connects Subjects, Syllabus Topics, and Interactive Note Canvas seamlessly.
  */
 object AcademicWorkspaceState {
+
+    /** Global active note being edited fullscreen across the entire tablet display */
+    var activeEditingNote by mutableStateOf<NoteUiModel?>(null)
+
+    fun openNoteEditor(note: NoteUiModel) {
+        activeEditingNote = note
+    }
+
+    fun closeNoteEditor() {
+        activeEditingNote = null
+    }
 
     val subjects = mutableStateListOf(
         SubjectUi(

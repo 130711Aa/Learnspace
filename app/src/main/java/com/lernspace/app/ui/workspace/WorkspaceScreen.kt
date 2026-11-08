@@ -42,19 +42,9 @@ fun WorkspaceScreen(
     val subjects = AcademicWorkspaceState.subjects
     val topics = AcademicWorkspaceState.topics
 
-    var activeNote by remember { mutableStateOf<NoteUiModel?>(null) }
     var selectedFilterKey by remember { mutableStateOf("ALL") } // "ALL", "SCRATCHPAD", or subjectId
     var searchQuery by remember { mutableStateOf("") }
     var showNewNoteDialog by remember { mutableStateOf(false) }
-
-    // If a note is being edited, display fullscreen NoteEditorScreen!
-    if (activeNote != null) {
-        NoteEditorScreen(
-            note = activeNote!!,
-            onBack = { activeNote = null }
-        )
-        return
-    }
 
     // Filtered notes
     val filteredNotes = remember(notes.size, selectedFilterKey, searchQuery) {
@@ -122,7 +112,7 @@ fun WorkspaceScreen(
                 OutlinedButton(
                     onClick = {
                         val newScratchpad = AcademicWorkspaceState.createScratchpad()
-                        activeNote = newScratchpad
+                        AcademicWorkspaceState.openNoteEditor(newScratchpad)
                     },
                     shape = RoundedCornerShape(10.dp),
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
@@ -289,7 +279,7 @@ fun WorkspaceScreen(
                     WorkspaceNoteCard(
                         note = note,
                         subjectColor = subjectColor,
-                        onOpen = { activeNote = note },
+                        onOpen = { AcademicWorkspaceState.openNoteEditor(note) },
                         onViewInSyllabus = {
                             if (note.subjectId != null) {
                                 onNavigateToSyllabus?.invoke(note.subjectId)
@@ -325,7 +315,7 @@ fun WorkspaceScreen(
                 )
                 notes.add(0, newNote)
                 showNewNoteDialog = false
-                activeNote = newNote
+                AcademicWorkspaceState.openNoteEditor(newNote)
             }
         )
     }

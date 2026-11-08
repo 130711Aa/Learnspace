@@ -41,17 +41,7 @@ fun HomeScreen(
     val tasks = AcademicWorkspaceState.tasks
     val weeklyClasses = AcademicWorkspaceState.weeklyClasses
 
-    var activeNote by remember { mutableStateOf<NoteUiModel?>(null) }
     var showAddTaskDialog by remember { mutableStateOf(false) }
-
-    // If active note is opened, display fullscreen NoteEditorScreen!
-    if (activeNote != null) {
-        NoteEditorScreen(
-            note = activeNote!!,
-            onBack = { activeNote = null }
-        )
-        return
-    }
 
     // Computed values (memoized to avoid redundant re-filtering)
     val mondayClasses = remember(weeklyClasses.size) {
@@ -137,7 +127,7 @@ fun HomeScreen(
                 OutlinedButton(
                     onClick = {
                         val newScratchpad = AcademicWorkspaceState.createScratchpad()
-                        activeNote = newScratchpad
+                        AcademicWorkspaceState.openNoteEditor(newScratchpad)
                     },
                     shape = RoundedCornerShape(10.dp),
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
@@ -271,13 +261,15 @@ fun HomeScreen(
                                                 if (nextUpTopic != null) {
                                                     val existing = notes.find { it.topicId == nextUpTopic.id }
                                                     if (existing != null) {
-                                                        activeNote = existing
+                                                        AcademicWorkspaceState.openNoteEditor(existing)
                                                     } else {
                                                         val subj = subjects.find { it.id == nextUpTopic.subjectId } ?: subjects.first()
-                                                        activeNote = AcademicWorkspaceState.createNoteForTopic(subj, nextUpTopic)
+                                                        val newNote = AcademicWorkspaceState.createNoteForTopic(subj, nextUpTopic)
+                                                        AcademicWorkspaceState.openNoteEditor(newNote)
                                                     }
                                                 } else {
-                                                    activeNote = AcademicWorkspaceState.createScratchpad()
+                                                    val newScratchpad = AcademicWorkspaceState.createScratchpad()
+                                                    AcademicWorkspaceState.openNoteEditor(newScratchpad)
                                                 }
                                             },
                                             shape = RoundedCornerShape(8.dp),
@@ -697,7 +689,7 @@ fun HomeScreen(
                                             border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder),
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .clickable { activeNote = note }
+                                                .clickable { AcademicWorkspaceState.openNoteEditor(note) }
                                         ) {
                                             Row(
                                                 modifier = Modifier

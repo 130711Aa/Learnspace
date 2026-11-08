@@ -104,16 +104,6 @@ fun LearningScreen(
     val notes = AcademicWorkspaceState.notes
 
     var selectedSubjectId by remember { mutableStateOf(subjects.firstOrNull()?.id ?: "") }
-    var activeNote by remember { mutableStateOf<NoteUiModel?>(null) }
-
-    // If active note is selected, show fullscreen NoteEditorScreen!
-    if (activeNote != null) {
-        NoteEditorScreen(
-            note = activeNote!!,
-            onBack = { activeNote = null }
-        )
-        return
-    }
 
     // Dialog & filter states
     var showAddSubjectDialog by remember { mutableStateOf(false) }
@@ -429,10 +419,10 @@ fun LearningScreen(
                                         topic = topic,
                                         subjectColor = activeSubject.color,
                                         attachedNote = topicNotes.firstOrNull(),
-                                        onOpenNote = { note -> activeNote = note },
+                                        onOpenNote = { note -> AcademicWorkspaceState.openNoteEditor(note) },
                                         onCreateNote = {
                                             val newNote = AcademicWorkspaceState.createNoteForTopic(activeSubject, topic)
-                                            activeNote = newNote
+                                            AcademicWorkspaceState.openNoteEditor(newNote)
                                         },
                                         onStatusChange = { newStatus ->
                                             val idx = topics.indexOfFirst { it.id == topic.id }

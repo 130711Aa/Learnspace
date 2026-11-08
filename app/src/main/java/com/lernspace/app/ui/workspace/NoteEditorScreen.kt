@@ -8,6 +8,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
@@ -287,8 +288,8 @@ fun NoteEditorScreen(
             }
         }
 
-        // 6. Top Header Navigation Bar
-        NoteTopHeader(
+        // 6. Unified Top App Bar (Title Capsule + Center Tools Toolbar + Action Capsule)
+        UnifiedNoteTopBar(
             title = noteTitle,
             onTitleChange = {
                 noteTitle = it
@@ -297,31 +298,6 @@ fun NoteEditorScreen(
             subject = note.subject,
             paperStyle = paperStyle,
             onSelectPaperStyle = { paperStyle = it },
-            canUndo = strokes.isNotEmpty(),
-            onUndo = {
-                if (strokes.isNotEmpty()) {
-                    val removed = strokes.removeLast()
-                    undoneStrokes.add(removed)
-                }
-            },
-            canRedo = undoneStrokes.isNotEmpty(),
-            onRedo = {
-                if (undoneStrokes.isNotEmpty()) {
-                    val restored = undoneStrokes.removeLast()
-                    strokes.add(restored)
-                }
-            },
-            onClearAll = {
-                strokes.clear()
-                undoneStrokes.clear()
-                textBoxes.clear()
-                imageElements.clear()
-            },
-            onBack = onBack
-        )
-
-        // 7. Floating Pill Toolbar (Top Center)
-        NoteFloatingToolbar(
             activeTool = activeTool,
             onSelectTool = { tool ->
                 activeTool = tool
@@ -356,12 +332,33 @@ fun NoteEditorScreen(
             onPickImage = {
                 imagePickerLauncher.launch("image/*")
             },
+            canUndo = strokes.isNotEmpty(),
+            onUndo = {
+                if (strokes.isNotEmpty()) {
+                    val removed = strokes.removeLast()
+                    undoneStrokes.add(removed)
+                }
+            },
+            canRedo = undoneStrokes.isNotEmpty(),
+            onRedo = {
+                if (undoneStrokes.isNotEmpty()) {
+                    val restored = undoneStrokes.removeLast()
+                    strokes.add(restored)
+                }
+            },
+            onClearAll = {
+                strokes.clear()
+                undoneStrokes.clear()
+                textBoxes.clear()
+                imageElements.clear()
+            },
+            onBack = onBack,
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(top = 10.dp)
+                .fillMaxWidth()
         )
 
-        // 8. Floating Zoom Percentage Indicator (Bottom-Left Corner of Canvas)
+        // 7. Floating Zoom Percentage Indicator (Bottom-Left Corner of Canvas)
         ZoomIndicator(
             scale = scale,
             panX = panX,
@@ -423,12 +420,19 @@ private fun ZoomIndicator(
 }
 
 @Composable
-private fun NoteTopHeader(
+private fun UnifiedNoteTopBar(
     title: String,
     onTitleChange: (String) -> Unit,
     subject: String,
     paperStyle: PaperStyle,
     onSelectPaperStyle: (PaperStyle) -> Unit,
+    activeTool: NoteTool,
+    onSelectTool: (NoteTool) -> Unit,
+    selectedColor: Color,
+    onSelectColor: (Color) -> Unit,
+    selectedThickness: Float,
+    onSelectThickness: (Float) -> Unit,
+    onPickImage: () -> Unit,
     canUndo: Boolean,
     onUndo: () -> Unit,
     canRedo: Boolean,
@@ -441,149 +445,179 @@ private fun NoteTopHeader(
 
     Row(
         modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .statusBarsPadding()
+            .padding(horizontal = 14.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Left: Back button & Title
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        // ── 1. LEFT CAPSULE: Back Button + Constrained Title (Max 300dp) ────────
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = Color.White.copy(alpha = 0.95f),
+            shadowElevation = 4.dp,
+            border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+            modifier = Modifier.widthIn(min = 180.dp, max = 300.dp)
         ) {
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = Color.White,
-                shadowElevation = 2.dp,
-                modifier = Modifier
-                    .size(40.dp)
-                    .clickable(onClick = onBack)
+            Row(
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
-                        tint = LernspaceDark,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
-
-            Column {
-                BasicTextField(
-                    value = title,
-                    onValueChange = onTitleChange,
-                    textStyle = TextStyle(
-                        color = LernspaceDark,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold
-                    ),
-                    cursorBrush = SolidColor(LernspaceDark),
-                    singleLine = true
-                )
-                Text(
-                    text = "$subject · ${paperStyle.displayName}",
-                    fontSize = 12.sp,
-                    color = Color(0xFF64748B)
-                )
-            }
-        }
-
-        // Right: Actions (Paper style, Undo, Redo, Clear)
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            // Paper Style Selector
-            Box {
                 Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = Color.White,
-                    shadowElevation = 2.dp,
+                    shape = CircleShape,
+                    color = Color(0xFFF1F5F9),
                     modifier = Modifier
-                        .size(38.dp)
-                        .clickable { showPaperMenu = true }
+                        .size(36.dp)
+                        .clickable(onClick = onBack)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
-                            imageVector = Icons.Filled.Layers,
-                            contentDescription = "Paper style",
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
                             tint = LernspaceDark,
                             modifier = Modifier.size(18.dp)
                         )
                     }
                 }
 
-                DropdownMenu(
-                    expanded = showPaperMenu,
-                    onDismissRequest = { showPaperMenu = false }
+                Column(
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .padding(end = 4.dp)
                 ) {
-                    PaperStyle.values().forEach { style ->
-                        DropdownMenuItem(
-                            text = { Text(style.displayName) },
-                            onClick = {
-                                onSelectPaperStyle(style)
-                                showPaperMenu = false
-                            }
+                    BasicTextField(
+                        value = title,
+                        onValueChange = onTitleChange,
+                        textStyle = TextStyle(
+                            color = LernspaceDark,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        cursorBrush = SolidColor(LernspaceDark),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        text = "$subject · ${paperStyle.displayName}",
+                        fontSize = 11.sp,
+                        color = Color(0xFF64748B),
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+
+        // ── 2. CENTER: NoteFloatingToolbar ──────────────────────────────────────
+        NoteFloatingToolbar(
+            activeTool = activeTool,
+            onSelectTool = onSelectTool,
+            selectedColor = selectedColor,
+            onSelectColor = onSelectColor,
+            selectedThickness = selectedThickness,
+            onSelectThickness = onSelectThickness,
+            onPickImage = onPickImage
+        )
+
+        // ── 3. RIGHT CAPSULE: Paper Style, Undo, Redo, Clear ────────────────────
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = Color.White.copy(alpha = 0.95f),
+            shadowElevation = 4.dp,
+            border = BorderStroke(1.dp, Color(0xFFE2E8F0))
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                // Paper Style Selector
+                Box {
+                    Surface(
+                        shape = CircleShape,
+                        color = Color(0xFFF1F5F9),
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clickable { showPaperMenu = true }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Filled.Layers,
+                                contentDescription = "Paper style",
+                                tint = LernspaceDark,
+                                modifier = Modifier.size(17.dp)
+                            )
+                        }
+                    }
+
+                    DropdownMenu(
+                        expanded = showPaperMenu,
+                        onDismissRequest = { showPaperMenu = false }
+                    ) {
+                        PaperStyle.values().forEach { style ->
+                            DropdownMenuItem(
+                                text = { Text(style.displayName) },
+                                onClick = {
+                                    onSelectPaperStyle(style)
+                                    showPaperMenu = false
+                                }
+                            )
+                        }
+                    }
+                }
+
+                // Undo
+                Surface(
+                    shape = CircleShape,
+                    color = if (canUndo) Color(0xFFF1F5F9) else Color.Transparent,
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clickable(enabled = canUndo, onClick = onUndo)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Undo,
+                            contentDescription = "Undo",
+                            tint = if (canUndo) LernspaceDark else Color(0xFFCBD5E1),
+                            modifier = Modifier.size(17.dp)
                         )
                     }
                 }
-            }
 
-            // Undo
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = Color.White,
-                shadowElevation = 2.dp,
-                modifier = Modifier
-                    .size(38.dp)
-                    .clickable(enabled = canUndo, onClick = onUndo)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Undo,
-                        contentDescription = "Undo",
-                        tint = if (canUndo) LernspaceDark else Color(0xFFCBD5E1),
-                        modifier = Modifier.size(18.dp)
-                    )
+                // Redo
+                Surface(
+                    shape = CircleShape,
+                    color = if (canRedo) Color(0xFFF1F5F9) else Color.Transparent,
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clickable(enabled = canRedo, onClick = onRedo)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Redo,
+                            contentDescription = "Redo",
+                            tint = if (canRedo) LernspaceDark else Color(0xFFCBD5E1),
+                            modifier = Modifier.size(17.dp)
+                        )
+                    }
                 }
-            }
 
-            // Redo
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = Color.White,
-                shadowElevation = 2.dp,
-                modifier = Modifier
-                    .size(38.dp)
-                    .clickable(enabled = canRedo, onClick = onRedo)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Redo,
-                        contentDescription = "Redo",
-                        tint = if (canRedo) LernspaceDark else Color(0xFFCBD5E1),
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
-
-            // Clear Canvas
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = Color.White,
-                shadowElevation = 2.dp,
-                modifier = Modifier
-                    .size(38.dp)
-                    .clickable(onClick = onClearAll)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Filled.DeleteSweep,
-                        contentDescription = "Clear all",
-                        tint = Color(0xFFDC2626),
-                        modifier = Modifier.size(18.dp)
-                    )
+                // Clear Canvas
+                Surface(
+                    shape = CircleShape,
+                    color = Color(0xFFFEE2E2),
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clickable(onClick = onClearAll)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Filled.DeleteSweep,
+                            contentDescription = "Clear all",
+                            tint = Color(0xFFDC2626),
+                            modifier = Modifier.size(17.dp)
+                        )
+                    }
                 }
             }
         }

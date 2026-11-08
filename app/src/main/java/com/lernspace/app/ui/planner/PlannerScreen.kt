@@ -49,20 +49,10 @@ fun PlannerScreen(
         Pair("Day Agenda & Auto-Study", Icons.Filled.Today)
     )
 
-    var activeNote by remember { mutableStateOf<NoteUiModel?>(null) }
     var showAddTaskDialog by remember { mutableStateOf(false) }
     var showAddWeeklyClassDialog by remember { mutableStateOf(false) }
     var showHybridSuggestDialog by remember { mutableStateOf(false) }
     var selectedCalendarDay by remember { mutableIntStateOf(8) } // Selected date in Nov 2026
-
-    // If active note is opened, display fullscreen NoteEditorScreen!
-    if (activeNote != null) {
-        NoteEditorScreen(
-            note = activeNote!!,
-            onBack = { activeNote = null }
-        )
-        return
-    }
 
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -196,14 +186,16 @@ fun PlannerScreen(
                     onOpenNoteForTopic = { topicId, topicTitle, subjectId, subjectName ->
                         val existingNote = notes.find { it.topicId == topicId }
                         if (existingNote != null) {
-                            activeNote = existingNote
+                            AcademicWorkspaceState.openNoteEditor(existingNote)
                         } else {
                             val subj = subjects.find { it.id == subjectId }
                             val top = topics.find { it.id == topicId }
                             if (subj != null && top != null) {
-                                activeNote = AcademicWorkspaceState.createNoteForTopic(subj, top)
+                                val newNote = AcademicWorkspaceState.createNoteForTopic(subj, top)
+                                AcademicWorkspaceState.openNoteEditor(newNote)
                             } else {
-                                activeNote = AcademicWorkspaceState.createScratchpad(topicTitle)
+                                val newNote = AcademicWorkspaceState.createScratchpad(topicTitle)
+                                AcademicWorkspaceState.openNoteEditor(newNote)
                             }
                         }
                     },
@@ -232,14 +224,16 @@ fun PlannerScreen(
                     onOpenNoteForTopic = { topicId, topicTitle, subjectId, subjectName ->
                         val existingNote = notes.find { it.topicId == topicId }
                         if (existingNote != null) {
-                            activeNote = existingNote
+                            AcademicWorkspaceState.openNoteEditor(existingNote)
                         } else {
                             val subj = subjects.find { it.id == subjectId }
                             val top = topics.find { it.id == topicId }
                             if (subj != null && top != null) {
-                                activeNote = AcademicWorkspaceState.createNoteForTopic(subj, top)
+                                val newNote = AcademicWorkspaceState.createNoteForTopic(subj, top)
+                                AcademicWorkspaceState.openNoteEditor(newNote)
                             } else {
-                                activeNote = AcademicWorkspaceState.createScratchpad(topicTitle)
+                                val newNote = AcademicWorkspaceState.createScratchpad(topicTitle)
+                                AcademicWorkspaceState.openNoteEditor(newNote)
                             }
                         }
                     },
