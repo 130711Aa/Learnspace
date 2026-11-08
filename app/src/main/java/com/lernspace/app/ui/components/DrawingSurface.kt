@@ -169,9 +169,9 @@ fun DrawingSurface(
                 }
             }
     ) {
-        // ─── Layer 1: Completed (dry) strokes rendered with dynamic vector LOD & antialiasing ───
-        // Passing strokeToScreenMatrix ensures CanvasStrokeRenderer tessellates vector curves
-        // natively at full screen resolution — ZERO BLUR at any zoom level!
+        // ─── Layer 1: Completed (dry) strokes rendered with hardware canvas transform & vector LOD ───
+        // nativeCanvas.translate + nativeCanvas.scale physically locks strokes to the notebook paper,
+        // while strokeToScreenTransform = strokeToScreenMatrix feeds dynamic zoom LOD to CanvasStrokeRenderer!
         Canvas(modifier = Modifier.fillMaxSize()) {
             val s = currentScale
             val px = currentPanX
@@ -182,8 +182,11 @@ fun DrawingSurface(
             strokeToScreenMatrix.postTranslate(px, py)
 
             val nativeCanvas = drawContext.canvas.nativeCanvas
-            strokes.fastForEach { stroke ->
-                nativeCanvas.withSave {
+            nativeCanvas.withSave {
+                nativeCanvas.translate(px, py)
+                nativeCanvas.scale(s, s)
+
+                strokes.fastForEach { stroke ->
                     canvasStrokeRenderer.draw(
                         canvas = nativeCanvas,
                         stroke = stroke,
