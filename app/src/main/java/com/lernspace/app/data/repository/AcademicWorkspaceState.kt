@@ -1,6 +1,7 @@
 package com.lernspace.app.data.repository
 
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -275,6 +276,116 @@ object AcademicWorkspaceState {
         if (idx != -1) {
             topics[idx] = topics[idx].copy(status = newStatus)
         }
+    }
+
+    // ── Focus Session & Pomodoro State ────────────────────────────────────────
+    var isFocusSessionActive by mutableStateOf(false)
+    var isFocusSessionMinimized by mutableStateOf(false)
+    var showFocusSetupDialog by mutableStateOf(false)
+    var showFocusCompletionDialog by mutableStateOf(false)
+
+    var focusSelectedSubject by mutableStateOf<SubjectUi?>(null)
+    var focusSelectedTopic by mutableStateOf<TopicUi?>(null)
+    var focusPreset by mutableStateOf(FocusTimerPreset.POMODORO_25)
+    var focusPhase by mutableStateOf(FocusSessionPhase.FOCUS)
+    var focusTimeRemainingSeconds by mutableIntStateOf(25 * 60)
+    var focusTimeElapsedSeconds by mutableIntStateOf(0)
+    var isFocusTimerRunning by mutableStateOf(false)
+    var focusPillOffsetX by mutableStateOf(-1f)
+    var focusPillOffsetY by mutableStateOf(-1f)
+    val focusSessionHistory = mutableStateListOf<FocusSessionRecord>()
+    var totalFocusStudyMinutes by mutableIntStateOf(180) // 3 hours baseline
+
+    fun startFocusSession(
+        subject: SubjectUi?,
+        topic: TopicUi?,
+        preset: FocusTimerPreset
+    ) {
+        focusSelectedSubject = subject
+        focusSelectedTopic = topic
+        focusPreset = preset
+        focusPhase = FocusSessionPhase.FOCUS
+        focusTimeElapsedSeconds = 0
+        focusTimeRemainingSeconds = if (preset == FocusTimerPreset.STOPWATCH) 0 else preset.focusMinutes * 60
+        isFocusSessionActive = true
+        isFocusSessionMinimized = false
+        isFocusTimerRunning = true
+        showFocusSetupDialog = false
+    }
+
+    fun pauseFocusTimer() {
+        isFocusTimerRunning = false
+    }
+
+    fun resumeFocusTimer() {
+        isFocusTimerRunning = true
+    }
+
+    fun tickFocusSecond() {
+        if (!isFocusTimerRunning || !isFocusSessionActive) return
+
+        if (focusPhase == FocusSessionPhase.FOCUS) {
+            if (focusPreset == FocusTimerPreset.STOPWATCH) {
+                focusTimeElapsedSeconds++
+            } else {
+                if (focusTimeRemainingSeconds > 0) {
+                    focusTimeRemainingSeconds--
+                    focusTimeElapsedSeconds++
+                } else {
+                    // Focus phase reached 0: transition to BREAK
+                    val completedMins = focusPreset.focusMinutes
+                    totalFocusStudyMinutes += completedMins
+                    focusSessionHistory.add(
+                        0,
+                        FocusSessionRecord(
+                            subjectId = focusSelectedSubject?.id,
+                            subjectName = focusSelectedSubject?.name,
+                            topicId = focusSelectedTopic?.id,
+                            topicName = focusSelectedTopic?.title,
+                            durationMinutes = completedMins,
+                            completedAt = "Just now"
+                        )
+                    )
+                    focusPhase = FocusSessionPhase.BREAK
+                    focusTimeRemainingSeconds = focusPreset.breakMinutes * 60
+                }
+            }
+        } else if (focusPhase == FocusSessionPhase.BREAK) {
+            if (focusTimeRemainingSeconds > 0) {
+                focusTimeRemainingSeconds--
+            } else {
+                focusPhase = FocusSessionPhase.COMPLETED
+                isFocusTimerRunning = false
+                showFocusCompletionDialog = true
+            }
+        }
+    }
+
+    fun finishFocusSessionEarly() {
+        val completedMinutes = (focusTimeElapsedSeconds / 60).coerceAtLeast(1)
+        totalFocusStudyMinutes += completedMinutes
+        focusSessionHistory.add(
+            0,
+            FocusSessionRecord(
+                subjectId = focusSelectedSubject?.id,
+                subjectName = focusSelectedSubject?.name,
+                topicId = focusSelectedTopic?.id,
+                topicName = focusSelectedTopic?.title,
+                durationMinutes = completedMinutes,
+                completedAt = "Just now"
+            )
+        )
+        isFocusTimerRunning = false
+        showFocusCompletionDialog = true
+    }
+
+    fun dismissFocusSession() {
+        isFocusSessionActive = false
+        isFocusSessionMinimized = false
+        isFocusTimerRunning = false
+        showFocusCompletionDialog = false
+        focusPillOffsetX = -1f
+        focusPillOffsetY = -1f
     }
 
     // ── Planner & Calendar Schedule State ─────────────────────────────────────
@@ -617,5 +728,28 @@ data class TaskUiModel(
     val estimatedMinutes: Int = 90,
     val isCompleted: Boolean = false,
     val notes: String = ""
+)
+
+enum class FocusTimerPreset(val title: String, val subtitle: String, val focusMinutes: Int, val breakMinutes: Int) {
+    POMODORO_25("Pomodoro 25/5", "25m Fokus • 5m Istirahat", 25, 5),
+    DEEP_50("Deep Study 50/10", "50m Fokus Intensif • 10m Istirahat", 50, 10),
+    QUICK_15("Sprint 15/3", "15m Review Kilat • 3m Istirahat", 15, 3),
+    STOPWATCH("Stopwatch Bebas", "Hitung maju tanpa batas waktu", 0, 0)
+}
+
+enum class FocusSessionPhase {
+    FOCUS,
+    BREAK,
+    COMPLETED
+}
+
+data class FocusSessionRecord(
+    val id: String = UUID.randomUUID().toString(),
+    val subjectId: String?,
+    val subjectName: String?,
+    val topicId: String?,
+    val topicName: String?,
+    val durationMinutes: Int,
+    val completedAt: String
 )
 

@@ -9,12 +9,17 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.lernspace.app.data.repository.AcademicWorkspaceState
 import com.lernspace.app.navigation.LernspaceTabHost
 import com.lernspace.app.navigation.Screen
 import com.lernspace.app.ui.components.TabletAppShell
+import com.lernspace.app.ui.focus.FocusCompletionDialog
+import com.lernspace.app.ui.focus.FocusFloatingPill
+import com.lernspace.app.ui.focus.FocusFullscreenImmersion
+import com.lernspace.app.ui.focus.FocusSetupDialog
 import com.lernspace.app.ui.home.HomeViewModel
 import com.lernspace.app.ui.theme.LernspaceDark
 import com.lernspace.app.ui.theme.LernspaceTheme
@@ -51,6 +56,14 @@ class MainActivity : ComponentActivity() {
                     currentRoute = route
                 }
 
+                // ── 1-Second Focus Session Timer Engine ─────────────────────
+                LaunchedEffect(AcademicWorkspaceState.isFocusSessionActive, AcademicWorkspaceState.isFocusTimerRunning) {
+                    while (AcademicWorkspaceState.isFocusSessionActive && AcademicWorkspaceState.isFocusTimerRunning) {
+                        kotlinx.coroutines.delay(1000L)
+                        AcademicWorkspaceState.tickFocusSecond()
+                    }
+                }
+
                 val activeEditingNote = AcademicWorkspaceState.activeEditingNote
 
                 // ── IMMERSIVE FULL-SCREEN NOTE CANVAS (Zero Rail, 100% Display) ──
@@ -75,7 +88,7 @@ class MainActivity : ComponentActivity() {
                         currentRoute = currentRoute,
                         onNavigate = { route -> navigateTo(route) },
                         onQuickAdd = { showQuickAddDialog = true },
-                        onStartFocusSession = { /* Start timer/focus mode */ }
+                        onStartFocusSession = { AcademicWorkspaceState.showFocusSetupDialog = true }
                     ) {
                         LernspaceTabHost(
                             currentRoute = currentRoute,
@@ -95,6 +108,42 @@ class MainActivity : ComponentActivity() {
                             }
                         )
                     }
+                }
+
+                // ── GLOBAL OVERLAYS: Focus Session (Zen Fullscreen vs Floating Pill) ──
+                if (AcademicWorkspaceState.isFocusSessionActive) {
+                    if (!AcademicWorkspaceState.isFocusSessionMinimized) {
+                        // Fullscreen Zen Immersion Overlay
+                        BackHandler {
+                            AcademicWorkspaceState.isFocusSessionMinimized = true
+                        }
+                        FocusFullscreenImmersion(
+                            onMinimize = { AcademicWorkspaceState.isFocusSessionMinimized = true },
+                            onFinishEarly = { AcademicWorkspaceState.finishFocusSessionEarly() }
+                        )
+                    } else {
+                        // Companion Floating Capsule Pill (draggable, visible everywhere)
+                        FocusFloatingPill(
+                            onMaximize = { AcademicWorkspaceState.isFocusSessionMinimized = false }
+                        )
+                    }
+                }
+
+                // Focus Setup Modal Dialog
+                if (AcademicWorkspaceState.showFocusSetupDialog) {
+                    FocusSetupDialog(
+                        onDismiss = { AcademicWorkspaceState.showFocusSetupDialog = false },
+                        onStart = { subj, top, preset ->
+                            AcademicWorkspaceState.startFocusSession(subj, top, preset)
+                        }
+                    )
+                }
+
+                // Focus Completion & Mastery Upgrade Dialog
+                if (AcademicWorkspaceState.showFocusCompletionDialog) {
+                    FocusCompletionDialog(
+                        onDismiss = { AcademicWorkspaceState.dismissFocusSession() }
+                    )
                 }
             }
         }

@@ -9,6 +9,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.Create
+import androidx.compose.material.icons.filled.HourglassBottom
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
@@ -21,6 +22,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.lernspace.app.data.repository.AcademicWorkspaceState
+import com.lernspace.app.data.repository.FocusSessionPhase
+import com.lernspace.app.data.repository.FocusTimerPreset
 import com.lernspace.app.navigation.Screen
 import com.lernspace.app.ui.theme.*
 
@@ -237,22 +241,43 @@ fun TabletAppShell(
                         )
                     }
 
+                    val isFocusActive = AcademicWorkspaceState.isFocusSessionActive
+                    val focusPhase = AcademicWorkspaceState.focusPhase
+                    val remainingSec = AcademicWorkspaceState.focusTimeRemainingSeconds
+                    val elapsedSec = AcademicWorkspaceState.focusTimeElapsedSeconds
+                    val preset = AcademicWorkspaceState.focusPreset
+                    val displayMin = if (preset == FocusTimerPreset.STOPWATCH) elapsedSec / 60 else remainingSec / 60
+                    val displaySec = if (preset == FocusTimerPreset.STOPWATCH) elapsedSec % 60 else remainingSec % 60
+                    val timeFormatted = String.format("%02d:%02d", displayMin, displaySec)
+
                     Button(
-                        onClick = onStartFocusSession,
+                        onClick = {
+                            if (isFocusActive) {
+                                AcademicWorkspaceState.isFocusSessionMinimized = false
+                            } else {
+                                onStartFocusSession()
+                            }
+                        },
                         shape = RoundedCornerShape(8.dp),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = LernspaceDark
+                            containerColor = if (!isFocusActive) {
+                                LernspaceDark
+                            } else if (focusPhase == FocusSessionPhase.BREAK) {
+                                Color(0xFF10B981)
+                            } else {
+                                Color(0xFF2563EB)
+                            }
                         ),
                         modifier = Modifier.padding(end = 16.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Filled.PlayArrow,
-                            contentDescription = "Start Focus",
+                            imageVector = if (!isFocusActive) Icons.Filled.PlayArrow else Icons.Filled.HourglassBottom,
+                            contentDescription = "Focus",
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "Focus Session",
+                            text = if (!isFocusActive) "Focus Session" else "$timeFormatted • ${if (focusPhase == FocusSessionPhase.BREAK) "Break" else "Focus"}",
                             style = MaterialTheme.typography.labelMedium
                         )
                     }

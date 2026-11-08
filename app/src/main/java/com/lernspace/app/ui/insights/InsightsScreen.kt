@@ -45,10 +45,7 @@ fun InsightsScreen(
     val completedTasks = tasks.count { it.isCompleted }
     val taskRate = if (totalTasks > 0) (completedTasks.toFloat() / totalTasks) else 0f
 
-    val totalWeeklyHours = remember(weeklyClasses.size) {
-        // Approximate calculation: each class is ~1.5 - 2h
-        weeklyClasses.size * 1.75f + 4.5f // classes + self study sessions
-    }
+    val totalWeeklyHours = (weeklyClasses.size * 1.75f) + (AcademicWorkspaceState.totalFocusStudyMinutes.toFloat() / 60f)
 
     LazyColumn(
         modifier = Modifier
@@ -131,8 +128,8 @@ fun InsightsScreen(
             ) {
                 KpiCard(
                     title = "Beban Studi Mingguan",
-                    value = String.format("%.1f", totalWeeklyHours) + " Jam",
-                    subtitle = "${weeklyClasses.size} Kelas + 3 Sesi Belajar Mandiri",
+                    value = String.format(java.util.Locale.US, "%.1f", totalWeeklyHours) + " Jam",
+                    subtitle = "${weeklyClasses.size} Kelas + ${String.format(java.util.Locale.US, "%.1f", AcademicWorkspaceState.totalFocusStudyMinutes.toFloat() / 60f)} Jam Focus Session",
                     icon = Icons.Filled.School,
                     accentColor = AccentBlue,
                     modifier = Modifier.weight(1f)
