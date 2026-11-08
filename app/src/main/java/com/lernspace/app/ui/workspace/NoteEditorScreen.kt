@@ -2,6 +2,7 @@ package com.lernspace.app.ui.workspace
 
 import android.graphics.BitmapFactory
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -194,8 +195,21 @@ fun NoteEditorScreen(
         imageElements.addAll(source.imageElements)
     }
 
-    // Load initial page
+    // Auto-save active page when leaving NoteEditorScreen
+    DisposableEffect(Unit) {
+        onDispose {
+            saveActivePageData()
+        }
+    }
+
+    // Load initial page from disk or memory
     LaunchedEffect(Unit) {
+        val diskPages = com.lernspace.app.data.local.AcademicDatabaseManager.loadPagesForNote(note.id)
+        if (diskPages != null && diskPages.isNotEmpty()) {
+            note.pages.clear()
+            note.pages.addAll(diskPages)
+            totalPages = if (note.canvasType == NoteCanvasType.PDF_DOCUMENT) maxOf(1, note.pdfTotalPages) else maxOf(1, note.pages.size)
+        }
         loadActivePageData(0)
     }
 
@@ -245,6 +259,11 @@ fun NoteEditorScreen(
     fun handleBack() {
         saveActivePageData()
         onBack()
+    }
+
+    // Intercept hardware / gesture back button to ensure strokes are saved before exit
+    BackHandler {
+        handleBack()
     }
 
     fun handleExportPdf() {
@@ -503,6 +522,7 @@ fun NoteEditorScreen(
                     }
                     strokes.addAll(processedStrokes)
                     undoneStrokes.clear()
+                    saveActivePageData()
                 },
                 isEraserMode = activeTool == NoteTool.ERASER,
                 isDrawingEnabled = activeTool == NoteTool.PEN || activeTool == NoteTool.HIGHLIGHTER || activeTool == NoteTool.ERASER,
@@ -510,6 +530,7 @@ fun NoteEditorScreen(
                 panX = panX,
                 panY = panY,
                 onErase = { worldX, worldY -> eraseNear(worldX, worldY) },
+                onEraseEnd = { saveActivePageData() },
                 modifier = Modifier.fillMaxSize()
             )
 
@@ -548,6 +569,7 @@ fun NoteEditorScreen(
                                     )
                                     strokes.add(newStroke)
                                     undoneStrokes.clear()
+                                    saveActivePageData()
                                 }
                                 shapeDrawStart = null
                                 shapeDrawCurrent = null
@@ -895,6 +917,7 @@ fun NoteEditorScreen(
                                         curSel.bounds = curSel.bounds.translate(Offset(offsetDelta, offsetDelta))
                                         lassoSelection = curSel.copy(bounds = curSel.bounds)
                                         undoneStrokes.clear()
+                                        saveActivePageData()
                                     }
                                 ) {
                                     Row(
@@ -926,6 +949,7 @@ fun NoteEditorScreen(
                                         textBoxes.removeAll(curSel.selectedTextBoxes)
                                         imageElements.removeAll(curSel.selectedImages)
                                         lassoSelection = null
+                                        saveActivePageData()
                                     }
                                 ) {
                                     Row(
@@ -1087,6 +1111,7 @@ fun NoteEditorScreen(
                 if (strokes.isNotEmpty()) {
                     val removed = strokes.removeLast()
                     undoneStrokes.add(removed)
+                    saveActivePageData()
                 }
             },
             canRedo = undoneStrokes.isNotEmpty(),
@@ -1094,6 +1119,7 @@ fun NoteEditorScreen(
                 if (undoneStrokes.isNotEmpty()) {
                     val restored = undoneStrokes.removeLast()
                     strokes.add(restored)
+                    saveActivePageData()
                 }
             },
             onClearAll = {
@@ -1101,6 +1127,7 @@ fun NoteEditorScreen(
                 undoneStrokes.clear()
                 textBoxes.clear()
                 imageElements.clear()
+                saveActivePageData()
             },
             onExportPdf = { handleExportPdf() },
             isExporting = isExporting,

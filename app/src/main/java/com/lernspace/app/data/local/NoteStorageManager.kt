@@ -92,7 +92,7 @@ class NoteStorageManager(private val context: Context) {
                 page.strokes.forEach { stroke ->
                     val strokeObj = JSONObject()
                     strokeObj.put("size", stroke.brush.size.toDouble())
-                    val colorInt = stroke.brush.colorLong.toInt()
+                    val colorInt = stroke.brush.colorIntArgb
                     strokeObj.put("color", colorInt)
 
                     val pointsArray = JSONArray()
@@ -205,9 +205,10 @@ class NoteStorageManager(private val context: Context) {
                                 )
                             }
                             try {
-                                val brush = Brush.createWithComposeColor(
+                                val finalColor = if (colorInt != 0) colorInt else 0xFF191C1E.toInt()
+                                val brush = Brush.createWithColorIntArgb(
                                     family = StockBrushes.pressurePen(),
-                                    color = Color(colorInt),
+                                    colorIntArgb = finalColor,
                                     size = size,
                                     epsilon = 0.1f
                                 )

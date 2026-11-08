@@ -231,6 +231,10 @@ object AcademicDatabaseManager {
         }
     }
 
+    fun loadPagesForNote(noteId: String): List<NotePageData>? {
+        return storageManager?.loadNotePages(noteId)
+    }
+
     fun deleteNote(noteId: String) {
         val database = db ?: return
         val storage = storageManager ?: return
