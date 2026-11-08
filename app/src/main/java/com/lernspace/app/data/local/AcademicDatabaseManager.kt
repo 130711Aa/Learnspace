@@ -44,164 +44,140 @@ object AcademicDatabaseManager {
 
         // 1. Subjects
         val existingSubjects = database.subjectDao().getAllActiveSubjects().firstOrNull() ?: emptyList()
-        if (existingSubjects.isEmpty()) {
-            seedInitialSubjects()
-        } else {
-            withContext(Dispatchers.Main) {
-                AcademicWorkspaceState.subjects.clear()
-                AcademicWorkspaceState.subjects.addAll(existingSubjects.map { entity ->
-                    SubjectUi(
-                        id = entity.id,
-                        name = entity.name,
-                        code = entity.code,
-                        description = entity.description ?: "",
-                        color = if (entity.colorArgb != null) Color(entity.colorArgb.toULong()) else AccentBlue
-                    )
-                })
-            }
+        withContext(Dispatchers.Main) {
+            AcademicWorkspaceState.subjects.clear()
+            AcademicWorkspaceState.subjects.addAll(existingSubjects.map { entity ->
+                SubjectUi(
+                    id = entity.id,
+                    name = entity.name,
+                    code = entity.code,
+                    description = entity.description ?: "",
+                    color = if (entity.colorArgb != null) Color(entity.colorArgb.toULong()) else AccentBlue
+                )
+            })
         }
 
         // 2. Topics
         val existingTopics = database.topicDao().getAllActiveTopics().firstOrNull() ?: emptyList()
-        if (existingTopics.isEmpty()) {
-            seedInitialTopics()
-        } else {
-            withContext(Dispatchers.Main) {
-                AcademicWorkspaceState.topics.clear()
-                AcademicWorkspaceState.topics.addAll(existingTopics.map { entity ->
-                    val status = try {
-                        TopicStatus.valueOf(entity.status)
-                    } catch (e: Exception) {
-                        TopicStatus.NOT_STARTED
-                    }
-                    TopicUi(
-                        id = entity.id,
-                        subjectId = entity.subjectId,
-                        title = entity.name,
-                        description = entity.description ?: "",
-                        status = status,
-                        targetDate = entity.targetDate
-                    )
-                })
-            }
+        withContext(Dispatchers.Main) {
+            AcademicWorkspaceState.topics.clear()
+            AcademicWorkspaceState.topics.addAll(existingTopics.map { entity ->
+                val status = try {
+                    TopicStatus.valueOf(entity.status)
+                } catch (e: Exception) {
+                    TopicStatus.NOT_STARTED
+                }
+                TopicUi(
+                    id = entity.id,
+                    subjectId = entity.subjectId,
+                    title = entity.name,
+                    description = entity.description ?: "",
+                    status = status,
+                    targetDate = entity.targetDate
+                )
+            })
         }
 
         // 3. Tasks
         val existingTasks = database.taskDao().getAllActiveTasks().firstOrNull() ?: emptyList()
-        if (existingTasks.isEmpty()) {
-            seedInitialTasks()
-        } else {
-            withContext(Dispatchers.Main) {
-                AcademicWorkspaceState.tasks.clear()
-                AcademicWorkspaceState.tasks.addAll(existingTasks.map { entity ->
-                    TaskUiModel(
-                        id = entity.id,
-                        title = entity.title,
-                        subjectId = entity.subjectId,
-                        subjectName = entity.subjectName,
-                        topicId = entity.topicId,
-                        topicName = entity.topicName,
-                        dueDate = entity.dueDate ?: "Nov 12, 2026",
-                        dueDayNumber = entity.dueDayNumber,
-                        dueTime = entity.dueTime,
-                        priority = entity.priority,
-                        estimatedMinutes = entity.estimatedMinutes ?: 60,
-                        isCompleted = entity.status == "COMPLETED",
-                        notes = entity.notes
-                    )
-                })
-            }
+        withContext(Dispatchers.Main) {
+            AcademicWorkspaceState.tasks.clear()
+            AcademicWorkspaceState.tasks.addAll(existingTasks.map { entity ->
+                TaskUiModel(
+                    id = entity.id,
+                    title = entity.title,
+                    subjectId = entity.subjectId,
+                    subjectName = entity.subjectName,
+                    topicId = entity.topicId,
+                    topicName = entity.topicName,
+                    dueDate = entity.dueDate ?: "",
+                    dueDayNumber = entity.dueDayNumber,
+                    dueTime = entity.dueTime,
+                    priority = entity.priority,
+                    estimatedMinutes = entity.estimatedMinutes ?: 60,
+                    isCompleted = entity.status == "COMPLETED",
+                    notes = entity.notes
+                )
+            })
         }
 
         // 4. Notes & Canvas Strokes
         val existingNotes = database.noteDao().getAllActiveNotes().firstOrNull() ?: emptyList()
-        if (existingNotes.isEmpty()) {
-            seedInitialNotes(storage)
-        } else {
-            withContext(Dispatchers.Main) {
-                AcademicWorkspaceState.notes.clear()
-                AcademicWorkspaceState.notes.addAll(existingNotes.map { entity ->
-                    val loadedPages = storage.loadNotePages(entity.id) ?: listOf(NotePageData(pageIndex = 0))
-                    val paperStyle = try {
-                        PaperStyle.valueOf(entity.paperStyle)
-                    } catch (e: Exception) {
-                        PaperStyle.RULED
-                    }
-                    val dateFormatted = SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date(entity.updatedAt))
+        withContext(Dispatchers.Main) {
+            AcademicWorkspaceState.notes.clear()
+            AcademicWorkspaceState.notes.addAll(existingNotes.map { entity ->
+                val loadedPages = storage.loadNotePages(entity.id) ?: listOf(NotePageData(pageIndex = 0))
+                val paperStyle = try {
+                    PaperStyle.valueOf(entity.paperStyle)
+                } catch (e: Exception) {
+                    PaperStyle.RULED
+                }
+                val dateFormatted = SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date(entity.updatedAt))
 
-                    NoteUiModel(
-                        id = entity.id,
-                        title = entity.title,
-                        subject = entity.subject,
-                        date = dateFormatted,
-                        snippet = entity.snippet,
-                        subjectId = entity.subjectId,
-                        topicId = entity.topicId,
-                        topicName = entity.topicName,
-                        isScratchpad = entity.isScratchpad,
-                        canvasType = if (entity.isScratchpad) NoteCanvasType.INFINITE_SCRATCHPAD else NoteCanvasType.PAGED_NOTE,
-                        paperStyle = paperStyle,
-                        pdfUri = entity.pdfUri,
-                        pdfTotalPages = entity.pdfTotalPages,
-                        pages = loadedPages.toMutableList()
-                    )
-                })
-            }
+                NoteUiModel(
+                    id = entity.id,
+                    title = entity.title,
+                    subject = entity.subject,
+                    date = dateFormatted,
+                    snippet = entity.snippet,
+                    subjectId = entity.subjectId,
+                    topicId = entity.topicId,
+                    topicName = entity.topicName,
+                    isScratchpad = entity.isScratchpad,
+                    canvasType = if (entity.isScratchpad) NoteCanvasType.INFINITE_SCRATCHPAD else NoteCanvasType.PAGED_NOTE,
+                    paperStyle = paperStyle,
+                    pdfUri = entity.pdfUri,
+                    pdfTotalPages = entity.pdfTotalPages,
+                    pages = loadedPages.toMutableList()
+                )
+            })
         }
 
         // 5. Calendar Events & Weekly Classes
         val existingPlanner = database.calendarEventDao().getPlannerItems().firstOrNull() ?: emptyList()
         val existingWeekly = database.calendarEventDao().getWeeklyClasses().firstOrNull() ?: emptyList()
 
-        if (existingPlanner.isEmpty() && existingWeekly.isEmpty()) {
-            seedInitialSchedule()
-        } else {
-            withContext(Dispatchers.Main) {
-                if (existingPlanner.isNotEmpty()) {
-                    AcademicWorkspaceState.scheduleItems.clear()
-                    AcademicWorkspaceState.scheduleItems.addAll(existingPlanner.map { entity ->
-                        val schedType = try {
-                            ScheduleType.valueOf(entity.eventType)
-                        } catch (e: Exception) {
-                            ScheduleType.LECTURE
-                        }
-                        PlannerItemUi(
-                            id = entity.id,
-                            title = entity.title,
-                            type = schedType,
-                            startTime = entity.startTime,
-                            endTime = entity.endTime,
-                            dayOfWeek = entity.dayOfWeek,
-                            dayOffset = entity.dayOffset,
-                            subjectId = entity.subjectId,
-                            subjectName = entity.subjectName,
-                            topicId = entity.topicId,
-                            topicName = entity.topicName,
-                            locationOrRoom = entity.locationOrRoom,
-                            isCompleted = entity.isCompleted,
-                            aiReason = entity.aiReason
-                        )
-                    })
+        withContext(Dispatchers.Main) {
+            AcademicWorkspaceState.scheduleItems.clear()
+            AcademicWorkspaceState.scheduleItems.addAll(existingPlanner.map { entity ->
+                val schedType = try {
+                    ScheduleType.valueOf(entity.eventType)
+                } catch (e: Exception) {
+                    ScheduleType.LECTURE
                 }
+                PlannerItemUi(
+                    id = entity.id,
+                    title = entity.title,
+                    type = schedType,
+                    startTime = entity.startTime,
+                    endTime = entity.endTime,
+                    dayOfWeek = entity.dayOfWeek,
+                    dayOffset = entity.dayOffset,
+                    subjectId = entity.subjectId,
+                    subjectName = entity.subjectName,
+                    topicId = entity.topicId,
+                    topicName = entity.topicName,
+                    locationOrRoom = entity.locationOrRoom,
+                    isCompleted = entity.isCompleted,
+                    aiReason = entity.aiReason
+                )
+            })
 
-                if (existingWeekly.isNotEmpty()) {
-                    AcademicWorkspaceState.weeklyClasses.clear()
-                    AcademicWorkspaceState.weeklyClasses.addAll(existingWeekly.map { entity ->
-                        WeeklyClassUi(
-                            id = entity.id,
-                            subjectId = entity.subjectId ?: "",
-                            subjectName = entity.subjectName ?: "",
-                            subjectCode = entity.subjectCode ?: "",
-                            dayOfWeek = entity.dayOfWeek,
-                            startTime = entity.startTime,
-                            endTime = entity.endTime,
-                            room = entity.locationOrRoom ?: "",
-                            lecturer = entity.lecturer ?: "",
-                            type = entity.eventType
-                        )
-                    })
-                }
-            }
+            AcademicWorkspaceState.weeklyClasses.clear()
+            AcademicWorkspaceState.weeklyClasses.addAll(existingWeekly.map { entity ->
+                WeeklyClassUi(
+                    id = entity.id,
+                    subjectId = entity.subjectId ?: "",
+                    subjectName = entity.subjectName ?: "",
+                    subjectCode = entity.subjectCode ?: "",
+                    dayOfWeek = entity.dayOfWeek,
+                    startTime = entity.startTime,
+                    endTime = entity.endTime,
+                    room = entity.locationOrRoom ?: "",
+                    lecturer = entity.lecturer ?: "",
+                    type = entity.eventType
+                )
+            })
         }
 
         // 6. Focus Sessions History
@@ -308,6 +284,21 @@ object AcademicDatabaseManager {
         }
     }
 
+    fun deleteSubject(subjectId: String) {
+        val database = db ?: return
+        scope.launch {
+            database.subjectDao().deleteSubjectById(subjectId)
+            database.topicDao().deleteTopicsForSubject(subjectId)
+        }
+    }
+
+    fun deleteTopic(topicId: String) {
+        val database = db ?: return
+        scope.launch {
+            database.topicDao().deleteTopicById(topicId)
+        }
+    }
+
     fun persistTopic(topic: TopicUi) {
         val database = db ?: return
         scope.launch {
@@ -409,127 +400,24 @@ object AcademicDatabaseManager {
         }
     }
 
-    // ── Initial Seeding Helpers (Preloads rich academic state) ────────────────
-
-    private suspend fun seedInitialSubjects() {
+    /**
+     * Wipes all data from Room tables and local disk files, resetting state to clean empty.
+     */
+    fun clearAllData(context: Context) {
         val database = db ?: return
-        val currentSubjects = AcademicWorkspaceState.subjects.toList()
-        val entities = currentSubjects.map {
-            SubjectEntity(
-                id = it.id,
-                name = it.name,
-                code = it.code,
-                description = it.description,
-                colorArgb = it.color.value.toLong()
-            )
+        scope.launch {
+            database.clearAllTables()
+            storageManager?.clearAllFiles()
+            withContext(Dispatchers.Main) {
+                AcademicWorkspaceState.subjects.clear()
+                AcademicWorkspaceState.topics.clear()
+                AcademicWorkspaceState.tasks.clear()
+                AcademicWorkspaceState.notes.clear()
+                AcademicWorkspaceState.scheduleItems.clear()
+                AcademicWorkspaceState.weeklyClasses.clear()
+                AcademicWorkspaceState.focusSessionHistory.clear()
+                AcademicWorkspaceState.totalFocusStudyMinutes = 0
+            }
         }
-        database.subjectDao().insertSubjects(entities)
-    }
-
-    private suspend fun seedInitialTopics() {
-        val database = db ?: return
-        val currentTopics = AcademicWorkspaceState.topics.toList()
-        val entities = currentTopics.map {
-            TopicEntity(
-                id = it.id,
-                subjectId = it.subjectId,
-                name = it.title,
-                description = it.description,
-                status = it.status.name,
-                targetDate = it.targetDate
-            )
-        }
-        database.topicDao().insertTopics(entities)
-    }
-
-    private suspend fun seedInitialTasks() {
-        val database = db ?: return
-        val currentTasks = AcademicWorkspaceState.tasks.toList()
-        val entities = currentTasks.map {
-            TaskEntity(
-                id = it.id,
-                title = it.title,
-                subjectId = it.subjectId,
-                topicId = it.topicId,
-                subjectName = it.subjectName,
-                topicName = it.topicName,
-                status = if (it.isCompleted) "COMPLETED" else "TODO",
-                priority = it.priority,
-                dueDate = it.dueDate,
-                dueTime = it.dueTime,
-                dueDayNumber = it.dueDayNumber,
-                estimatedMinutes = it.estimatedMinutes,
-                notes = it.notes
-            )
-        }
-        database.taskDao().insertTasks(entities)
-    }
-
-    private suspend fun seedInitialNotes(storage: NoteStorageManager) {
-        val database = db ?: return
-        val currentNotes = AcademicWorkspaceState.notes.toList()
-        val entities = currentNotes.map {
-            NoteEntity(
-                id = it.id,
-                title = it.title,
-                snippet = it.snippet,
-                subject = it.subject,
-                subjectId = it.subjectId,
-                topicId = it.topicId,
-                topicName = it.topicName,
-                isScratchpad = it.isScratchpad,
-                paperStyle = it.paperStyle.name,
-                pdfUri = it.pdfUri,
-                pdfTotalPages = it.pdfTotalPages
-            )
-        }
-        database.noteDao().insertNotes(entities)
-
-        // Save initial pages for each note
-        currentNotes.forEach { note ->
-            storage.saveNotePages(note.id, note.pages)
-        }
-    }
-
-    private suspend fun seedInitialSchedule() {
-        val database = db ?: return
-        val plannerEntities = AcademicWorkspaceState.scheduleItems.map { item ->
-            CalendarEventEntity(
-                id = item.id,
-                title = item.title,
-                eventType = item.type.name,
-                startTime = item.startTime,
-                endTime = item.endTime,
-                dayOfWeek = item.dayOfWeek,
-                dayOffset = item.dayOffset,
-                subjectId = item.subjectId,
-                subjectName = item.subjectName,
-                topicId = item.topicId,
-                topicName = item.topicName,
-                locationOrRoom = item.locationOrRoom,
-                isWeeklyClass = false,
-                isCompleted = item.isCompleted,
-                aiReason = item.aiReason
-            )
-        }
-
-        val weeklyEntities = AcademicWorkspaceState.weeklyClasses.map { wClass ->
-            CalendarEventEntity(
-                id = wClass.id,
-                title = "${wClass.subjectName}: ${wClass.type}",
-                eventType = wClass.type,
-                startTime = wClass.startTime,
-                endTime = wClass.endTime,
-                dayOfWeek = wClass.dayOfWeek,
-                subjectId = wClass.subjectId,
-                subjectName = wClass.subjectName,
-                subjectCode = wClass.subjectCode,
-                locationOrRoom = wClass.room,
-                lecturer = wClass.lecturer,
-                isWeeklyClass = true
-            )
-        }
-
-        database.calendarEventDao().insertEvents(plannerEntities + weeklyEntities)
     }
 }

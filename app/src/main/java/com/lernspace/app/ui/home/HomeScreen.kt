@@ -214,7 +214,7 @@ fun HomeScreen(
                                                     tint = AccentBlue
                                                 )
                                                 Text(
-                                                    text = "${nextUpClass?.startTime ?: "08:30"} · UPCOMING CLASS",
+                                                    text = if (nextUpClass != null) "${nextUpClass.startTime} · UPCOMING CLASS" else "TIDAK ADA KELAS HARI INI",
                                                     style = MaterialTheme.typography.labelSmall,
                                                     fontWeight = FontWeight.Bold,
                                                     color = AccentBlue
@@ -227,7 +227,7 @@ fun HomeScreen(
                                             color = AccentTealContainer
                                         ) {
                                             Text(
-                                                text = (nextUpClass?.subjectName ?: "NEUROBIOLOGY").uppercase(),
+                                                text = (nextUpClass?.subjectName ?: "LERNSPACE").uppercase(),
                                                 style = MaterialTheme.typography.labelSmall,
                                                 fontWeight = FontWeight.Bold,
                                                 color = AccentTeal,
@@ -238,14 +238,14 @@ fun HomeScreen(
 
                                     Column {
                                         Text(
-                                            text = nextUpTopic?.title ?: "Synaptic Plasticity & LTP Review",
+                                            text = nextUpTopic?.title ?: "Mulai Sesi Belajar Anda",
                                             style = MaterialTheme.typography.titleLarge,
                                             fontWeight = FontWeight.Bold,
                                             color = LernspaceDark
                                         )
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
-                                            text = nextUpTopic?.description ?: "Persiapan review materi kuliah dan catatan sub-bab silabus.",
+                                            text = nextUpTopic?.description ?: "Pilih materi di silabus atau buat catatan baru di Canvas Workspace.",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = LernspaceTextSecondary
                                         )
@@ -263,9 +263,14 @@ fun HomeScreen(
                                                     if (existing != null) {
                                                         AcademicWorkspaceState.openNoteEditor(existing)
                                                     } else {
-                                                        val subj = subjects.find { it.id == nextUpTopic.subjectId } ?: subjects.first()
-                                                        val newNote = AcademicWorkspaceState.createNoteForTopic(subj, nextUpTopic)
-                                                        AcademicWorkspaceState.openNoteEditor(newNote)
+                                                        val subj = subjects.find { it.id == nextUpTopic.subjectId } ?: subjects.firstOrNull()
+                                                        if (subj != null) {
+                                                            val newNote = AcademicWorkspaceState.createNoteForTopic(subj, nextUpTopic)
+                                                            AcademicWorkspaceState.openNoteEditor(newNote)
+                                                        } else {
+                                                            val newScratchpad = AcademicWorkspaceState.createScratchpad(title = nextUpTopic.title)
+                                                            AcademicWorkspaceState.openNoteEditor(newScratchpad)
+                                                        }
                                                     }
                                                 } else {
                                                     val newScratchpad = AcademicWorkspaceState.createScratchpad()
@@ -678,63 +683,71 @@ fun HomeScreen(
                                     )
                                 }
 
-                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    recentNotes.forEach { note ->
-                                        val subj = subjects.find { it.id == note.subjectId }
-                                        val noteColor = subj?.color ?: if (note.isScratchpad) Color(0xFF64748B) else AccentBlue
+                                if (recentNotes.isEmpty()) {
+                                    Text(
+                                        text = "Belum ada catatan dibuat. Ketuk 'Catatan Cepat' untuk mulai mencoret di kanvas.",
+                                        fontSize = 12.sp,
+                                        color = LernspaceTextSecondary
+                                    )
+                                } else {
+                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        recentNotes.forEach { note ->
+                                            val subj = subjects.find { it.id == note.subjectId }
+                                            val noteColor = subj?.color ?: if (note.isScratchpad) Color(0xFF64748B) else AccentBlue
 
-                                        Surface(
-                                            shape = RoundedCornerShape(8.dp),
-                                            color = LernspaceSurfaceLow,
-                                            border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder),
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clickable { AcademicWorkspaceState.openNoteEditor(note) }
-                                        ) {
-                                            Row(
+                                            Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = LernspaceSurfaceLow,
+                                                border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder),
                                                 modifier = Modifier
                                                     .fillMaxWidth()
-                                                    .padding(10.dp),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
+                                                    .clickable { AcademicWorkspaceState.openNoteEditor(note) }
                                             ) {
-                                                Column(modifier = Modifier.weight(1f)) {
-                                                    Row(
-                                                        verticalAlignment = Alignment.CenterVertically,
-                                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                                    ) {
-                                                        Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(noteColor))
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(10.dp),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Column(modifier = Modifier.weight(1f)) {
+                                                        Row(
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                        ) {
+                                                            Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(noteColor))
+                                                            Text(
+                                                                text = note.subject,
+                                                                fontSize = 10.sp,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = noteColor
+                                                            )
+                                                        }
+                                                        Spacer(modifier = Modifier.height(2.dp))
                                                         Text(
-                                                            text = note.subject,
-                                                            fontSize = 10.sp,
+                                                            text = note.title,
+                                                            fontSize = 12.sp,
                                                             fontWeight = FontWeight.Bold,
-                                                            color = noteColor
+                                                            color = LernspaceDark,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                        Text(
+                                                            text = note.snippet,
+                                                            fontSize = 10.sp,
+                                                            color = LernspaceTextSecondary,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
                                                         )
                                                     }
-                                                    Spacer(modifier = Modifier.height(2.dp))
-                                                    Text(
-                                                        text = note.title,
-                                                        fontSize = 12.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = LernspaceDark,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis
-                                                    )
-                                                    Text(
-                                                        text = note.snippet,
-                                                        fontSize = 10.sp,
-                                                        color = LernspaceTextSecondary,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis
+
+                                                    Icon(
+                                                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                                        contentDescription = "Buka",
+                                                        tint = LernspaceTextSecondary,
+                                                        modifier = Modifier.size(14.dp)
                                                     )
                                                 }
-
-                                                Icon(
-                                                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                                                    contentDescription = "Buka",
-                                                    tint = LernspaceTextSecondary,
-                                                    modifier = Modifier.size(14.dp)
-                                                )
                                             }
                                         }
                                     }
@@ -776,46 +789,54 @@ fun HomeScreen(
                                     )
                                 }
 
-                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    subjects.forEach { subject ->
-                                        val count = topics.count { it.subjectId == subject.id }
-                                        val mastered = topics.count { it.subjectId == subject.id && (it.status == TopicStatus.COMFORTABLE || it.status == TopicStatus.MASTERED) }
-                                        val pct = if (count > 0) (mastered.toFloat() / count * 100).toInt() else 0
+                                if (subjects.isEmpty()) {
+                                    Text(
+                                        text = "Belum ada mata kuliah terdaftar. Buka Silabus untuk menambahkan.",
+                                        fontSize = 12.sp,
+                                        color = LernspaceTextSecondary
+                                    )
+                                } else {
+                                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        subjects.forEach { subject ->
+                                            val count = topics.count { it.subjectId == subject.id }
+                                            val mastered = topics.count { it.subjectId == subject.id && (it.status == TopicStatus.COMFORTABLE || it.status == TopicStatus.MASTERED) }
+                                            val pct = if (count > 0) (mastered.toFloat() / count * 100).toInt() else 0
 
-                                        Surface(
-                                            shape = RoundedCornerShape(8.dp),
-                                            color = LernspaceSurfaceLow,
-                                            border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder),
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clickable { onNavigateToScreen(Screen.Learning.route) }
-                                        ) {
-                                            Row(
+                                            Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = LernspaceSurfaceLow,
+                                                border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder),
                                                 modifier = Modifier
                                                     .fillMaxWidth()
-                                                    .padding(10.dp),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
+                                                    .clickable { onNavigateToScreen(Screen.Learning.route) }
                                             ) {
                                                 Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(10.dp),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
                                                 ) {
-                                                    Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(subject.color))
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                    ) {
+                                                        Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(subject.color))
+                                                        Text(
+                                                            text = subject.name,
+                                                            fontSize = 12.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = LernspaceDark
+                                                        )
+                                                    }
+
                                                     Text(
-                                                        text = subject.name,
-                                                        fontSize = 12.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = LernspaceDark
+                                                        text = "$pct% ($mastered/$count bab)",
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = if (pct >= 50) Color(0xFF16A34A) else LernspaceTextSecondary
                                                     )
                                                 }
-
-                                                Text(
-                                                    text = "$pct% ($mastered/$count bab)",
-                                                    fontSize = 11.sp,
-                                                    fontWeight = FontWeight.SemiBold,
-                                                    color = if (pct >= 50) Color(0xFF16A34A) else LernspaceTextSecondary
-                                                )
                                             }
                                         }
                                     }

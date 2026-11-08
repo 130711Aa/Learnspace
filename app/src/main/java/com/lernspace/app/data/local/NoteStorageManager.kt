@@ -239,5 +239,17 @@ class NoteStorageManager(private val context: Context) {
             noteFile.delete()
         }
     }
+
+    /**
+     * Wipes all note JSON and asset files on disk.
+     */
+    fun clearAllFiles() {
+        try {
+            notesDir.listFiles()?.forEach { it.delete() }
+            imagesDir.listFiles()?.forEach { it.delete() }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
 }
 

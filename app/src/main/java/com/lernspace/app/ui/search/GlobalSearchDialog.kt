@@ -369,98 +369,123 @@ fun GlobalSearchDialog(
                             .fillMaxWidth()
                             .weight(1f)
                     ) {
-                        Text(
-                            text = "PENCARIAN CEPAT & TOPIK POPULER",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF94A3B8),
-                            letterSpacing = 0.8.sp
-                        )
+                        val suggestedQueries = remember(allTopics.size, allSubjects.size) {
+                            (allTopics.take(6).map { it.title } + allSubjects.take(3).map { it.name }).distinct()
+                        }
 
-                        Spacer(modifier = Modifier.height(10.dp))
+                        if (suggestedQueries.isNotEmpty()) {
+                            Text(
+                                text = "PENCARIAN CEPAT & TOPIK POPULER",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF94A3B8),
+                                letterSpacing = 0.8.sp
+                            )
 
-                        val suggestedQueries = listOf(
-                            "Resting Membrane Potential",
-                            "Action Potential",
-                            "Synaptic Transmission & LTP",
-                            "Working Memory",
-                            "Bayesian Prior Distributions",
-                            "MCMC Sampling",
-                            "Aldol Condensation",
-                            "NEUR-401",
-                            "STAT-210"
-                        )
+                            Spacer(modifier = Modifier.height(10.dp))
 
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            suggestedQueries.forEach { suggestion ->
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = LernspaceSurfaceLow,
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E4E8)),
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .clickable { searchQuery = suggestion }
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                        verticalAlignment = Alignment.CenterVertically
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                suggestedQueries.forEach { suggestion ->
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = LernspaceSurfaceLow,
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E4E8)),
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable { searchQuery = suggestion }
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.AutoMirrored.Filled.TrendingUp,
-                                            contentDescription = null,
-                                            tint = AccentTeal,
-                                            modifier = Modifier.size(13.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = suggestion,
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            color = LernspaceDark
-                                        )
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.AutoMirrored.Filled.TrendingUp,
+                                                contentDescription = null,
+                                                tint = AccentTeal,
+                                                modifier = Modifier.size(13.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = suggestion,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = LernspaceDark
+                                            )
+                                        }
                                     }
                                 }
                             }
+
+                            Spacer(modifier = Modifier.height(18.dp))
                         }
 
-                        Spacer(modifier = Modifier.height(18.dp))
+                        if (allNotes.isNotEmpty() || allTasks.isNotEmpty()) {
+                            Text(
+                                text = "CATATAN & TUGAS TERBARU",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF94A3B8),
+                                letterSpacing = 0.8.sp
+                            )
 
-                        Text(
-                            text = "CATATAN & TUGAS TERBARU",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF94A3B8),
-                            letterSpacing = 0.8.sp
-                        )
+                            Spacer(modifier = Modifier.height(10.dp))
 
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        LazyColumn(
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            items(allNotes.take(2)) { note ->
-                                NoteResultCard(
-                                    note = note,
-                                    onClick = {
-                                        AcademicWorkspaceState.openNoteEditor(note)
-                                        onDismiss()
-                                    }
-                                )
+                            LazyColumn(
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                items(allNotes.take(2)) { note ->
+                                    NoteResultCard(
+                                        note = note,
+                                        onClick = {
+                                            AcademicWorkspaceState.openNoteEditor(note)
+                                            onDismiss()
+                                        }
+                                    )
+                                }
+                                items(allTasks.take(2)) { task ->
+                                    TaskResultCard(
+                                        task = task,
+                                        onClick = {
+                                            AcademicWorkspaceState.selectedPlannerTab = 1
+                                            onNavigate(Screen.Planner.route)
+                                            onDismiss()
+                                        }
+                                    )
+                                }
                             }
-                            items(allTasks.take(2)) { task ->
-                                TaskResultCard(
-                                    task = task,
-                                    onClick = {
-                                        AcademicWorkspaceState.selectedPlannerTab = 1
-                                        onNavigate(Screen.Planner.route)
-                                        onDismiss()
-                                    }
-                                )
+                        } else if (suggestedQueries.isEmpty()) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Search,
+                                        contentDescription = null,
+                                        tint = Color(0xFF94A3B8),
+                                        modifier = Modifier.size(40.dp)
+                                    )
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    Text(
+                                        text = "Ketik untuk mencari di seluruh aplikasi",
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = LernspaceDark
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "Cari judul catatan, topik silabus, tugas kuliah, atau jadwal kuliah.",
+                                        fontSize = 12.sp,
+                                        color = Color(0xFF64748B)
+                                    )
+                                }
                             }
                         }
                     }

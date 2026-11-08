@@ -44,19 +44,7 @@ class SubjectRepository(
     }
 
     suspend fun seedInitialDataIfEmpty() {
-        // Will be called to seed academic topics if database has no subjects
-        val testSubjectId = UUID.randomUUID().toString()
-        val subject = SubjectEntity(
-            id = testSubjectId,
-            name = "Neurobiology",
-            description = "Cellular and molecular neuroscience (NEUR-401)",
-            colorArgb = 0xFF28A094
-        )
-        subjectDao.insertSubject(subject)
-
-        createTopic(testSubjectId, "1. Resting Membrane Potential & Ion Channels")
-        createTopic(testSubjectId, "2. Synaptic Transmission & LTP Plasticity")
-        createTopic(testSubjectId, "3. Hippocampal Encoding Circuitry")
+        // No-op: clean production state
     }
 }
 

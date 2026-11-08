@@ -32,5 +32,11 @@ interface TopicDao {
 
     @Delete
     suspend fun deleteTopic(topic: TopicEntity)
+
+    @Query("DELETE FROM topics WHERE subjectId = :subjectId")
+    suspend fun deleteTopicsForSubject(subjectId: String)
+
+    @Query("DELETE FROM topics WHERE id = :id")
+    suspend fun deleteTopicById(id: String)
 }
 

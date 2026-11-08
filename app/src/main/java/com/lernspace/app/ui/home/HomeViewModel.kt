@@ -32,20 +32,8 @@ class HomeViewModel(
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
-        initialValue = HomeUiState(isLoading = true)
+        initialValue = HomeUiState(isLoading = false)
     )
-
-    init {
-        viewModelScope.launch {
-            // Seed initial sample data if empty so the screen is immediately populated
-            taskRepository.getAllTasks().firstOrNull()?.let { allTasks ->
-                if (allTasks.isEmpty()) {
-                    subjectRepository.seedInitialDataIfEmpty()
-                    taskRepository.seedInitialTasksIfEmpty()
-                }
-            }
-        }
-    }
 
     fun quickAddTask(title: String) {
         val newTask = com.lernspace.app.data.repository.TaskUiModel(

@@ -2352,7 +2352,7 @@ private fun HybridSuggestDialog(
                             }
                         }
                         Text(
-                            text = "Terdeteksi jeda 90 menit setelah Kuliah Neurobiology sebelum istirahat siang. Buffer 15 menit aman.",
+                            text = "Terdeteksi jeda waktu luang di jadwal Anda. Waktu ideal untuk sesi fokus mandiri dengan buffer istirahat aman.",
                             fontSize = 11.sp,
                             color = Color(0xFF78350F)
                         )

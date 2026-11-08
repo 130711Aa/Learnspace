@@ -58,9 +58,7 @@ class TaskRepository(
     }
 
     suspend fun seedInitialTasksIfEmpty(subjectId: String? = null) {
-        val today = LocalDate.now().format(dateFormatter)
-        createTask("Review NMDA receptor cascades & LTP paper", subjectId = subjectId, priority = "HIGH", dueDate = today)
-        createTask("Complete problem set #4: Biostatistics", subjectId = subjectId, priority = "MEDIUM", dueDate = today)
+        // No-op: clean production state
     }
 }
 

@@ -242,33 +242,48 @@ fun LearningScreen(
                         )
                     }
 
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(subjects, key = { it.id }) { subject ->
-                            val isSelected = subject.id == selectedSubjectId
-                            val count = topics.count { it.subjectId == subject.id }
-                            val mastered = topics.count { it.subjectId == subject.id && (it.status == TopicStatus.COMFORTABLE || it.status == TopicStatus.MASTERED) }
-                            val pct = if (count > 0) (mastered.toFloat() / count * 100).toInt() else 0
+                    if (subjects.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "Belum ada mata kuliah.\nKetuk '+ New Subject' untuk menambahkan.",
+                                color = LernspaceTextSecondary,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                fontSize = 12.sp
+                            )
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(subjects, key = { it.id }) { subject ->
+                                val isSelected = subject.id == selectedSubjectId
+                                val count = topics.count { it.subjectId == subject.id }
+                                val mastered = topics.count { it.subjectId == subject.id && (it.status == TopicStatus.COMFORTABLE || it.status == TopicStatus.MASTERED) }
+                                val pct = if (count > 0) (mastered.toFloat() / count * 100).toInt() else 0
 
-                            SubjectCardItem(
-                                subject = subject,
-                                topicCount = count,
-                                masteryPercent = pct,
-                                isSelected = isSelected,
-                                onClick = { selectedSubjectId = subject.id },
-                                onDelete = {
-                                    if (subjects.size > 1) {
+                                SubjectCardItem(
+                                    subject = subject,
+                                    topicCount = count,
+                                    masteryPercent = pct,
+                                    isSelected = isSelected,
+                                    onClick = { selectedSubjectId = subject.id },
+                                    onDelete = {
                                         subjects.remove(subject)
                                         topics.removeAll { it.subjectId == subject.id }
                                         notes.removeAll { it.subjectId == subject.id }
+                                        com.lernspace.app.data.local.AcademicDatabaseManager.deleteSubject(subject.id)
                                         if (selectedSubjectId == subject.id) {
-                                            selectedSubjectId = subjects.first().id
+                                            selectedSubjectId = subjects.firstOrNull()?.id ?: ""
                                         }
                                     }
-                                }
-                            )
+                                )
+                            }
                         }
                     }
                 }
