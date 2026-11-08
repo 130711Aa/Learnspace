@@ -309,7 +309,10 @@ object ShapeRecognizer {
             val simplified = douglasPeucker(rawPoints, epsilon = diagonal * 0.08f)
             val cornerCount = maxOf(3, simplified.size - 1)
 
-            // Measure circular variance
+            // 1. Measure circular/elliptical deviation
+            // Ideal circle/oval = 0.0. Hand-drawn circle/oval = 0.03 - 0.09.
+            // Mathematical square/rectangle has corner points at sqrt(2)*r = 1.414*r,
+            // producing an unavoidable theoretical average deviation of >= 0.148!
             val rx = width / 2f
             val ry = height / 2f
             var sumNormalizedDistDiff = 0f
@@ -321,19 +324,38 @@ object ShapeRecognizer {
             }
             val avgCircleDeviation = sumNormalizedDistDiff / rawPoints.size
 
-            // ── CHECK A: CIRCLE / OVAL ──
-            // Circle has smooth curve, low variance from ellipse formula (avgCircleDeviation < 0.18),
-            // and areaRatio around pi/4 (~0.785)
-            if (avgCircleDeviation < 0.18f && areaRatio in 0.60f..0.92f) {
-                val isNearSquare = abs(width - height) / maxOf(width, height) < 0.22f
-                val finalRx = if (isNearSquare) (rx + ry) / 2f else rx
-                val finalRy = if (isNearSquare) (rx + ry) / 2f else ry
-                return createStrokeFromPoints(sampleCircle(cx, cy, finalRx, finalRy), stroke.brush)
+            // 2. Measure proximity to the 4 bounding box edges (Perimeter Edge Ratio)
+            // A rectangle has points along its 4 straight sides, yielding edgeRatio >= 0.65 (usually 0.75 - 0.95).
+            // A circle/oval curves inward at diagonals, yielding edgeRatio <= 0.52.
+            val edgeTol = maxOf(10f, minOf(width, height) * 0.15f)
+            var edgeCount = 0
+            for (p in rawPoints) {
+                val dLeft = abs(p.x - minX)
+                val dRight = abs(p.x - maxX)
+                val dTop = abs(p.y - minY)
+                val dBottom = abs(p.y - maxY)
+                if (minOf(dLeft, dRight, dTop, dBottom) <= edgeTol) {
+                    edgeCount++
+                }
             }
+            val edgeRatio = edgeCount.toFloat() / rawPoints.size
 
-            // ── CHECK B: TRIANGLE ──
-            // Key invariant: Triangle area can NEVER exceed 0.50-0.62 of its bounding box!
-            // Rectangle has areaRatio > 0.70, so areaRatio <= 0.65 is mathematically a Triangle!
+            // 3. Test if points enter the 4 bounding box corners
+            // Rectangle drawers touch all 4 corners (cornersHit >= 3).
+            // Circle never enters corners (closest distance is 0.293*r), so cornersHit == 0.
+            val cornerTol = maxOf(14f, minOf(width, height) * 0.22f)
+            val hasTopLeft = rawPoints.any { hypot(it.x - minX, it.y - minY) <= cornerTol }
+            val hasTopRight = rawPoints.any { hypot(it.x - maxX, it.y - minY) <= cornerTol }
+            val hasBottomRight = rawPoints.any { hypot(it.x - maxX, it.y - maxY) <= cornerTol }
+            val hasBottomLeft = rawPoints.any { hypot(it.x - minX, it.y - maxY) <= cornerTol }
+            val cornersHit = (if (hasTopLeft) 1 else 0) + (if (hasTopRight) 1 else 0) +
+                             (if (hasBottomRight) 1 else 0) + (if (hasBottomLeft) 1 else 0)
+
+            val isDefiniteRectangle = (cornersHit >= 3 && areaRatio >= 0.70f) || (edgeRatio >= 0.64f && areaRatio >= 0.68f)
+
+            // ── CHECK A: TRIANGLE ──
+            // Area of a triangle can NEVER exceed 0.50-0.62 of its bounding box.
+            // Mathematically, areaRatio <= 0.65 is guaranteed to be a Triangle!
             if (areaRatio <= 0.65f) {
                 // Find 3 vertices that maximize the inscribed triangle area
                 val candidates = if (simplified.size >= 3) {
@@ -384,9 +406,10 @@ object ShapeRecognizer {
                 return createStrokeFromPoints(sampleTriangle(pts[0], pts[1], pts[2]), stroke.brush)
             }
 
-            // ── CHECK C: RECTANGLE / SQUARE ──
-            // Rectangle fills almost the entire bounding box (areaRatio >= 0.68)
-            if (areaRatio >= 0.68f) {
+            // ── CHECK B: RECTANGLE / SQUARE ──
+            // Tested before circle because rectangles have high edgeRatio, cornersHit >= 3,
+            // and fill >= 0.70 of bounding box area.
+            if (isDefiniteRectangle || (areaRatio >= 0.72f && edgeRatio >= 0.60f)) {
                 val isSquare = abs(width - height) / maxOf(width, height) < 0.18f
                 val finalW = if (isSquare) maxOf(width, height) else width
                 val finalH = if (isSquare) maxOf(width, height) else height
@@ -395,6 +418,16 @@ object ShapeRecognizer {
                 val fMinY = if (isSquare) cy - finalH / 2f else minY
                 val fMaxY = if (isSquare) cy + finalH / 2f else maxY
                 return createStrokeFromPoints(sampleRectangle(fMinX, fMinY, fMaxX, fMaxY), stroke.brush)
+            }
+
+            // ── CHECK C: CIRCLE / OVAL ──
+            // Circle/oval has low variance from ellipse formula (avgCircleDeviation < 0.12),
+            // does NOT hit box corners, and edgeRatio < 0.60.
+            if (avgCircleDeviation < 0.12f && edgeRatio < 0.60f && cornersHit <= 2) {
+                val isNearSquare = abs(width - height) / maxOf(width, height) < 0.22f
+                val finalRx = if (isNearSquare) (rx + ry) / 2f else rx
+                val finalRy = if (isNearSquare) (rx + ry) / 2f else ry
+                return createStrokeFromPoints(sampleCircle(cx, cy, finalRx, finalRy), stroke.brush)
             }
         }
 
