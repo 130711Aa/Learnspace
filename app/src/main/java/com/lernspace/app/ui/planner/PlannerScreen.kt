@@ -41,7 +41,10 @@ fun PlannerScreen(
     val topics = AcademicWorkspaceState.topics
     val notes = AcademicWorkspaceState.notes
 
-    var selectedTab by remember { mutableIntStateOf(0) }
+    var selectedTab by remember { mutableIntStateOf(AcademicWorkspaceState.selectedPlannerTab) }
+    LaunchedEffect(AcademicWorkspaceState.selectedPlannerTab) {
+        selectedTab = AcademicWorkspaceState.selectedPlannerTab
+    }
     val tabs = listOf(
         Pair("Kalender & Deadline", Icons.Filled.CalendarMonth),
         Pair("Daftar Tugas", Icons.Filled.Checklist),
@@ -132,7 +135,10 @@ fun PlannerScreen(
                         shape = RoundedCornerShape(8.dp),
                         color = if (selectedTab == index) Color.White else Color.Transparent,
                         shadowElevation = if (selectedTab == index) 1.dp else 0.dp,
-                        modifier = Modifier.clickable { selectedTab = index }
+                        modifier = Modifier.clickable {
+                            selectedTab = index
+                            AcademicWorkspaceState.selectedPlannerTab = index
+                        }
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,

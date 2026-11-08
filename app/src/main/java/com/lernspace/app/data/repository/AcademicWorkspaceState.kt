@@ -26,6 +26,13 @@ object AcademicWorkspaceState {
     /** Global active note being edited fullscreen across the entire tablet display */
     var activeEditingNote by mutableStateOf<NoteUiModel?>(null)
 
+    /** Global search overlay state */
+    var isGlobalSearchOpen by mutableStateOf(false)
+
+    /** Cross-module navigation targets */
+    var selectedLearningSubjectId by mutableStateOf<String?>(null)
+    var selectedPlannerTab by mutableIntStateOf(0)
+
     fun openNoteEditor(note: NoteUiModel) {
         activeEditingNote = note
     }

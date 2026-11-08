@@ -103,7 +103,12 @@ fun LearningScreen(
     val topics = AcademicWorkspaceState.topics
     val notes = AcademicWorkspaceState.notes
 
-    var selectedSubjectId by remember { mutableStateOf(subjects.firstOrNull()?.id ?: "") }
+    var selectedSubjectId by remember { mutableStateOf(AcademicWorkspaceState.selectedLearningSubjectId ?: subjects.firstOrNull()?.id ?: "") }
+    LaunchedEffect(AcademicWorkspaceState.selectedLearningSubjectId) {
+        AcademicWorkspaceState.selectedLearningSubjectId?.let { id ->
+            selectedSubjectId = id
+        }
+    }
 
     // Dialog & filter states
     var showAddSubjectDialog by remember { mutableStateOf(false) }

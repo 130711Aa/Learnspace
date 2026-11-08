@@ -26,6 +26,8 @@ import com.lernspace.app.data.repository.AcademicWorkspaceState
 import com.lernspace.app.data.repository.FocusSessionPhase
 import com.lernspace.app.data.repository.FocusTimerPreset
 import com.lernspace.app.navigation.Screen
+import com.lernspace.app.ui.search.GlobalSearchDialog
+import com.lernspace.app.ui.search.GlobalSearchPill
 import com.lernspace.app.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -128,18 +130,15 @@ fun TabletAppShell(
             modifier = Modifier
                 .fillMaxSize()
         ) {
-            // Tablet TopBar
+            // Tablet TopBar with Stitch Global Search Pill
             TopAppBar(
-                title = {},
+                title = {
+                    GlobalSearchPill(
+                        onClick = { AcademicWorkspaceState.isGlobalSearchOpen = true },
+                        modifier = Modifier.width(360.dp)
+                    )
+                },
                 actions = {
-                    IconButton(onClick = { /* Search */ }) {
-                        Icon(
-                            imageVector = Icons.Filled.Search,
-                            contentDescription = "Search",
-                            tint = LernspaceTextSecondary
-                        )
-                    }
-
                     val isFocusActive = AcademicWorkspaceState.isFocusSessionActive
                     val focusPhase = AcademicWorkspaceState.focusPhase
                     val remainingSec = AcademicWorkspaceState.focusTimeRemainingSeconds
@@ -195,6 +194,13 @@ fun TabletAppShell(
                 content()
             }
         }
+    }
+
+    if (AcademicWorkspaceState.isGlobalSearchOpen) {
+        GlobalSearchDialog(
+            onDismiss = { AcademicWorkspaceState.isGlobalSearchOpen = false },
+            onNavigate = onNavigate
+        )
     }
 }
 
