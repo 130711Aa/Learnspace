@@ -1,7 +1,9 @@
 package com.lernspace.app.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -16,7 +18,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.lernspace.app.navigation.Screen
 import com.lernspace.app.ui.theme.*
 
@@ -34,10 +38,10 @@ fun TabletAppShell(
             .fillMaxSize()
             .background(LernspaceSurface)
     ) {
-        // Left Landscape Navigation Rail (72dp - 200dp responsive)
+        // Left Landscape Compact Navigation Rail (80dp - saves space & avoids status bar collision)
         Surface(
             modifier = Modifier
-                .width(220.dp)
+                .width(80.dp)
                 .fillMaxHeight(),
             color = LernspaceSurfaceCard,
             shadowElevation = 2.dp
@@ -45,44 +49,40 @@ fun TabletAppShell(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.SpaceBetween
+                    .statusBarsPadding()
+                    .navigationBarsPadding()
+                    .padding(vertical = 12.dp, horizontal = 4.dp),
+                verticalArrangement = Arrangement.SpaceBetween,
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 // Header Logo
-                Column {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(LernspaceDark),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(38.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(LernspaceDark),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.AutoStories,
-                                contentDescription = "Logo",
-                                tint = Color.White,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                        Column {
-                            Text(
-                                text = "Lernspace",
-                                style = MaterialTheme.typography.titleLarge,
-                                color = LernspaceDark
-                            )
-                            Text(
-                                text = "Learning OS",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = LernspaceTextSecondary
-                            )
-                        }
+                        Icon(
+                            imageVector = Icons.Filled.AutoStories,
+                            contentDescription = "Logo",
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Lernspace",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = LernspaceDark
+                    )
 
-                    Spacer(modifier = Modifier.height(28.dp))
+                    Spacer(modifier = Modifier.height(18.dp))
 
                     // Nav Items
                     Screen.items.forEach { screen ->
@@ -93,13 +93,15 @@ fun TabletAppShell(
                             icon = {
                                 Icon(
                                     imageVector = screen.icon,
-                                    contentDescription = screen.title
+                                    contentDescription = screen.title,
+                                    modifier = Modifier.size(20.dp)
                                 )
                             },
                             label = {
                                 Text(
                                     text = screen.title,
-                                    style = MaterialTheme.typography.labelMedium
+                                    fontSize = 10.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                                 )
                             },
                             alwaysShowLabel = true,
@@ -110,69 +112,56 @@ fun TabletAppShell(
                                 unselectedIconColor = LernspaceTextSecondary,
                                 unselectedTextColor = LernspaceTextSecondary
                             ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp)
+                            modifier = Modifier.padding(vertical = 2.dp)
                         )
                     }
                 }
 
                 // Bottom Section: Stylus / Quick Capture & Profile
                 Column(
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    OutlinedButton(
-                        onClick = onQuickAdd,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = AccentBlue
-                        )
+                    // Quick Canvas Floating Action Button
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = AccentBlueContainer,
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { onQuickAdd() },
+                        border = androidx.compose.foundation.BorderStroke(1.dp, AccentBlue.copy(alpha = 0.3f))
                     ) {
-                        Icon(
-                            imageVector = Icons.Filled.Create,
-                            contentDescription = "Quick Canvas",
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Quick Canvas",
-                            style = MaterialTheme.typography.labelMedium
-                        )
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Filled.Create,
+                                contentDescription = "Quick Canvas",
+                                tint = AccentBlue,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
 
-                    HorizontalDivider(color = LernspaceBorder)
+                    HorizontalDivider(
+                        color = LernspaceBorder,
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    // User Profile Avatar
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(LernspaceDark),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(32.dp)
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(LernspaceDark),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "U",
-                                color = Color.White,
-                                style = MaterialTheme.typography.labelMedium
-                            )
-                        }
-                        Column {
-                            Text(
-                                text = "Student Workspace",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = LernspaceTextPrimary
-                            )
-                            Text(
-                                text = "Local-first Mode",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = AccentTeal
-                            )
-                        }
+                        Text(
+                            text = "U",
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
             }
