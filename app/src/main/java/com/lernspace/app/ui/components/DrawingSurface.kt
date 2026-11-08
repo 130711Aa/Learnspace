@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.setFrom
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -83,21 +84,21 @@ fun DrawingSurface(
     //   This is the EXACT inverse of the strokeToScreen transform.
     // =========================================================================
 
-    // Single mutable android Matrix for rendering dry strokes — reused every frame.
-    val strokeToScreenMatrix = remember { Matrix() }
-
-    // The Compose identity matrix for strokeToWorldTransform.
+    val identityAndroidMatrix = remember { Matrix() }
     val identityComposeMatrix = remember { androidx.compose.ui.graphics.Matrix() }
 
-    // Compose Matrix for InProgressStrokes.pointerEventToWorldTransform.
-    // Maps raw stylus screen coordinates → world coordinates.
-    // Order: scale(1/s) FIRST, then translate(-panX, -panY)
-    // Result: (screen - panX) / scale = world  ✅
+    // Mathematically exact inverse computed by android.graphics.Matrix.invert()
+    // and mapped directly into Compose Matrix via setFrom(inv).
+    // This guarantees 100% precision for any scale & pan values!
     val pointerEventToWorldMatrix = remember(scale, panX, panY) {
+        val renderMatrix = Matrix().apply {
+            postScale(scale, scale)
+            postTranslate(panX, panY)
+        }
+        val inv = Matrix()
+        renderMatrix.invert(inv)
         androidx.compose.ui.graphics.Matrix().apply {
-            reset()
-            scale(1f / scale, 1f / scale, 1f)
-            translate(-panX, -panY)
+            setFrom(inv)
         }
     }
 
@@ -168,25 +169,23 @@ fun DrawingSurface(
                 }
             }
     ) {
-        // ─── Layer 1: Completed (dry) strokes rendered with scale+pan transform ───
-        // Reading currentScale/PanX/PanY inside DrawScope ensures Compose re-draws
-        // every frame that pan or zoom changes.
+        // ─── Layer 1: Completed (dry) strokes rendered with hardware canvas transform ───
+        // Uses nativeCanvas.translate & nativeCanvas.scale so strokes track paper 100% physically!
         Canvas(modifier = Modifier.fillMaxSize()) {
             val s = currentScale
             val px = currentPanX
             val py = currentPanY
 
-            strokeToScreenMatrix.reset()
-            strokeToScreenMatrix.postScale(s, s)
-            strokeToScreenMatrix.postTranslate(px, py)
-
             val nativeCanvas = drawContext.canvas.nativeCanvas
-            strokes.fastForEach { stroke ->
-                nativeCanvas.withSave {
+            nativeCanvas.withSave {
+                nativeCanvas.translate(px, py)
+                nativeCanvas.scale(s, s)
+
+                strokes.fastForEach { stroke ->
                     canvasStrokeRenderer.draw(
                         canvas = nativeCanvas,
                         stroke = stroke,
-                        strokeToScreenTransform = strokeToScreenMatrix,
+                        strokeToScreenTransform = identityAndroidMatrix,
                     )
                 }
             }
