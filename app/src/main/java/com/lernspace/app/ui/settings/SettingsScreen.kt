@@ -6,8 +6,10 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.*
@@ -18,9 +20,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import com.lernspace.app.core.updater.AppReleaseInfo
+import com.lernspace.app.core.updater.UpdateManager
 import com.lernspace.app.data.local.AppSettingsManager
 import com.lernspace.app.data.local.AppThemeMode
 import com.lernspace.app.data.local.Handedness
@@ -28,6 +34,7 @@ import com.lernspace.app.data.local.ShapeSnapSensitivity
 import com.lernspace.app.data.local.TouchInputMode
 import com.lernspace.app.ui.theme.*
 import com.lernspace.app.ui.workspace.model.PaperStyle
+import kotlinx.coroutines.launch
 
 private enum class SettingsCategory(val title: String, val subtitle: String, val icon: ImageVector) {
     STYLUS_ERGONOMICS("Stylus & Ergonomi", "Mode tangan, snap bentuk geometri", Icons.Filled.Draw),
@@ -768,10 +775,18 @@ private fun WorkspaceDefaultsSection() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SECTION 4: TENTANG & SISTEM
+// SECTION 4: TENTANG & SISTEM (Version Info & GitHub Auto-Updater)
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun AboutAndSystemSection() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    var isCheckingUpdate by remember { mutableStateOf(false) }
+    var updateCheckStatus by remember { mutableStateOf<String?>(null) }
+    var availableUpdate by remember { mutableStateOf<AppReleaseInfo?>(null) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
+
     Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
@@ -781,7 +796,7 @@ private fun AboutAndSystemSection() {
                 color = LernspaceDark
             )
             Text(
-                text = "Informasi build aplikasi dan status penyimpanan lokal tablet",
+                text = "Informasi build aplikasi, status penyimpanan lokal, dan pemeriksaan pembaruan rilis",
                 style = MaterialTheme.typography.bodyMedium,
                 color = LernspaceTextSecondary
             )
@@ -793,22 +808,109 @@ private fun AboutAndSystemSection() {
             border = BorderStroke(1.dp, LernspaceBorder),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                // Header Row with App Title & Check for Update Button
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text("Learnspace Tablet OS", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
                         Text("Versi 1.0.0 (Production Release)", fontSize = 12.sp, color = LernspaceTextSecondary)
                     }
-                    Surface(shape = RoundedCornerShape(8.dp), color = AccentTealContainer) {
-                        Text("UP TO DATE", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = AccentTeal, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (availableUpdate?.hasUpdate == true) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color(0xFFEFF6FF),
+                                border = BorderStroke(1.dp, Color(0xFFBFDBFE)),
+                                modifier = Modifier.clickable { showUpdateDialog = true }
+                            ) {
+                                Text(
+                                    text = "UPDATE: ${availableUpdate?.tagName}",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF1D4ED8),
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        } else {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = LernspaceSurfaceCard,
+                                border = BorderStroke(1.dp, LernspaceBorder)
+                            ) {
+                                Text(
+                                    text = updateCheckStatus ?: "UP TO DATE",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = LernspaceDark,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+
+                        Button(
+                            onClick = {
+                                if (!isCheckingUpdate) {
+                                    isCheckingUpdate = true
+                                    scope.launch {
+                                        val result = UpdateManager.checkForUpdates("1.0.0")
+                                        isCheckingUpdate = false
+                                        result.onSuccess { info ->
+                                            if (info.hasUpdate) {
+                                                availableUpdate = info
+                                                showUpdateDialog = true
+                                            } else {
+                                                updateCheckStatus = "UP TO DATE"
+                                                android.widget.Toast.makeText(
+                                                    context,
+                                                    "Learnspace Anda sudah versi terbaru (${info.tagName})",
+                                                    android.widget.Toast.LENGTH_SHORT
+                                                ).show()
+                                            }
+                                        }.onFailure { err ->
+                                            android.widget.Toast.makeText(
+                                                context,
+                                                "Gagal memeriksa update: ${err.message}",
+                                                android.widget.Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                    }
+                                }
+                            },
+                            enabled = !isCheckingUpdate,
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            if (isCheckingUpdate) {
+                                CircularProgressIndicator(modifier = Modifier.size(13.dp), color = Color.White, strokeWidth = 2.dp)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Memeriksa...", fontSize = 11.sp)
+                            } else {
+                                Icon(Icons.Filled.Sync, null, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Cek Pembaruan", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
                     }
                 }
 
                 HorizontalDivider(color = LernspaceBorder)
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Saluran Distribusi", fontSize = 12.sp, color = LernspaceTextSecondary)
+                    Text("GitHub Releases (Direct APK)", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                }
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -830,8 +932,107 @@ private fun AboutAndSystemSection() {
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text("Arsitektur", fontSize = 12.sp, color = LernspaceTextSecondary)
+                    Text("Arsitektur UI", fontSize = 12.sp, color = LernspaceTextSecondary)
                     Text("100% Native Jetpack Compose", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                }
+            }
+        }
+    }
+
+    // ── Dialog: Pembaruan Tersedia ────────────────────────────────────────────
+    if (showUpdateDialog && availableUpdate != null) {
+        val info = availableUpdate!!
+        Dialog(onDismissRequest = { showUpdateDialog = false }) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = Color.White,
+                shadowElevation = 6.dp,
+                modifier = Modifier.width(440.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(22.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color.Black),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Filled.AutoStories, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                            }
+                            Column {
+                                Text("Pembaruan Tersedia!", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                                Text("Versi ${info.tagName}", fontSize = 12.sp, color = Color(0xFF2563EB), fontWeight = FontWeight.Bold)
+                            }
+                        }
+                        IconButton(onClick = { showUpdateDialog = false }, modifier = Modifier.size(24.dp)) {
+                            Icon(Icons.Filled.Close, null)
+                        }
+                    }
+
+                    Text(
+                        text = info.title,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = LernspaceDark
+                    )
+
+                    // Changelog scroll box
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = LernspaceSurfaceLow,
+                        border = BorderStroke(1.dp, LernspaceBorder),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 200.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .padding(12.dp)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text("Catatan Perubahan:", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                            Text(
+                                text = info.changelog.ifBlank { "Peningkatan performa dan kestabilan sistem." },
+                                fontSize = 11.sp,
+                                color = LernspaceTextSecondary,
+                                lineHeight = 16.sp
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(onClick = { UpdateManager.openInBrowser(context, info.releasePageUrl) }) {
+                            Text("Buka di GitHub", fontSize = 12.sp, color = LernspaceDark)
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                showUpdateDialog = false
+                                UpdateManager.startApkDownload(context, info.apkDownloadUrl, info.versionName)
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                        ) {
+                            Icon(Icons.Filled.Download, null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Unduh & Pasang", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
                 }
             }
         }
