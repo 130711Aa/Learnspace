@@ -84,7 +84,10 @@ import com.lernspace.app.ui.workspace.model.*
 import com.lernspace.app.ui.workspace.pdf.PdfNoteHelper
 import com.lernspace.app.ui.workspace.shape.ShapeRecognizer
 import com.lernspace.app.data.local.AppSettingsManager
+import com.lernspace.app.data.local.EraserMode
 import com.lernspace.app.data.local.Handedness
+import com.lernspace.app.data.local.TouchInputMode
+import androidx.ink.strokes.MutableStrokeInputBatch
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -296,42 +299,132 @@ class NotePaneState(
         saveActivePageData()
     }
 
-    fun eraseNear(touchX: Float, touchY: Float) {
-        val effectiveRadius = 40f / scale
+    private fun distToSegmentSquared(px: Float, py: Float, x1: Float, y1: Float, x2: Float, y2: Float): Float {
+        val dx = x2 - x1
+        val dy = y2 - y1
+        val l2 = dx * dx + dy * dy
+        if (l2 == 0f) {
+            val ex = px - x1
+            val ey = py - y1
+            return ex * ex + ey * ey
+        }
+        val t = (((px - x1) * dx + (py - y1) * dy) / l2).coerceIn(0f, 1f)
+        val projX = x1 + t * dx
+        val projY = y1 + t * dy
+        val ex = px - projX
+        val ey = py - projY
+        return ex * ex + ey * ey
+    }
+
+    fun eraseNear(
+        touchX: Float,
+        touchY: Float,
+        radiusPx: Float = AppSettingsManager.eraserRadius,
+        mode: EraserMode = AppSettingsManager.eraserMode
+    ) {
+        val effectiveRadius = radiusPx / scale
         val radiusSquared = effectiveRadius * effectiveRadius
-        strokes.removeAll { stroke ->
-            val inputs = stroke.inputs
-            val count = inputs.size
-            if (count == 0) return@removeAll false
-            if (count == 1) {
-                val pt = inputs.get(0)
-                val dx = pt.x - touchX
-                val dy = pt.y - touchY
-                return@removeAll (dx * dx + dy * dy) <= radiusSquared
-            }
-            for (i in 0 until count - 1) {
-                val p1 = inputs.get(i)
-                val p2 = inputs.get(i + 1)
-                val dx = p2.x - p1.x
-                val dy = p2.y - p1.y
-                val l2 = dx * dx + dy * dy
-                val d2 = if (l2 == 0f) {
-                    val ex = touchX - p1.x
-                    val ey = touchY - p1.y
-                    ex * ex + ey * ey
-                } else {
-                    val t = (((touchX - p1.x) * dx + (touchY - p1.y) * dy) / l2).coerceIn(0f, 1f)
-                    val projX = p1.x + t * dx
-                    val projY = p1.y + t * dy
-                    val ex = touchX - projX
-                    val ey = touchY - projY
-                    ex * ex + ey * ey
+
+        if (mode == EraserMode.STROKE) {
+            strokes.removeAll { stroke ->
+                val inputs = stroke.inputs
+                val count = inputs.size
+                if (count == 0) return@removeAll false
+                if (count == 1) {
+                    val pt = inputs.get(0)
+                    val dx = pt.x - touchX
+                    val dy = pt.y - touchY
+                    return@removeAll (dx * dx + dy * dy) <= radiusSquared
                 }
-                if (d2 <= radiusSquared) {
-                    return@removeAll true
+                for (i in 0 until count - 1) {
+                    val p1 = inputs.get(i)
+                    val p2 = inputs.get(i + 1)
+                    val d2 = distToSegmentSquared(touchX, touchY, p1.x, p1.y, p2.x, p2.y)
+                    if (d2 <= radiusSquared) {
+                        return@removeAll true
+                    }
+                }
+                false
+            }
+        } else {
+            // ── Pixel / Segment Erase: cut out points inside radius ──
+            var modifiedAny = false
+            val newStrokesList = ArrayList<Stroke>(strokes.size)
+
+            for (stroke in strokes) {
+                val inputs = stroke.inputs
+                val count = inputs.size
+                if (count == 0) continue
+
+                if (count == 1) {
+                    val pt = inputs.get(0)
+                    val dx = pt.x - touchX
+                    val dy = pt.y - touchY
+                    if ((dx * dx + dy * dy) <= radiusSquared) {
+                        modifiedAny = true
+                    } else {
+                        newStrokesList.add(stroke)
+                    }
+                    continue
+                }
+
+                // Check if any point or segment is in radius
+                var hit = false
+                for (i in 0 until count) {
+                    val pt = inputs.get(i)
+                    val dx = pt.x - touchX
+                    val dy = pt.y - touchY
+                    if ((dx * dx + dy * dy) <= radiusSquared) {
+                        hit = true
+                        break
+                    }
+                }
+                if (!hit) {
+                    for (i in 0 until count - 1) {
+                        val p1 = inputs.get(i)
+                        val p2 = inputs.get(i + 1)
+                        if (distToSegmentSquared(touchX, touchY, p1.x, p1.y, p2.x, p2.y) <= radiusSquared) {
+                            hit = true
+                            break
+                        }
+                    }
+                }
+
+                if (!hit) {
+                    newStrokesList.add(stroke)
+                    continue
+                }
+
+                // Split stroke into remaining sub-strokes outside radius
+                modifiedAny = true
+                var currentBatch = MutableStrokeInputBatch()
+
+                for (i in 0 until count) {
+                    val pt = inputs.get(i)
+                    val dx = pt.x - touchX
+                    val dy = pt.y - touchY
+                    val inside = (dx * dx + dy * dy) <= radiusSquared
+
+                    if (!inside) {
+                        currentBatch.add(pt)
+                    } else {
+                        if (currentBatch.size >= 2) {
+                            newStrokesList.add(Stroke(stroke.brush, currentBatch))
+                            currentBatch = MutableStrokeInputBatch()
+                        } else {
+                            currentBatch.clear()
+                        }
+                    }
+                }
+                if (currentBatch.size >= 2) {
+                    newStrokesList.add(Stroke(stroke.brush, currentBatch))
                 }
             }
-            false
+
+            if (modifiedAny) {
+                strokes.clear()
+                strokes.addAll(newStrokesList)
+            }
         }
     }
 }
@@ -733,25 +826,96 @@ private fun NotePaneViewport(
                 }
             }
     ) {
-        // ── 1. Pan & Zoom Gesture Detector (Fingers for Pan/Zoom, Stylus for Inking) ──
+        val isFingerDrawing = AppSettingsManager.touchInputMode == TouchInputMode.FINGER_AND_STYLUS
+        var transformGeneration by remember { mutableIntStateOf(0) }
+        var lastTransformTime by remember { mutableLongStateOf(0L) }
+
+        // ── 1. Pan & Zoom Gesture Detector (Stylus-Only or Hand-Touch Mode) ──
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .clipToBounds()
-                .pointerInput(state.note.id) {
+                .pointerInput(state.note.id, isFingerDrawing) {
                     awaitEachGesture {
                         val down = awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
-                        if (down.type == PointerType.Touch) {
-                            down.consume()
 
+                        if (!isFingerDrawing) {
+                            // ── MODE HANYA STYLUS (Palm Rejection Maksimal) ──
+                            // 1 Jari = Geser (Pan), 2 Jari = Zoom & Pan, Stylus = Tulis
+                            if (down.type == PointerType.Touch) {
+                                down.consume()
+
+                                var isTransforming = false
+                                var accumulatedPan = Offset.Zero
+                                val touchSlop = viewConfiguration.touchSlop
+
+                                while (true) {
+                                    val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+
+                                    // Palm rejection: ignore finger if stylus is on-screen
+                                    val hasStylus = event.changes.any {
+                                        it.type == PointerType.Stylus || it.type == PointerType.Eraser
+                                    }
+                                    if (hasStylus) {
+                                        event.changes.forEach { if (it.type == PointerType.Touch) it.consume() }
+                                        continue
+                                    }
+
+                                    val pressedFingers = event.changes.filter {
+                                        it.type == PointerType.Touch && it.pressed
+                                    }
+                                    if (pressedFingers.isEmpty()) {
+                                        if (!isTransforming && accumulatedPan.getDistance() < touchSlop) {
+                                            state.deselectAll()
+                                        }
+                                        break
+                                    }
+
+                                    if (pressedFingers.size >= 2) {
+                                        // 2-finger pinch-to-zoom & pan
+                                        isTransforming = true
+                                        val zoom = event.calculateZoom()
+                                        val pan = event.calculatePan()
+                                        val centroid = event.calculateCentroid(useCurrent = false)
+                                        event.changes.forEach { it.consume() }
+
+                                        if (centroid != Offset.Unspecified && !zoom.isNaN() && zoom > 0f) {
+                                            val newScale = (state.scale * zoom).coerceIn(0.5f, 3.5f)
+                                            val effectiveZoom = newScale / state.scale
+                                            state.panX = centroid.x - (centroid.x - state.panX) * effectiveZoom + pan.x
+                                            state.panY = centroid.y - (centroid.y - state.panY) * effectiveZoom + pan.y
+                                            state.scale = newScale
+                                        }
+                                    } else if (pressedFingers.size == 1) {
+                                        // 1-finger pan
+                                        val change = pressedFingers[0]
+                                        val panDelta = change.positionChange()
+                                        change.consume()
+
+                                        if (!isTransforming) {
+                                            accumulatedPan += panDelta
+                                            if (accumulatedPan.getDistance() > touchSlop) {
+                                                isTransforming = true
+                                                state.panX += accumulatedPan.x
+                                                state.panY += accumulatedPan.y
+                                            }
+                                        } else {
+                                            state.panX += panDelta.x
+                                            state.panY += panDelta.y
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            // ── MODE SENTUHAN TANGAN & STYLUS ──
+                            // 1 Jari / Stylus = Coret-coret (Drawing/Eraser/Shape/Lasso)
+                            // 2 Jari = Geser (Pan) & Zoom
                             var isTransforming = false
-                            var accumulatedPan = Offset.Zero
-                            val touchSlop = viewConfiguration.touchSlop
 
                             while (true) {
                                 val event = awaitPointerEvent(pass = PointerEventPass.Initial)
 
-                                // Palm rejection: ignore finger if stylus is on-screen
+                                // Palm rejection: if stylus is active on screen, consume finger touches
                                 val hasStylus = event.changes.any {
                                     it.type == PointerType.Stylus || it.type == PointerType.Eraser
                                 }
@@ -763,16 +927,18 @@ private fun NotePaneViewport(
                                 val pressedFingers = event.changes.filter {
                                     it.type == PointerType.Touch && it.pressed
                                 }
+
                                 if (pressedFingers.isEmpty()) {
-                                    if (!isTransforming && accumulatedPan.getDistance() < touchSlop) {
-                                        state.deselectAll()
-                                    }
                                     break
                                 }
 
                                 if (pressedFingers.size >= 2) {
-                                    // 2-finger pinch-to-zoom & pan
-                                    isTransforming = true
+                                    if (!isTransforming) {
+                                        isTransforming = true
+                                        transformGeneration++
+                                    }
+                                    lastTransformTime = System.currentTimeMillis()
+
                                     val zoom = event.calculateZoom()
                                     val pan = event.calculatePan()
                                     val centroid = event.calculateCentroid(useCurrent = false)
@@ -785,24 +951,13 @@ private fun NotePaneViewport(
                                         state.panY = centroid.y - (centroid.y - state.panY) * effectiveZoom + pan.y
                                         state.scale = newScale
                                     }
-                                } else if (pressedFingers.size == 1) {
-                                    // 1-finger pan
-                                    val change = pressedFingers[0]
-                                    val panDelta = change.positionChange()
-                                    change.consume()
-
-                                    if (!isTransforming) {
-                                        accumulatedPan += panDelta
-                                        if (accumulatedPan.getDistance() > touchSlop) {
-                                            isTransforming = true
-                                            state.panX += accumulatedPan.x
-                                            state.panY += accumulatedPan.y
-                                        }
-                                    } else {
-                                        state.panX += panDelta.x
-                                        state.panY += panDelta.y
-                                    }
+                                } else if (isTransforming) {
+                                    // Keep consuming remainder of 2-finger gesture until all lifted
+                                    event.changes.forEach { if (it.type == PointerType.Touch) it.consume() }
+                                    lastTransformTime = System.currentTimeMillis()
                                 }
+                                // If 1 finger and !isTransforming:
+                                // DO NOT CONSUME. Event passes down to DrawingSurface for 1-finger drawing!
                             }
                         }
                     }
@@ -852,32 +1007,38 @@ private fun NotePaneViewport(
                 currentBrush = currentBrush,
                 onGetNextBrush = { currentBrush },
                 onStrokesFinished = { newStrokes ->
-                    val processedStrokes = newStrokes.map { stroke ->
-                        if (isStrokeHoldAtEnd(stroke, state.scale)) {
-                            val refined = ShapeRecognizer.refineStroke(stroke)
-                            if (refined != null) {
-                                try {
-                                    view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-                                } catch (e: Exception) {}
-                                refined
+                    val isRecentTransform = System.currentTimeMillis() - lastTransformTime < 350L
+                    if (!isRecentTransform) {
+                        val processedStrokes = newStrokes.map { stroke ->
+                            if (isStrokeHoldAtEnd(stroke, state.scale)) {
+                                val refined = ShapeRecognizer.refineStroke(stroke)
+                                if (refined != null) {
+                                    try {
+                                        view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                                    } catch (e: Exception) {}
+                                    refined
+                                } else {
+                                    stroke
+                                }
                             } else {
                                 stroke
                             }
-                        } else {
-                            stroke
                         }
+                        state.strokes.addAll(processedStrokes)
+                        state.undoneStrokes.clear()
+                        state.saveActivePageData()
                     }
-                    state.strokes.addAll(processedStrokes)
-                    state.undoneStrokes.clear()
-                    state.saveActivePageData()
                 },
                 isEraserMode = activeTool == NoteTool.ERASER && isActive,
                 isDarkPaper = state.isDarkPaper,
                 isDrawingEnabled = activeTool == NoteTool.PEN || activeTool == NoteTool.HIGHLIGHTER || activeTool == NoteTool.ERASER,
+                isFingerDrawingEnabled = isFingerDrawing,
+                transformGeneration = transformGeneration,
+                eraserRadiusPx = AppSettingsManager.eraserRadius,
                 scale = state.scale,
                 panX = state.panX,
                 panY = state.panY,
-                onErase = { worldX, worldY -> state.eraseNear(worldX, worldY) },
+                onErase = { worldX, worldY -> state.eraseNear(worldX, worldY, AppSettingsManager.eraserRadius, AppSettingsManager.eraserMode) },
                 onEraseEnd = { state.saveActivePageData() },
                 modifier = Modifier.fillMaxSize().clipToBounds()
             )
@@ -888,10 +1049,11 @@ private fun NotePaneViewport(
                     modifier = Modifier
                         .fillMaxSize()
                         .clipToBounds()
-                        .pointerInput(state.note.id, selectedShapeType, currentBrush) {
+                        .pointerInput(state.note.id, selectedShapeType, currentBrush, isFingerDrawing) {
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false)
-                                if (down.type != PointerType.Stylus && down.type != PointerType.Eraser) {
+                                val isAllowed = down.type == PointerType.Stylus || down.type == PointerType.Eraser || (isFingerDrawing && down.type == PointerType.Touch)
+                                if (!isAllowed) {
                                     return@awaitEachGesture
                                 }
 
@@ -900,7 +1062,8 @@ private fun NotePaneViewport(
                                 state.shapeDrawCurrent = worldStart
 
                                 drag(down.id) { change ->
-                                    if (change.type == PointerType.Stylus || change.type == PointerType.Eraser) {
+                                    val isChangeAllowed = change.type == PointerType.Stylus || change.type == PointerType.Eraser || (isFingerDrawing && change.type == PointerType.Touch)
+                                    if (isChangeAllowed) {
                                         change.consume()
                                         state.shapeDrawCurrent = Offset((change.position.x - state.panX) / state.scale, (change.position.y - state.panY) / state.scale)
                                     }
@@ -996,10 +1159,11 @@ private fun NotePaneViewport(
                     modifier = Modifier
                         .fillMaxSize()
                         .clipToBounds()
-                        .pointerInput(state.note.id, activeTool, state.lassoSelection == null) {
+                        .pointerInput(state.note.id, activeTool, state.lassoSelection == null, isFingerDrawing) {
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false)
-                                if (down.type != PointerType.Stylus && down.type != PointerType.Eraser) {
+                                val isAllowed = down.type == PointerType.Stylus || down.type == PointerType.Eraser || (isFingerDrawing && down.type == PointerType.Touch)
+                                if (!isAllowed) {
                                     return@awaitEachGesture
                                 }
 
@@ -1018,7 +1182,8 @@ private fun NotePaneViewport(
                                         val strokeIndices = curSel.selectedStrokes.map { state.strokes.indexOf(it) }
 
                                         drag(down.id) { change ->
-                                            if (change.type == PointerType.Stylus || change.type == PointerType.Eraser) {
+                                            val isChangeAllowed = change.type == PointerType.Stylus || change.type == PointerType.Eraser || (isFingerDrawing && change.type == PointerType.Touch)
+                                            if (isChangeAllowed) {
                                                 val delta = change.positionChange()
                                                 change.consume()
                                                 val dx = delta.x / state.scale
@@ -1060,7 +1225,8 @@ private fun NotePaneViewport(
                                     state.currentLassoLoop.add(worldPoint)
 
                                     drag(down.id) { change ->
-                                        if (change.type == PointerType.Stylus || change.type == PointerType.Eraser) {
+                                        val isChangeAllowed = change.type == PointerType.Stylus || change.type == PointerType.Eraser || (isFingerDrawing && change.type == PointerType.Touch)
+                                        if (isChangeAllowed) {
                                             change.consume()
                                             val curWorld = Offset((change.position.x - state.panX) / state.scale, (change.position.y - state.panY) / state.scale)
                                             state.currentLassoLoop.add(curWorld)
@@ -1602,6 +1768,10 @@ private fun UnifiedNoteTopBar(
             onSelectHighlighterColor = onSelectHighlighterColor,
             highlighterThickness = highlighterThickness,
             onSelectHighlighterThickness = onSelectHighlighterThickness,
+            eraserRadius = AppSettingsManager.eraserRadius,
+            onSelectEraserRadius = { AppSettingsManager.updateEraserRadius(it) },
+            eraserMode = AppSettingsManager.eraserMode,
+            onSelectEraserMode = { AppSettingsManager.updateEraserMode(it) },
             onPickImage = onPickImage
         )
 

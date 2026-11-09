@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.lernspace.app.data.local.EraserMode
 import com.lernspace.app.ui.theme.AccentBlue
 import com.lernspace.app.ui.theme.LernspaceBorder
 import com.lernspace.app.ui.theme.LernspaceDark
@@ -53,6 +54,10 @@ fun NoteFloatingToolbar(
     onSelectHighlighterColor: (Color) -> Unit,
     highlighterThickness: Float,
     onSelectHighlighterThickness: (Float) -> Unit,
+    eraserRadius: Float = 30f,
+    onSelectEraserRadius: (Float) -> Unit = {},
+    eraserMode: EraserMode = EraserMode.PIXEL,
+    onSelectEraserMode: (EraserMode) -> Unit = {},
     onPickImage: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -153,9 +158,18 @@ fun NoteFloatingToolbar(
                     label = "Eraser",
                     isSelected = activeTool == NoteTool.ERASER,
                     activeColor = LernspaceDark,
+                    isConfigOpen = openConfigTool == NoteTool.ERASER,
                     onClick = {
-                        openConfigTool = null
+                        if (activeTool == NoteTool.ERASER) {
+                            openConfigTool = if (openConfigTool == NoteTool.ERASER) null else NoteTool.ERASER
+                        } else {
+                            onSelectTool(NoteTool.ERASER)
+                            openConfigTool = null
+                        }
+                    },
+                    onLongClick = {
                         onSelectTool(NoteTool.ERASER)
+                        openConfigTool = NoteTool.ERASER
                     }
                 )
 
@@ -208,8 +222,8 @@ fun NoteFloatingToolbar(
                     }
                 )
 
-                // Clean Divider before Thickness Badge (only when Pen or Highlighter is active)
-                if (activeTool == NoteTool.PEN || activeTool == NoteTool.HIGHLIGHTER) {
+                // Clean Divider before Thickness Badge (when Pen, Highlighter, or Eraser is active)
+                if (activeTool == NoteTool.PEN || activeTool == NoteTool.HIGHLIGHTER || activeTool == NoteTool.ERASER) {
                     Box(
                         modifier = Modifier
                             .width(1.dp)
@@ -217,15 +231,24 @@ fun NoteFloatingToolbar(
                             .background(Color(0xFFE2E8F0))
                     )
 
-                    // Minimal Thickness Badge (Tap to toggle px slider popover)
-                    val isCurrentConfigOpen = openConfigTool == (if (isHighlighter) NoteTool.HIGHLIGHTER else NoteTool.PEN)
+                    // Minimal Thickness / Radius Badge (Tap to toggle px slider popover)
+                    val targetTool = when (activeTool) {
+                        NoteTool.HIGHLIGHTER -> NoteTool.HIGHLIGHTER
+                        NoteTool.ERASER -> NoteTool.ERASER
+                        else -> NoteTool.PEN
+                    }
+                    val isCurrentConfigOpen = openConfigTool == targetTool
+                    val badgeText = when (activeTool) {
+                        NoteTool.HIGHLIGHTER -> "${highlighterThickness.roundToInt()} px"
+                        NoteTool.ERASER -> "${eraserRadius.roundToInt()} px"
+                        else -> "${penThickness.roundToInt()} px"
+                    }
                     Surface(
                         shape = RoundedCornerShape(12.dp),
                         color = if (isCurrentConfigOpen) AccentBlue.copy(alpha = 0.12f) else Color(0xFFF1F5F9),
                         border = BorderStroke(1.dp, if (isCurrentConfigOpen) AccentBlue else Color(0xFFE2E8F0)),
                         modifier = Modifier.clickable {
-                            val target = if (isHighlighter) NoteTool.HIGHLIGHTER else NoteTool.PEN
-                            openConfigTool = if (openConfigTool == target) null else target
+                            openConfigTool = if (openConfigTool == targetTool) null else targetTool
                         }
                     ) {
                         Row(
@@ -234,7 +257,7 @@ fun NoteFloatingToolbar(
                             horizontalArrangement = Arrangement.spacedBy(5.dp)
                         ) {
                             Text(
-                                text = "${activeThickness.roundToInt()} px",
+                                text = badgeText,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = if (isCurrentConfigOpen) AccentBlue else LernspaceDark
@@ -283,6 +306,15 @@ fun NoteFloatingToolbar(
                         onSelectThickness = onSelectHighlighterThickness,
                         presetSizes = listOf(16f, 24f, 36f, 48f),
                         isHighlighter = true,
+                        onClose = { openConfigTool = null }
+                    )
+                }
+                NoteTool.ERASER -> {
+                    EraserConfigCard(
+                        eraserMode = eraserMode,
+                        onSelectEraserMode = onSelectEraserMode,
+                        eraserRadius = eraserRadius,
+                        onSelectEraserRadius = onSelectEraserRadius,
                         onClose = { openConfigTool = null }
                     )
                 }
@@ -634,4 +666,240 @@ private fun ToolIconButton(
 private fun getContrastingIconColor(bgColor: Color): Color {
     val luminance = 0.299f * bgColor.red + 0.587f * bgColor.green + 0.114f * bgColor.blue
     return if (luminance > 0.52f) Color(0xFF0F172A) else Color.White
+}
+
+@Composable
+private fun EraserConfigCard(
+    eraserMode: EraserMode,
+    onSelectEraserMode: (EraserMode) -> Unit,
+    eraserRadius: Float,
+    onSelectEraserRadius: (Float) -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier
+            .widthIn(max = 330.dp)
+            .shadow(elevation = 10.dp, shape = RoundedCornerShape(20.dp))
+            .border(1.dp, LernspaceBorder, RoundedCornerShape(20.dp)),
+        shape = RoundedCornerShape(20.dp),
+        color = Color.White
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            // Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(26.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFF1F5F9)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.AutoFixNormal,
+                            contentDescription = null,
+                            tint = LernspaceDark,
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
+                    Text(
+                        text = "Pengaturan Penghapus",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = LernspaceDark
+                    )
+                }
+
+                IconButton(
+                    onClick = onClose,
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "Tutup",
+                        tint = Color(0xFF94A3B8),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+
+            // 1. Mode Penghapus (Segmented Control)
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = "Mode Penghapusan",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFF64748B)
+                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0xFFF1F5F9))
+                        .padding(3.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    val isPixel = eraserMode == EraserMode.PIXEL
+                    Surface(
+                        onClick = { onSelectEraserMode(EraserMode.PIXEL) },
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (isPixel) Color.White else Color.Transparent,
+                        shadowElevation = if (isPixel) 1.dp else 0.dp,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            modifier = Modifier.padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "Pixel (Bagian)",
+                                fontSize = 12.sp,
+                                fontWeight = if (isPixel) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isPixel) LernspaceDark else Color(0xFF64748B)
+                            )
+                        }
+                    }
+
+                    val isStroke = eraserMode == EraserMode.STROKE
+                    Surface(
+                        onClick = { onSelectEraserMode(EraserMode.STROKE) },
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (isStroke) Color.White else Color.Transparent,
+                        shadowElevation = if (isStroke) 1.dp else 0.dp,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            modifier = Modifier.padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "Goresan Utuh",
+                                fontSize = 12.sp,
+                                fontWeight = if (isStroke) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isStroke) LernspaceDark else Color(0xFF64748B)
+                            )
+                        }
+                    }
+                }
+
+                Text(
+                    text = if (eraserMode == EraserMode.PIXEL) {
+                        "Memotong & menghapus hanya bagian goresan dalam radius lingkaran"
+                    } else {
+                        "Menghapus seluruh garis utuh yang tersentuh lingkaran penghapus"
+                    },
+                    fontSize = 10.sp,
+                    color = Color(0xFF94A3B8),
+                    lineHeight = 14.sp
+                )
+            }
+
+            HorizontalDivider(color = Color(0xFFF1F5F9))
+
+            // 2. Radius Ukuran Penghapus (px)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Radius Penghapus",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFF64748B)
+                    )
+                    Text(
+                        text = "${eraserRadius.roundToInt()} px",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = LernspaceDark
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Slider(
+                        value = eraserRadius,
+                        onValueChange = onSelectEraserRadius,
+                        valueRange = 10f..100f,
+                        modifier = Modifier.weight(1f),
+                        colors = SliderDefaults.colors(
+                            thumbColor = LernspaceDark,
+                            activeTrackColor = LernspaceDark,
+                            inactiveTrackColor = Color(0xFFE2E8F0)
+                        )
+                    )
+
+                    // Visual preview box
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFFF8FAFC))
+                            .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(8.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        val previewFraction = (eraserRadius - 10f) / 90f
+                        val previewDiameter = 6.dp + (24.dp * previewFraction)
+                        Box(
+                            modifier = Modifier
+                                .size(previewDiameter)
+                                .clip(CircleShape)
+                                .background(Color(0xFFEF4444).copy(alpha = 0.25f))
+                                .border(1.dp, Color(0xFFEF4444), CircleShape)
+                        )
+                    }
+                }
+
+                // Quick Presets
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(
+                        15f to "15px",
+                        30f to "30px",
+                        50f to "50px",
+                        80f to "80px"
+                    ).forEach { (size, label) ->
+                        val isPresetSelected = eraserRadius.roundToInt() == size.roundToInt()
+                        Surface(
+                            onClick = { onSelectEraserRadius(size) },
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isPresetSelected) LernspaceDark else Color(0xFFF1F5F9),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Box(
+                                modifier = Modifier.padding(vertical = 5.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = label,
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isPresetSelected) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (isPresetSelected) Color.White else Color(0xFF475569)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

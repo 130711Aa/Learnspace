@@ -67,6 +67,9 @@ fun DrawingSurface(
     panY: Float = 0f,
     modifier: Modifier = Modifier,
     isDrawingEnabled: Boolean = true,
+    isFingerDrawingEnabled: Boolean = false,
+    transformGeneration: Int = 0,
+    eraserRadiusPx: Float = 30f,
     onErase: (Float, Float) -> Unit = { _, _ -> },
     onEraseStart: () -> Unit = {},
     onEraseEnd: () -> Unit = {},
@@ -177,30 +180,41 @@ fun DrawingSurface(
             }
         }
 
-        // ─── Layer 2: Active inking / eraser (STYLUS ONLY) ───
+        // ─── Layer 2: Active inking / eraser (Stylus or Hand Touch depending on setting) ───
+        var eraserPointerPos by remember { mutableStateOf<Offset?>(null) }
+
         if (isDrawingEnabled) {
             if (isEraserMode) {
-                // Eraser: convert stylus screen position to world space, then erase
+                // Eraser: convert pointer screen position to world space, then erase
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .clipToBounds()
-                        .pointerInput(Unit) {
+                        .pointerInput(isFingerDrawingEnabled) {
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false)
-                                if (down.type == PointerType.Stylus || down.type == PointerType.Eraser) {
+                                val isAllowed = down.type == PointerType.Stylus || 
+                                    down.type == PointerType.Eraser || 
+                                    (isFingerDrawingEnabled && down.type == PointerType.Touch)
+                                if (isAllowed) {
+                                    eraserPointerPos = down.position
                                     currentOnEraseStart()
                                     val worldX = (down.position.x - currentPanX) / currentScale
                                     val worldY = (down.position.y - currentPanY) / currentScale
                                     currentOnErase(worldX, worldY)
                                     drag(down.id) { change ->
-                                        if (change.type == PointerType.Stylus || change.type == PointerType.Eraser) {
+                                        val isChangeAllowed = change.type == PointerType.Stylus || 
+                                            change.type == PointerType.Eraser || 
+                                            (isFingerDrawingEnabled && change.type == PointerType.Touch)
+                                        if (isChangeAllowed) {
                                             change.consume()
+                                            eraserPointerPos = change.position
                                             val curWorldX = (change.position.x - currentPanX) / currentScale
                                             val curWorldY = (change.position.y - currentPanY) / currentScale
                                             currentOnErase(curWorldX, curWorldY)
                                         }
                                     }
+                                    eraserPointerPos = null
                                     currentOnEraseEnd()
                                 }
                             }
@@ -241,8 +255,25 @@ fun DrawingSurface(
                     modifier = Modifier
                         .fillMaxSize()
                         .clipToBounds()
+                        .then(
+                            if (!isFingerDrawingEnabled) {
+                                Modifier.pointerInput(Unit) {
+                                    awaitEachGesture {
+                                        val down = awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
+                                        if (down.type == PointerType.Touch) {
+                                            down.consume()
+                                            while (true) {
+                                                val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+                                                event.changes.forEach { if (it.type == PointerType.Touch) it.consume() }
+                                                if (event.changes.none { it.pressed }) break
+                                            }
+                                        }
+                                    }
+                                }
+                            } else Modifier
+                        )
                 ) {
-                    key(effectiveCurrentBrush) {
+                    key(effectiveCurrentBrush, transformGeneration) {
                         InProgressStrokes(
                             defaultBrush = effectiveCurrentBrush,
                             nextBrush = effectiveGetNextBrush,
@@ -267,6 +298,36 @@ fun DrawingSurface(
                         )
                     }
                 }
+            }
+        }
+
+        // ─── Layer 3: Eraser Area Indicator (Lingkaran Radius Penghapus) ───
+        if (isEraserMode && eraserPointerPos != null) {
+            Canvas(modifier = Modifier.fillMaxSize().clipToBounds()) {
+                val pos = eraserPointerPos ?: return@Canvas
+                val r = eraserRadiusPx
+
+                // Soft translucent red/pink fill
+                drawCircle(
+                    color = Color(0x28EF4444),
+                    radius = r,
+                    center = pos
+                )
+
+                // High contrast boundary ring
+                drawCircle(
+                    color = if (isDarkPaper) Color(0xE6FFFFFF) else Color(0xD9000000),
+                    radius = r,
+                    center = pos,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5f * density)
+                )
+
+                // Center reticle dot
+                drawCircle(
+                    color = if (isDarkPaper) Color.White else Color.Black,
+                    radius = 2f * density,
+                    center = pos
+                )
             }
         }
     }

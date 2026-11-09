@@ -3,6 +3,7 @@ package com.lernspace.app.data.local
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.lernspace.app.ui.workspace.model.PaperStyle
@@ -25,6 +26,22 @@ enum class AppThemeMode(val title: String, val description: String) {
     DARK("Mode Gelap", "Tampilan gelap elegan yang nyaman untuk belajar di ruangan redup")
 }
 
+enum class TouchInputMode(val title: String, val description: String) {
+    STYLUS_ONLY(
+        "Hanya Stylus (Rekomendasi)",
+        "Goresan hanya direspon oleh pena stylus. Sentuhan 1 & 2 jari untuk menggeser & zoom (Palm Rejection aktif penuh)"
+    ),
+    FINGER_AND_STYLUS(
+        "Sentuhan Tangan & Stylus",
+        "1 sentuhan jari atau stylus untuk coret-coret catatan, 2 jari untuk menggeser (pan) dan zoom kanvas"
+    )
+}
+
+enum class EraserMode(val title: String, val description: String) {
+    PIXEL("Pixel / Bagian", "Menghapus hanya bagian goresan di dalam radius lingkaran penghapus"),
+    STROKE("Goresan Utuh", "Menghapus seluruh goresan yang tersentuh lingkaran penghapus")
+}
+
 /**
  * Single source of truth for user preferences on the tablet.
  * Persists instantaneously to Android SharedPreferences and provides reactive Compose states.
@@ -35,11 +52,20 @@ object AppSettingsManager {
     private const val KEY_SHAPE_SENSITIVITY = "shape_sensitivity"
     private const val KEY_THEME_MODE = "theme_mode"
     private const val KEY_DEFAULT_PAPER = "default_paper"
+    private const val KEY_TOUCH_INPUT_MODE = "touch_input_mode"
+    private const val KEY_ERASER_RADIUS = "eraser_radius"
+    private const val KEY_ERASER_MODE = "eraser_mode"
 
     var handedness by mutableStateOf(Handedness.RIGHT_HANDED)
     var shapeSensitivity by mutableStateOf(ShapeSnapSensitivity.NORMAL)
     var themeMode by mutableStateOf(AppThemeMode.SYSTEM)
     var defaultPaperStyle by mutableStateOf(PaperStyle.RULED)
+    var touchInputMode by mutableStateOf(TouchInputMode.STYLUS_ONLY)
+    var eraserRadius by mutableFloatStateOf(30f)
+    var eraserMode by mutableStateOf(EraserMode.PIXEL)
+
+    val isFingerDrawingEnabled: Boolean
+        get() = touchInputMode == TouchInputMode.FINGER_AND_STYLUS
 
     private var prefs: SharedPreferences? = null
 
@@ -69,6 +95,20 @@ object AppSettingsManager {
         } catch (e: Exception) {
             PaperStyle.RULED
         }
+
+        touchInputMode = try {
+            TouchInputMode.valueOf(sp.getString(KEY_TOUCH_INPUT_MODE, TouchInputMode.STYLUS_ONLY.name) ?: TouchInputMode.STYLUS_ONLY.name)
+        } catch (e: Exception) {
+            TouchInputMode.STYLUS_ONLY
+        }
+
+        eraserRadius = sp.getFloat(KEY_ERASER_RADIUS, 30f)
+
+        eraserMode = try {
+            EraserMode.valueOf(sp.getString(KEY_ERASER_MODE, EraserMode.PIXEL.name) ?: EraserMode.PIXEL.name)
+        } catch (e: Exception) {
+            EraserMode.PIXEL
+        }
     }
 
     fun updateHandedness(value: Handedness) {
@@ -89,6 +129,21 @@ object AppSettingsManager {
     fun updateDefaultPaperStyle(value: PaperStyle) {
         defaultPaperStyle = value
         prefs?.edit()?.putString(KEY_DEFAULT_PAPER, value.name)?.apply()
+    }
+
+    fun updateTouchInputMode(value: TouchInputMode) {
+        touchInputMode = value
+        prefs?.edit()?.putString(KEY_TOUCH_INPUT_MODE, value.name)?.apply()
+    }
+
+    fun updateEraserRadius(value: Float) {
+        eraserRadius = value
+        prefs?.edit()?.putFloat(KEY_ERASER_RADIUS, value)?.apply()
+    }
+
+    fun updateEraserMode(value: EraserMode) {
+        eraserMode = value
+        prefs?.edit()?.putString(KEY_ERASER_MODE, value.name)?.apply()
     }
 }
 

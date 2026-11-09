@@ -23,10 +23,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lernspace.app.data.local.AppSettingsManager
 import com.lernspace.app.data.local.AppThemeMode
+import com.lernspace.app.data.local.EraserMode
 import com.lernspace.app.data.local.Handedness
 import com.lernspace.app.data.local.ShapeSnapSensitivity
+import com.lernspace.app.data.local.TouchInputMode
 import com.lernspace.app.ui.theme.*
 import com.lernspace.app.ui.workspace.model.PaperStyle
+import kotlin.math.roundToInt
 
 private enum class SettingsCategory(val title: String, val subtitle: String, val icon: ImageVector) {
     STYLUS_ERGONOMICS("Stylus & Ergonomi", "Mode tangan, snap bentuk geometri", Icons.Filled.Draw),
@@ -222,6 +225,9 @@ fun SettingsScreen(
 private fun StylusAndErgonomicsSection() {
     val currentHandedness = AppSettingsManager.handedness
     val currentSensitivity = AppSettingsManager.shapeSensitivity
+    val currentTouchInput = AppSettingsManager.touchInputMode
+    val currentEraserRadius = AppSettingsManager.eraserRadius
+    val currentEraserMode = AppSettingsManager.eraserMode
 
     Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
         // Section Header
@@ -233,7 +239,7 @@ private fun StylusAndErgonomicsSection() {
                 color = LernspaceDark
             )
             Text(
-                text = "Sesuaikan tata letak antarmuka dengan tangan dominan Anda agar pergelangan tangan tidak menyenggol tombol saat menulis dengan stylus.",
+                text = "Sesuaikan tata letak antarmuka dan respon sentuhan kanvas agar pergelangan tangan nyaman saat menulis.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = LernspaceTextSecondary
             )
@@ -376,6 +382,273 @@ private fun StylusAndErgonomicsSection() {
                     }
                 }
             }
+        }
+
+        // 3. SETTING: MODE INPUT SENTUHAN KANVAS (STYLUS VS SENTUHAN TANGAN)
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = LernspaceSurfaceLow,
+            border = BorderStroke(1.dp, LernspaceBorder),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(Icons.Filled.TouchApp, null, tint = LernspaceDark, modifier = Modifier.size(20.dp))
+                        Text("Respon Sentuhan Kanvas", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                    }
+                    Surface(shape = RoundedCornerShape(6.dp), color = LernspaceSurfaceCard, border = BorderStroke(1.dp, LernspaceBorder)) {
+                        Text(
+                            text = if (currentTouchInput == TouchInputMode.STYLUS_ONLY) "Stylus Only" else "Sentuhan Tangan Aktif",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = LernspaceDark,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+
+                Text(
+                    text = "Pilih apakah jari tangan dapat digunakan untuk mencoret catatan atau hanya difungsikan khusus navigasi.",
+                    fontSize = 12.sp,
+                    color = LernspaceTextSecondary
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    TouchInputCard(
+                        title = "Hanya Stylus (Rekomendasi)",
+                        subtitle = "Goresan hanya direspon pena stylus. 1 & 2 jari untuk menggeser & zoom (Palm Rejection aktif 100%).",
+                        icon = Icons.Filled.Edit,
+                        isSelected = currentTouchInput == TouchInputMode.STYLUS_ONLY,
+                        onClick = { AppSettingsManager.updateTouchInputMode(TouchInputMode.STYLUS_ONLY) },
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    TouchInputCard(
+                        title = "Sentuhan Tangan & Stylus",
+                        subtitle = "1 sentuhan jari atau stylus untuk coret-coret catatan. 2 jari untuk menggeser (pan) dan zoom.",
+                        icon = Icons.Filled.TouchApp,
+                        isSelected = currentTouchInput == TouchInputMode.FINGER_AND_STYLUS,
+                        onClick = { AppSettingsManager.updateTouchInputMode(TouchInputMode.FINGER_AND_STYLUS) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+        }
+
+        // 4. SETTING: PENGATURAN PENGHAPUS (MODE & RADIUS PX)
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = LernspaceSurfaceLow,
+            border = BorderStroke(1.dp, LernspaceBorder),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(Icons.Filled.AutoFixNormal, null, tint = LernspaceDark, modifier = Modifier.size(20.dp))
+                        Text("Pengaturan Penghapus Kanvas", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                    }
+                    Surface(shape = RoundedCornerShape(6.dp), color = LernspaceSurfaceCard, border = BorderStroke(1.dp, LernspaceBorder)) {
+                        Text(
+                            text = "${currentEraserRadius.roundToInt()} px (${if (currentEraserMode == EraserMode.PIXEL) "Pixel" else "Goresan"})",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = LernspaceDark,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+
+                Text(
+                    text = "Atur ukuran radius lingkaran penghapus dan pilih bagaimana penghapus memproses goresan di kanvas.",
+                    fontSize = 12.sp,
+                    color = LernspaceTextSecondary
+                )
+
+                // Mode Selection
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    TouchInputCard(
+                        title = "Pixel (Hapus Bagian)",
+                        subtitle = "Memotong & menghapus hanya bagian goresan dalam radius lingkaran penghapus.",
+                        icon = Icons.Filled.ContentCut,
+                        isSelected = currentEraserMode == EraserMode.PIXEL,
+                        onClick = { AppSettingsManager.updateEraserMode(EraserMode.PIXEL) },
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    TouchInputCard(
+                        title = "Goresan Utuh (Stroke)",
+                        subtitle = "Menghapus seluruh garis utuh yang tersentuh oleh lingkaran penghapus.",
+                        icon = Icons.Filled.DeleteSweep,
+                        isSelected = currentEraserMode == EraserMode.STROKE,
+                        onClick = { AppSettingsManager.updateEraserMode(EraserMode.STROKE) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                HorizontalDivider(color = LernspaceBorder)
+
+                // Radius Slider
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Radius Ukuran Penghapus", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = LernspaceDark)
+                        Text("${currentEraserRadius.roundToInt()} px", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Slider(
+                            value = currentEraserRadius,
+                            onValueChange = { AppSettingsManager.updateEraserRadius(it) },
+                            valueRange = 10f..100f,
+                            modifier = Modifier.weight(1f),
+                            colors = SliderDefaults.colors(
+                                thumbColor = LernspaceDark,
+                                activeTrackColor = LernspaceDark,
+                                inactiveTrackColor = LernspaceBorder
+                            )
+                        )
+
+                        // Visual circle preview
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(LernspaceSurfaceCard)
+                                .border(1.dp, LernspaceBorder, RoundedCornerShape(8.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            val fraction = (currentEraserRadius - 10f) / 90f
+                            val d = 6.dp + (28.dp * fraction)
+                            Box(
+                                modifier = Modifier
+                                    .size(d)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFFEF4444).copy(alpha = 0.25f))
+                                    .border(1.dp, Color(0xFFEF4444), CircleShape)
+                            )
+                        }
+                    }
+
+                    // Presets
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf(
+                            15f to "Kecil (15px)",
+                            30f to "Standar (30px)",
+                            50f to "Besar (50px)",
+                            80f to "Ekstra (80px)"
+                        ).forEach { (size, label) ->
+                            val isSel = currentEraserRadius.roundToInt() == size.roundToInt()
+                            Surface(
+                                onClick = { AppSettingsManager.updateEraserRadius(size) },
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isSel) LernspaceDark else LernspaceSurfaceCard,
+                                border = BorderStroke(1.dp, if (isSel) LernspaceDark else LernspaceBorder),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Box(
+                                    modifier = Modifier.padding(vertical = 7.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = label,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isSel) (if (LocalIsDarkTheme.current) Color.Black else Color.White) else LernspaceDark
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TouchInputCard(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val isDark = LocalIsDarkTheme.current
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(12.dp),
+        color = if (isSelected) LernspaceSurfaceCard else LernspaceSurfaceLow,
+        border = BorderStroke(1.5.dp, if (isSelected) LernspaceDark else LernspaceBorder),
+        shadowElevation = if (isSelected) 2.dp else 0.dp,
+        modifier = modifier
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(if (isSelected) LernspaceDark else LernspaceBorder),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = if (isSelected) {
+                            if (isDark) Color.Black else Color.White
+                        } else LernspaceTextSecondary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
+                Text(
+                    text = title,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (isSelected) LernspaceDark else LernspaceDark.copy(alpha = 0.7f),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            Text(
+                text = subtitle,
+                fontSize = 11.sp,
+                color = LernspaceTextSecondary,
+                lineHeight = 16.sp
+            )
         }
     }
 }
