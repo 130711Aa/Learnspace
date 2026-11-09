@@ -104,6 +104,7 @@ sealed class SearchResultItem {
     data class ScheduleResult(val item: PlannerItemUi) : SearchResultItem()
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun GlobalSearchDialog(
     onDismiss: () -> Unit,
