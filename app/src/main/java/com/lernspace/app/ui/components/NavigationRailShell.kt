@@ -116,7 +116,7 @@ private fun TabletNavRail(
                 }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "Lernspace",
+                    text = "Learnspace",
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     color = LernspaceDark

@@ -1,5 +1,6 @@
 package com.lernspace.app.ui.home
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -196,26 +197,27 @@ fun HomeScreen(
                                                     imageVector = Icons.Filled.Schedule,
                                                     contentDescription = null,
                                                     modifier = Modifier.size(12.dp),
-                                                    tint = AccentBlue
+                                                    tint = LernspaceDark
                                                 )
                                                 Text(
                                                     text = if (nextUpClass != null) "${nextUpClass.startTime} · UPCOMING CLASS" else "TIDAK ADA KELAS HARI INI",
                                                     style = MaterialTheme.typography.labelSmall,
                                                     fontWeight = FontWeight.Bold,
-                                                    color = AccentBlue
+                                                    color = LernspaceDark
                                                 )
                                             }
                                         }
 
                                         Surface(
                                             shape = RoundedCornerShape(12.dp),
-                                            color = AccentTealContainer
+                                            color = LernspaceSurfaceLow,
+                                            border = BorderStroke(1.dp, LernspaceBorder)
                                         ) {
                                             Text(
                                                 text = (nextUpClass?.subjectName ?: "LERNSPACE").uppercase(),
                                                 style = MaterialTheme.typography.labelSmall,
                                                 fontWeight = FontWeight.Bold,
-                                                color = AccentTeal,
+                                                color = LernspaceDark,
                                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                             )
                                         }
@@ -321,13 +323,14 @@ fun HomeScreen(
                                         )
                                         Surface(
                                             shape = RoundedCornerShape(8.dp),
-                                            color = Color(0xFFEFF6FF)
+                                            color = LernspaceSurfaceLow,
+                                            border = BorderStroke(1.dp, LernspaceBorder)
                                         ) {
                                             Text(
                                                 text = "${mondayClasses.size} Kelas",
                                                 fontSize = 11.sp,
                                                 fontWeight = FontWeight.Bold,
-                                                color = AccentBlue,
+                                                color = LernspaceDark,
                                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                             )
                                         }
@@ -451,13 +454,14 @@ fun HomeScreen(
                                         )
                                         Surface(
                                             shape = RoundedCornerShape(8.dp),
-                                            color = if (pendingTasks.isNotEmpty()) Color(0xFFFEF3C7) else Color(0xFFD1FAE5)
+                                            color = LernspaceSurfaceLow,
+                                            border = BorderStroke(1.dp, LernspaceBorder)
                                         ) {
                                             Text(
                                                 text = "${pendingTasks.size} Pending",
                                                 fontSize = 11.sp,
                                                 fontWeight = FontWeight.Bold,
-                                                color = if (pendingTasks.isNotEmpty()) Color(0xFFB45309) else Color(0xFF047857),
+                                                color = LernspaceDark,
                                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                             )
                                         }
@@ -624,7 +628,7 @@ fun HomeScreen(
                                     ) {
                                         Column(modifier = Modifier.padding(10.dp)) {
                                             Text("Silabus Dikuasai", fontSize = 10.sp, color = LernspaceTextSecondary)
-                                            Text("$masteredTopicsCount/${topics.size}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = AccentTeal)
+                                            Text("$masteredTopicsCount/${topics.size}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
                                         }
                                     }
                                 }
@@ -641,7 +645,7 @@ fun HomeScreen(
                                     ) {
                                         Column(modifier = Modifier.padding(10.dp)) {
                                             Text("Tugas Pending", fontSize = 10.sp, color = LernspaceTextSecondary)
-                                            Text("${pendingTasks.size} Tugas", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = if (pendingTasks.isNotEmpty()) AccentBlue else Color(0xFF16A34A))
+                                            Text("${pendingTasks.size} Tugas", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
                                         }
                                     }
 
@@ -653,7 +657,7 @@ fun HomeScreen(
                                     ) {
                                         Column(modifier = Modifier.padding(10.dp)) {
                                             Text("Total Catatan", fontSize = 10.sp, color = LernspaceTextSecondary)
-                                            Text("${notes.size} Notes", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = AccentBlue)
+                                            Text("${notes.size} Notes", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
                                         }
                                     }
                                 }
@@ -737,12 +741,12 @@ fun HomeScreen(
                                                             verticalAlignment = Alignment.CenterVertically,
                                                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                                                         ) {
-                                                            Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(noteColor))
+                                                            Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(LernspaceDark))
                                                             Text(
                                                                 text = note.subject,
                                                                 fontSize = 10.sp,
                                                                 fontWeight = FontWeight.Bold,
-                                                                color = noteColor
+                                                                color = LernspaceDark
                                                             )
                                                         }
                                                         Spacer(modifier = Modifier.height(2.dp))

@@ -85,13 +85,36 @@ data class TopicUi(
 )
 
 private val SubjectColorPalette = listOf(
-    AccentBlue,
-    AccentTeal,
-    Color(0xFF8B5CF6), // Purple
-    Color(0xFFEC4899), // Pink
-    Color(0xFFF59E0B), // Amber
+    // Blues & Cyans
+    Color(0xFF2563EB), // Royal Blue
+    Color(0xFF0284C7), // Sky Blue
+    Color(0xFF0EA5E9), // Light Sky
+    Color(0xFF06B6D4), // Cyan
+    // Teals & Greens
+    Color(0xFF0D9488), // Deep Teal
+    Color(0xFF14B8A6), // Teal
+    Color(0xFF059669), // Forest Green
     Color(0xFF10B981), // Emerald
-    Color(0xFF6366F1)  // Indigo
+    Color(0xFF84CC16), // Lime Green
+    // Purples & Violets
+    Color(0xFF6366F1), // Indigo
+    Color(0xFF7C3AED), // Violet
+    Color(0xFF8B5CF6), // Purple
+    Color(0xFFA855F7), // Light Purple
+    Color(0xFFD946EF), // Fuchsia
+    // Pinks & Roses
+    Color(0xFFEC4899), // Pink
+    Color(0xFFF43F5E), // Rose
+    Color(0xFFE11D48), // Crimson
+    // Reds & Oranges
+    Color(0xFFEF4444), // Coral Red
+    Color(0xFFDC2626), // Dark Red
+    Color(0xFFF97316), // Vivid Orange
+    Color(0xFFFB923C), // Soft Orange
+    Color(0xFFF59E0B), // Amber
+    Color(0xFFEAB308), // Yellow Gold
+    // Slate
+    Color(0xFF475569)  // Slate
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -114,6 +137,7 @@ fun LearningScreen(
     var showAddSubjectDialog by remember { mutableStateOf(false) }
     var showAddTopicDialog by remember { mutableStateOf(false) }
     var topicToEdit by remember { mutableStateOf<TopicUi?>(null) }
+    var subjectToChangeColor by remember { mutableStateOf<SubjectUi?>(null) }
     var searchQuery by remember { mutableStateOf("") }
     var selectedStatusFilter by remember { mutableStateOf<TopicStatus?>(null) }
 
@@ -266,6 +290,7 @@ fun LearningScreen(
                                     masteryPercent = pct,
                                     isSelected = isSelected,
                                     onClick = { selectedSubjectId = subject.id },
+                                    onChangeColor = { subjectToChangeColor = subject },
                                     onDelete = {
                                         subjects.remove(subject)
                                         topics.removeAll { it.subjectId == subject.id }
@@ -516,6 +541,23 @@ fun LearningScreen(
             }
         )
     }
+
+    // ── Dialog: Change Subject Color ──────────────────────────────────────────
+    subjectToChangeColor?.let { subject ->
+        ChangeSubjectColorDialog(
+            subject = subject,
+            onDismiss = { subjectToChangeColor = null },
+            onConfirm = { newColor ->
+                val idx = subjects.indexOfFirst { it.id == subject.id }
+                if (idx != -1) {
+                    val updated = subjects[idx].copy(color = newColor)
+                    subjects[idx] = updated
+                    com.lernspace.app.data.local.AcademicDatabaseManager.persistSubject(updated)
+                }
+                subjectToChangeColor = null
+            }
+        )
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -528,6 +570,7 @@ private fun SubjectCardItem(
     masteryPercent: Int,
     isSelected: Boolean,
     onClick: () -> Unit,
+    onChangeColor: () -> Unit,
     onDelete: () -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
@@ -554,17 +597,18 @@ private fun SubjectCardItem(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.weight(1f)
             ) {
-                // Colored Indicator Pill
+                // Colored Indicator Pill (click to change color)
                 Box(
                     modifier = Modifier
                         .size(38.dp)
                         .clip(RoundedCornerShape(8.dp))
-                        .background(subject.color.copy(alpha = 0.15f)),
+                        .background(subject.color.copy(alpha = 0.15f))
+                        .clickable(onClick = onChangeColor),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Folder,
-                        contentDescription = null,
+                        contentDescription = "Ganti Warna",
                         tint = subject.color,
                         modifier = Modifier.size(20.dp)
                     )
@@ -627,6 +671,14 @@ private fun SubjectCardItem(
                     expanded = showMenu,
                     onDismissRequest = { showMenu = false }
                 ) {
+                    DropdownMenuItem(
+                        text = { Text("Ganti Warna") },
+                        leadingIcon = { Icon(Icons.Filled.Palette, null, tint = LernspaceDark, modifier = Modifier.size(16.dp)) },
+                        onClick = {
+                            showMenu = false
+                            onChangeColor()
+                        }
+                    )
                     DropdownMenuItem(
                         text = { Text("Delete Subject", color = Color(0xFFEF4444)) },
                         leadingIcon = { Icon(Icons.Filled.Delete, null, tint = Color(0xFFEF4444), modifier = Modifier.size(16.dp)) },
@@ -1050,6 +1102,229 @@ private fun TopicCardInteractive(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// COMPONENT: Subject Color Picker Section (24 Curated Presets + Hex & RGB Sliders)
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun SubjectColorPickerSection(
+    selectedColor: Color,
+    onColorSelected: (Color) -> Unit
+) {
+    var pickerTab by remember { mutableIntStateOf(0) } // 0 = Preset, 1 = Kustom
+
+    // Custom RGB & Hex state
+    var redValue by remember(selectedColor) { mutableFloatStateOf(selectedColor.red * 255f) }
+    var greenValue by remember(selectedColor) { mutableFloatStateOf(selectedColor.green * 255f) }
+    var blueValue by remember(selectedColor) { mutableFloatStateOf(selectedColor.blue * 255f) }
+    var hexInput by remember(selectedColor) {
+        val r = (selectedColor.red * 255).toInt().coerceIn(0, 255)
+        val g = (selectedColor.green * 255).toInt().coerceIn(0, 255)
+        val b = (selectedColor.blue * 255).toInt().coerceIn(0, 255)
+        mutableStateOf(String.format(java.util.Locale.US, "#%02X%02X%02X", r, g, b))
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Pilihan Warna Mata Pelajaran",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = LernspaceDark
+            )
+
+            // Tab switch: Preset vs Kustom
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = LernspaceSurfaceLow,
+                border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder)
+            ) {
+                Row(modifier = Modifier.padding(2.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = if (pickerTab == 0) Color.White else Color.Transparent,
+                        shadowElevation = if (pickerTab == 0) 1.dp else 0.dp,
+                        modifier = Modifier.clickable { pickerTab = 0 }
+                    ) {
+                        Text(
+                            text = "Preset (${SubjectColorPalette.size})",
+                            fontSize = 11.sp,
+                            fontWeight = if (pickerTab == 0) FontWeight.Bold else FontWeight.Medium,
+                            color = LernspaceDark,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = if (pickerTab == 1) Color.White else Color.Transparent,
+                        shadowElevation = if (pickerTab == 1) 1.dp else 0.dp,
+                        modifier = Modifier.clickable { pickerTab = 1 }
+                    ) {
+                        Text(
+                            text = "Kustom (Hex/RGB)",
+                            fontSize = 11.sp,
+                            fontWeight = if (pickerTab == 1) FontWeight.Bold else FontWeight.Medium,
+                            color = LernspaceDark,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        if (pickerTab == 0) {
+            // Preset palette grid: 24 colors arranged in 3 rows of 8
+            val chunked = SubjectColorPalette.chunked(8)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                chunked.forEach { rowColors ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        rowColors.forEach { col ->
+                            val isSelected = selectedColor == col
+                            Box(
+                                modifier = Modifier
+                                    .size(30.dp)
+                                    .clip(CircleShape)
+                                    .background(col)
+                                    .clickable {
+                                        onColorSelected(col)
+                                        redValue = col.red * 255f
+                                        greenValue = col.green * 255f
+                                        blueValue = col.blue * 255f
+                                    }
+                                    .then(
+                                        if (isSelected)
+                                            Modifier.border(2.5.dp, LernspaceDark, CircleShape)
+                                        else
+                                            Modifier.border(0.5.dp, Color.Black.copy(alpha = 0.15f), CircleShape)
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (isSelected) {
+                                    Icon(Icons.Filled.Check, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // Custom Color: Hex input and RGB sliders
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = LernspaceSurfaceLow,
+                border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Preview & Hex Input Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        // Live Color Box
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(selectedColor)
+                                .border(1.dp, LernspaceBorder, RoundedCornerShape(8.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Filled.Colorize, null, tint = Color.White.copy(alpha = 0.85f), modifier = Modifier.size(20.dp))
+                        }
+
+                        // Hex text field
+                        OutlinedTextField(
+                            value = hexInput,
+                            onValueChange = { input ->
+                                hexInput = input
+                                val clean = input.removePrefix("#").trim()
+                                if (clean.length == 6) {
+                                    try {
+                                        val colorInt = android.graphics.Color.parseColor("#$clean")
+                                        val parsedColor = Color(colorInt)
+                                        onColorSelected(parsedColor)
+                                        redValue = parsedColor.red * 255f
+                                        greenValue = parsedColor.green * 255f
+                                        blueValue = parsedColor.blue * 255f
+                                    } catch (_: Exception) {}
+                                }
+                            },
+                            label = { Text("Kode HEX (#RRGGBB)", fontSize = 10.sp) },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(8.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = Color.White,
+                                unfocusedContainerColor = Color.White
+                            )
+                        )
+                    }
+
+                    // Sliders
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        // Red Slider
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("R: ${redValue.toInt()}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFFDC2626), modifier = Modifier.width(42.dp))
+                            Slider(
+                                value = redValue,
+                                onValueChange = {
+                                    redValue = it
+                                    val newCol = Color(redValue / 255f, greenValue / 255f, blueValue / 255f)
+                                    onColorSelected(newCol)
+                                    hexInput = String.format(java.util.Locale.US, "#%02X%02X%02X", redValue.toInt(), greenValue.toInt(), blueValue.toInt())
+                                },
+                                valueRange = 0f..255f,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        // Green Slider
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("G: ${greenValue.toInt()}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF16A34A), modifier = Modifier.width(42.dp))
+                            Slider(
+                                value = greenValue,
+                                onValueChange = {
+                                    greenValue = it
+                                    val newCol = Color(redValue / 255f, greenValue / 255f, blueValue / 255f)
+                                    onColorSelected(newCol)
+                                    hexInput = String.format(java.util.Locale.US, "#%02X%02X%02X", redValue.toInt(), greenValue.toInt(), blueValue.toInt())
+                                },
+                                valueRange = 0f..255f,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        // Blue Slider
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("B: ${blueValue.toInt()}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2563EB), modifier = Modifier.width(42.dp))
+                            Slider(
+                                value = blueValue,
+                                onValueChange = {
+                                    blueValue = it
+                                    val newCol = Color(redValue / 255f, greenValue / 255f, blueValue / 255f)
+                                    onColorSelected(newCol)
+                                    hexInput = String.format(java.util.Locale.US, "#%02X%02X%02X", redValue.toInt(), greenValue.toInt(), blueValue.toInt())
+                                },
+                                valueRange = 0f..255f,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // DIALOG: Add Subject Dialog
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
@@ -1067,11 +1342,11 @@ private fun AddSubjectDialog(
             shape = RoundedCornerShape(16.dp),
             color = Color.White,
             shadowElevation = 6.dp,
-            modifier = Modifier.width(440.dp)
+            modifier = Modifier.width(460.dp)
         ) {
             Column(
                 modifier = Modifier.padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1107,38 +1382,17 @@ private fun AddSubjectDialog(
                     onValueChange = { desc = it },
                     label = { Text("Description / Scope (Optional)") },
                     modifier = Modifier.fillMaxWidth(),
-                    maxLines = 3,
+                    maxLines = 2,
                     shape = RoundedCornerShape(8.dp)
                 )
 
-                // Color picker
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Subject Accent Color", style = MaterialTheme.typography.labelMedium, color = LernspaceTextSecondary)
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        SubjectColorPalette.forEach { col ->
-                            Box(
-                                modifier = Modifier
-                                    .size(32.dp)
-                                    .clip(CircleShape)
-                                    .background(col)
-                                    .clickable { selectedColor = col }
-                                    .then(
-                                        if (selectedColor == col)
-                                            Modifier.border(2.5.dp, LernspaceDark, CircleShape)
-                                        else
-                                            Modifier
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                if (selectedColor == col) {
-                                    Icon(Icons.Filled.Check, null, tint = Color.White, modifier = Modifier.size(16.dp))
-                                }
-                            }
-                        }
-                    }
-                }
+                // Color picker section
+                SubjectColorPickerSection(
+                    selectedColor = selectedColor,
+                    onColorSelected = { selectedColor = it }
+                )
 
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(2.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1158,6 +1412,69 @@ private fun AddSubjectDialog(
                         colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark)
                     ) {
                         Text("Create Subject")
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DIALOG: Change Subject Color Dialog
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun ChangeSubjectColorDialog(
+    subject: SubjectUi,
+    onDismiss: () -> Unit,
+    onConfirm: (Color) -> Unit
+) {
+    var selectedColor by remember { mutableStateOf(subject.color) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = Color.White,
+            shadowElevation = 6.dp,
+            modifier = Modifier.width(460.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Ganti Warna Mata Pelajaran", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                        Text(subject.name, fontSize = 12.sp, color = LernspaceTextSecondary)
+                    }
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(24.dp)) {
+                        Icon(Icons.Filled.Close, null)
+                    }
+                }
+
+                SubjectColorPickerSection(
+                    selectedColor = selectedColor,
+                    onColorSelected = { selectedColor = it }
+                )
+
+                Spacer(modifier = Modifier.height(2.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss) { Text("Batal") }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = { onConfirm(selectedColor) },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark)
+                    ) {
+                        Text("Simpan Warna")
                     }
                 }
             }

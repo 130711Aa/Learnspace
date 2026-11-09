@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Lernspace</string>
+    <string name="app_name">Learnspace</string>
     <string name="nav_home">Home</string>
     <string name="nav_planner">Planner</string>
     <string name="nav_learning">Learning</string>

@@ -79,7 +79,7 @@ fun InsightsScreen(
                             Text(
                                 text = "Semester Ganjil 2026/2027",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = AccentTeal,
+                                color = LernspaceDark,
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                             )
@@ -90,8 +90,8 @@ fun InsightsScreen(
                 // Live Sync Status Chip
                 Surface(
                     shape = RoundedCornerShape(20.dp),
-                    color = AccentTealContainer.copy(alpha = 0.5f),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, AccentTeal.copy(alpha = 0.3f))
+                    color = LernspaceSurfaceLow,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder)
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
@@ -102,13 +102,13 @@ fun InsightsScreen(
                             modifier = Modifier
                                 .size(8.dp)
                                 .clip(CircleShape)
-                                .background(AccentTeal)
+                                .background(LernspaceDark)
                         )
                         Text(
                             text = "Local-First Live Sync",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = AccentTeal
+                            color = LernspaceDark
                         )
                     }
                 }
@@ -134,7 +134,7 @@ fun InsightsScreen(
                     value = "${(masteryRate * 100).toInt()}%",
                     subtitle = "$masteredTopics dari $totalTopics Topik Dikuasai",
                     icon = Icons.Filled.TrendingUp,
-                    accentColor = AccentTeal,
+                    accentColor = LernspaceDark,
                     modifier = Modifier.weight(1f)
                 )
                 KpiCard(
@@ -317,9 +317,9 @@ fun SyllabusMasteryOverviewCard(
                     )
                 }
                 TextButton(onClick = { onNavigateToSyllabus?.invoke(null) }) {
-                    Text("Buka Silabus Lengkap", fontSize = 12.sp, color = AccentTeal, fontWeight = FontWeight.SemiBold)
+                    Text("Buka Silabus Lengkap", fontSize = 12.sp, color = LernspaceDark, fontWeight = FontWeight.SemiBold)
                     Spacer(modifier = Modifier.width(4.dp))
-                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, modifier = Modifier.size(14.dp), tint = AccentTeal)
+                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, modifier = Modifier.size(14.dp), tint = LernspaceDark)
                 }
             }
 
@@ -524,12 +524,13 @@ fun WeeklyStudyDistributionCard(
                 }
                 Surface(
                     shape = RoundedCornerShape(12.dp),
-                    color = AccentTealContainer.copy(alpha = 0.5f)
+                    color = LernspaceSurfaceLow,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder)
                 ) {
                     Text(
                         text = "Beban Seimbang",
                         style = MaterialTheme.typography.labelSmall,
-                        color = AccentTeal,
+                        color = LernspaceDark,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                     )
@@ -646,12 +647,23 @@ fun SmartAdvisoryCard(
                     modifier = Modifier.padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Text(
-                        text = "⚠️ Prioritas Review Sebelum Kuis:",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = AccentBlue
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.TipsAndUpdates,
+                            contentDescription = null,
+                            tint = LernspaceDark,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Text(
+                            text = "Rekomendasi Fokus Belajar:",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = LernspaceDark
+                        )
+                    }
                     Text(
                         text = if (needsReviewTopic != null) {
                             "Materi '${needsReviewTopic.title}' masih berstatus Needs Review. Sisihkan 45 menit sebelum ujian/kuis terdekat."
@@ -710,7 +722,7 @@ fun UpcomingDeadlinesCard(
                     color = LernspaceDark
                 )
                 TextButton(onClick = { onNavigateToPlanner?.invoke() }, contentPadding = PaddingValues(0.dp)) {
-                    Text("Semua (${tasks.count { !it.isCompleted }})", fontSize = 11.sp, color = AccentTeal)
+                    Text("Semua (${tasks.count { !it.isCompleted }})", fontSize = 11.sp, color = LernspaceDark)
                 }
             }
 
@@ -737,7 +749,7 @@ fun UpcomingDeadlinesCard(
                                         when (task.priority) {
                                             "HIGH" -> AccentRed
                                             "MEDIUM" -> Color(0xFF475569)
-                                            else -> AccentTeal
+                                            else -> LernspaceTextSecondary
                                         }
                                     )
                             )
@@ -806,7 +818,7 @@ fun RecentNotesActivityCard(
                     color = LernspaceDark
                 )
                 TextButton(onClick = { onNavigateToWorkspace?.invoke() }, contentPadding = PaddingValues(0.dp)) {
-                    Text("Ke Workspace", fontSize = 11.sp, color = AccentTeal)
+                    Text("Ke Workspace", fontSize = 11.sp, color = LernspaceDark)
                 }
             }
 
