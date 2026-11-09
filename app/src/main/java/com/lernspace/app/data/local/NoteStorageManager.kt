@@ -15,6 +15,7 @@ import com.lernspace.app.ui.workspace.model.ImageElement
 import com.lernspace.app.ui.workspace.model.NotePageData
 import com.lernspace.app.ui.workspace.model.TextBoxElement
 import com.lernspace.app.ui.workspace.shape.ShapeRecognizer
+import android.net.Uri
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -32,14 +33,62 @@ class NoteStorageManager(private val context: Context) {
     private val imagesDir: File
         get() = File(notesDir, "images").apply { if (!exists()) mkdirs() }
 
+    companion object {
+        /**
+         * Safely copies an external image Uri into the app's internal private storage directory
+         * (files/notes/images/<imageId>.png) with automatic memory-safe downsampling for huge photos.
+         */
+        fun copyImageToInternal(context: Context, uri: Uri, imageId: String): Bitmap? {
+            return try {
+                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                context.contentResolver.openInputStream(uri)?.use { stream ->
+                    BitmapFactory.decodeStream(stream, null, options)
+                }
+                val rawW = options.outWidth
+                val rawH = options.outHeight
+                if (rawW <= 0 || rawH <= 0) return null
+
+                // Downsample large camera photos to safe bounds (max dimension <= 2048px)
+                var sampleSize = 1
+                val maxDim = maxOf(rawW, rawH)
+                while (maxDim / sampleSize > 2048) {
+                    sampleSize *= 2
+                }
+
+                val decodeOptions = BitmapFactory.Options().apply {
+                    inSampleSize = sampleSize
+                    inPreferredConfig = Bitmap.Config.ARGB_8888
+                }
+
+                val bitmap = context.contentResolver.openInputStream(uri)?.use { stream ->
+                    BitmapFactory.decodeStream(stream, null, decodeOptions)
+                } ?: return null
+
+                val notesDir = File(context.filesDir, "notes").apply { if (!exists()) mkdirs() }
+                val imagesDir = File(notesDir, "images").apply { if (!exists()) mkdirs() }
+                val targetFile = File(imagesDir, "$imageId.png")
+
+                FileOutputStream(targetFile).use { out ->
+                    bitmap.compress(Bitmap.CompressFormat.PNG, 90, out)
+                }
+
+                bitmap
+            } catch (e: Exception) {
+                e.printStackTrace()
+                null
+            }
+        }
+    }
+
     /**
      * Saves all pages of a note into a compact JSON file.
      */
-    fun saveNotePages(noteId: String, pages: List<NotePageData>) {
+    fun saveNotePages(noteId: String, pages: List<NotePageData>, isDarkPaper: Boolean = false) {
         try {
             val rootObj = JSONObject()
             rootObj.put("noteId", noteId)
             rootObj.put("updatedAt", System.currentTimeMillis())
+            rootObj.put("isDarkPaper", isDarkPaper)
 
             val pagesArray = JSONArray()
 
@@ -174,8 +223,8 @@ class NoteStorageManager(private val context: Context) {
                                         x = imgObj.optDouble("x").toFloat(),
                                         y = imgObj.optDouble("y").toFloat(),
                                         bitmap = bitmap.asImageBitmap(),
-                                        width = imgObj.optDouble("width", 260.0).toFloat(),
-                                        height = imgObj.optDouble("height", 200.0).toFloat(),
+                                        width = imgObj.optDouble("width", 500.0).toFloat(),
+                                        height = imgObj.optDouble("height", 350.0).toFloat(),
                                         isSelected = false
                                     )
                                 )
@@ -228,6 +277,21 @@ class NoteStorageManager(private val context: Context) {
         } catch (e: Exception) {
             e.printStackTrace()
             null
+        }
+    }
+
+    /**
+     * Reads whether a note uses dark paper.
+     */
+    fun isDarkPaper(noteId: String): Boolean {
+        val noteFile = File(notesDir, "$noteId.json")
+        if (!noteFile.exists()) return false
+        return try {
+            val jsonText = noteFile.readText()
+            val rootObj = JSONObject(jsonText)
+            rootObj.optBoolean("isDarkPaper", false)
+        } catch (e: Exception) {
+            false
         }
     }
 

@@ -147,32 +147,25 @@ fun LearningScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "Learning Syllabus & Topics",
-                        style = MaterialTheme.typography.headlineLarge,
-                        color = LernspaceDark,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = LernspaceSurfaceLow,
-                        border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder)
-                    ) {
-                        Text(
-                            text = "${subjects.size} Subjects Enrolled",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = LernspaceTextSecondary,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                        )
-                    }
-                }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    text = "Structured course curriculum with attached lecture notes and mastery progression",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = LernspaceTextSecondary
+                    text = "Learning & Syllabus",
+                    style = MaterialTheme.typography.headlineLarge,
+                    color = LernspaceDark,
+                    fontWeight = FontWeight.Bold
                 )
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = LernspaceSurfaceLow,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder)
+                ) {
+                    Text(
+                        text = "${subjects.size} Mata Kuliah",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = LernspaceTextSecondary,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    )
+                }
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

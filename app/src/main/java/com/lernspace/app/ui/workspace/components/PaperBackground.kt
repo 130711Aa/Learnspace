@@ -24,13 +24,26 @@ fun PaperBackground(
     isPaged: Boolean = true,
     pageWidth: Float = CanvasConstants.PAGE_WIDTH,
     pageHeight: Float = CanvasConstants.PAGE_HEIGHT,
+    isDarkPaper: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     Canvas(modifier = modifier.fillMaxSize().clipToBounds()) {
         clipRect(0f, 0f, size.width, size.height) {
+            // Colors adaptive to Light / Dark Paper mode
+            val deskColor = if (isDarkPaper) Color(0xFF091426) else Color(0xFFE2E8F0)
+            val sheetColor = if (isDarkPaper) Color(0xFF131822) else Color(0xFFFCFCFD)
+            val shadowColor = if (isDarkPaper) Color(0x66000000) else Color(0x1F0F172A)
+            val borderColor = if (isDarkPaper) Color(0xFF263245) else Color(0xFFCBD5E1)
+            val marginLineColor = if (isDarkPaper) Color(0xFFEF4444) else Color(0xFFFCA5A5)
+            val ruledLineColor = if (isDarkPaper) Color(0xFF242F42) else Color(0xFFE2E8F0)
+            val gridLineColor = if (isDarkPaper) Color(0xFF202A3C) else Color(0xFFEEF2F6)
+            val dotColor = if (isDarkPaper) Color(0xFF475569) else Color(0xFFCBD5E1)
+            val infiniteBgColor = if (isDarkPaper) Color(0xFF131822) else Color(0xFFFAFAFA)
+            val blankInfiniteColor = if (isDarkPaper) Color(0xFF131822) else Color.White
+
             if (isPaged) {
                 // Desk background (desk canvas surrounding the physical page sheet)
-                drawRect(Color(0xFFE2E8F0))
+                drawRect(deskColor)
 
                 val sheetLeft = panX
                 val sheetTop = panY
@@ -39,15 +52,15 @@ fun PaperBackground(
 
                 // Drop shadow behind the paper sheet
                 drawRoundRect(
-                    color = Color(0x1F0F172A),
+                    color = shadowColor,
                     topLeft = Offset(sheetLeft + 4f, sheetTop + 6f),
                     size = Size(sheetWidth, sheetHeight),
                     cornerRadius = CornerRadius(6f, 6f)
                 )
 
-                // Pure physical white paper sheet
+                // Physical paper sheet
                 drawRoundRect(
-                    color = Color(0xFFFCFCFD),
+                    color = sheetColor,
                     topLeft = Offset(sheetLeft, sheetTop),
                     size = Size(sheetWidth, sheetHeight),
                     cornerRadius = CornerRadius(4f, 4f)
@@ -55,7 +68,7 @@ fun PaperBackground(
 
                 // Sheet border
                 drawRoundRect(
-                    color = Color(0xFFCBD5E1),
+                    color = borderColor,
                     topLeft = Offset(sheetLeft, sheetTop),
                     size = Size(sheetWidth, sheetHeight),
                     cornerRadius = CornerRadius(4f, 4f),
@@ -69,7 +82,7 @@ fun PaperBackground(
                         val marginScreenX = sheetLeft + (CanvasConstants.RULED_MARGIN_X * scale)
                         if (marginScreenX in sheetLeft..(sheetLeft + sheetWidth)) {
                             drawLine(
-                                color = Color(0xFFFCA5A5),
+                                color = marginLineColor,
                                 start = Offset(marginScreenX, sheetTop),
                                 end = Offset(marginScreenX, sheetTop + sheetHeight),
                                 strokeWidth = (2.2f * scale).coerceIn(1.5f, 4f)
@@ -82,7 +95,7 @@ fun PaperBackground(
                             val lineScreenY = sheetTop + (y * scale)
                             if (lineScreenY in sheetTop..(sheetTop + sheetHeight)) {
                                 drawLine(
-                                    color = Color(0xFFE2E8F0),
+                                    color = ruledLineColor,
                                     start = Offset(sheetLeft, lineScreenY),
                                     end = Offset(sheetLeft + sheetWidth, lineScreenY),
                                     strokeWidth = 1.2f
@@ -98,7 +111,7 @@ fun PaperBackground(
                             var x = sheetLeft + step
                             while (x < sheetLeft + sheetWidth) {
                                 drawLine(
-                                    color = Color(0xFFEEF2F6),
+                                    color = gridLineColor,
                                     start = Offset(x, sheetTop),
                                     end = Offset(x, sheetTop + sheetHeight),
                                     strokeWidth = 1f
@@ -108,7 +121,7 @@ fun PaperBackground(
                             var y = sheetTop + step
                             while (y < sheetTop + sheetHeight) {
                                 drawLine(
-                                    color = Color(0xFFEEF2F6),
+                                    color = gridLineColor,
                                     start = Offset(sheetLeft, y),
                                     end = Offset(sheetLeft + sheetWidth, y),
                                     strokeWidth = 1f
@@ -126,7 +139,7 @@ fun PaperBackground(
                                 var y = sheetTop + step
                                 while (y < sheetTop + sheetHeight) {
                                     drawCircle(
-                                        color = Color(0xFFCBD5E1),
+                                        color = dotColor,
                                         radius = (1.5f * scale).coerceIn(1f, 3f),
                                         center = Offset(x, y)
                                     )
@@ -138,18 +151,18 @@ fun PaperBackground(
                     }
 
                     PaperStyle.BLANK -> {
-                        // Crisp white sheet already drawn
+                        // Sheet already drawn in sheetColor
                     }
                 }
             } else {
                 // Infinite Scratchpad Mode: Endless surface without sheet borders
                 when (style) {
                     PaperStyle.RULED -> {
-                        drawRect(Color(0xFFFAFAFA))
+                        drawRect(infiniteBgColor)
                         val marginX = (CanvasConstants.RULED_MARGIN_X * scale) + panX
                         if (marginX in 0f..size.width) {
                             drawLine(
-                                color = Color(0xFFFCA5A5),
+                                color = marginLineColor,
                                 start = Offset(marginX, 0f),
                                 end = Offset(marginX, size.height),
                                 strokeWidth = (2f * scale).coerceIn(1.5f, 4f)
@@ -165,7 +178,7 @@ fun PaperBackground(
                                 if (y > size.height) break
                                 if (y >= 0f) {
                                     drawLine(
-                                        color = Color(0xFFE2E8F0),
+                                        color = ruledLineColor,
                                         start = Offset(0f, y),
                                         end = Offset(size.width, y),
                                         strokeWidth = 1f
@@ -176,30 +189,30 @@ fun PaperBackground(
                         }
                     }
                     PaperStyle.GRID -> {
-                        drawRect(Color(0xFFFAFAFA))
+                        drawRect(infiniteBgColor)
                         val spacing = CanvasConstants.GRID_SPACING * scale
                         if (spacing > 4f) {
                             var x = panX % spacing
                             while (x < size.width) {
-                                drawLine(Color(0xFFEEF2F6), Offset(x, 0f), Offset(x, size.height), 1f)
+                                drawLine(gridLineColor, Offset(x, 0f), Offset(x, size.height), 1f)
                                 x += spacing
                             }
                             var y = panY % spacing
                             while (y < size.height) {
-                                drawLine(Color(0xFFEEF2F6), Offset(0f, y), Offset(size.width, y), 1f)
+                                drawLine(gridLineColor, Offset(0f, y), Offset(size.width, y), 1f)
                                 y += spacing
                             }
                         }
                     }
                     PaperStyle.DOTTED -> {
-                        drawRect(Color(0xFFFAFAFA))
+                        drawRect(infiniteBgColor)
                         val spacing = CanvasConstants.DOT_SPACING * scale
                         if (spacing > 8f) {
                             var x = panX % spacing
                             while (x < size.width) {
                                 var y = panY % spacing
                                 while (y < size.height) {
-                                    drawCircle(Color(0xFFCBD5E1), (1.5f * scale).coerceIn(1f, 3f), Offset(x, y))
+                                    drawCircle(dotColor, (1.5f * scale).coerceIn(1f, 3f), Offset(x, y))
                                     y += spacing
                                 }
                                 x += spacing
@@ -207,7 +220,7 @@ fun PaperBackground(
                         }
                     }
                     PaperStyle.BLANK -> {
-                        drawRect(Color.White)
+                        drawRect(blankInfiniteColor)
                     }
                 }
             }

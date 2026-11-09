@@ -792,7 +792,7 @@ private fun TaskResultCard(
                 Icon(
                     imageVector = Icons.Filled.Checklist,
                     contentDescription = null,
-                    tint = if (task.priority == "HIGH") AccentRed else AccentAmber,
+                    tint = if (task.priority == "HIGH") AccentRed else Color(0xFF475569),
                     modifier = Modifier.size(18.dp)
                 )
             }

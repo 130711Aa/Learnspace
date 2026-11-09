@@ -2,6 +2,7 @@ package com.lernspace.app.ui.workspace
 
 import android.graphics.BitmapFactory
 import android.net.Uri
+import java.util.UUID
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -62,18 +63,21 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import androidx.compose.ui.window.Dialog
 import androidx.ink.brush.Brush
 import androidx.ink.brush.StockBrushes
 import androidx.ink.brush.compose.createWithComposeColor
 import androidx.ink.rendering.android.canvas.CanvasStrokeRenderer
 import androidx.ink.strokes.Stroke
 import com.lernspace.app.data.local.AcademicDatabaseManager
+import com.lernspace.app.data.local.NoteStorageManager
 import com.lernspace.app.data.repository.AcademicWorkspaceState
 import com.lernspace.app.ui.components.DrawingSurface
 import com.lernspace.app.ui.theme.AccentBlue
 import com.lernspace.app.ui.theme.LernspaceBorder
 import com.lernspace.app.ui.theme.LernspaceDark
 import com.lernspace.app.ui.theme.LernspaceSurfaceLow
+import com.lernspace.app.ui.theme.LernspaceTextSecondary
 import com.lernspace.app.ui.workspace.components.DraggableImage
 import com.lernspace.app.ui.workspace.components.DraggableTextBox
 import com.lernspace.app.ui.workspace.components.NoteFloatingToolbar
@@ -124,7 +128,20 @@ class NotePaneState(
     private val coroutineScope: CoroutineScope
 ) {
     var noteTitle by mutableStateOf(note.title)
-    val paperStyle: PaperStyle get() = note.paperStyle
+    var paperStyle by mutableStateOf(note.paperStyle)
+    var isDarkPaper by mutableStateOf(note.isDarkPaper)
+
+    fun toggleDarkPaper() {
+        isDarkPaper = !isDarkPaper
+        note.isDarkPaper = isDarkPaper
+        AcademicDatabaseManager.persistNote(note)
+    }
+
+    fun updatePaperStyle(newStyle: PaperStyle) {
+        paperStyle = newStyle
+        note.paperStyle = newStyle
+        AcademicDatabaseManager.persistNote(note)
+    }
     val canvasType: NoteCanvasType get() = note.canvasType
     val subject: String get() = note.subject
 
@@ -167,6 +184,8 @@ class NotePaneState(
         target.textBoxes.addAll(textBoxes)
         target.imageElements.clear()
         target.imageElements.addAll(imageElements)
+        note.isDarkPaper = isDarkPaper
+        note.paperStyle = paperStyle
         AcademicDatabaseManager.persistNote(note)
     }
 
@@ -373,33 +392,42 @@ fun NoteEditorScreen(
     val leftState = if (isSwapped && secondaryState != null) secondaryState else primaryState
     val rightState = if (isSwapped) primaryState else secondaryState
 
-    // Shared Tool State across the single unified toolbar system
+    // Tool State: Independent presets for Pen and Highlighter
     var activeTool by remember { mutableStateOf(NoteTool.PEN) }
-    var selectedColor by remember { mutableStateOf(Color(0xFF16A34A)) } // Green default
-    var selectedThickness by remember { mutableFloatStateOf(7f) }
+    var penColor by remember { mutableStateOf(Color(0xFF0F172A)) } // Dark slate / Black default for clean writing
+    var penThickness by remember { mutableFloatStateOf(4f) }       // 4 px default for Pen
+    var highlighterColor by remember { mutableStateOf(Color(0xFFFDE047)) } // Soft Pastel Yellow default
+    var highlighterThickness by remember { mutableFloatStateOf(24f) }      // 24 px default for Highlighter
     var selectedShapeType by remember { mutableStateOf(GeometricShapeType.RECTANGLE) }
     var isExporting by remember { mutableStateOf(false) }
 
-    // Brush calculation
-    val currentBrush by remember(activeTool, selectedColor, selectedThickness) {
-        derivedStateOf {
-            when (activeTool) {
-                NoteTool.HIGHLIGHTER -> {
-                    Brush.createWithComposeColor(
-                        family = StockBrushes.pressurePen(),
-                        color = selectedColor.copy(alpha = 0.35f),
-                        size = selectedThickness * 2.8f,
-                        epsilon = 0.1f
-                    )
-                }
-                else -> {
-                    Brush.createWithComposeColor(
-                        family = StockBrushes.pressurePen(),
-                        color = selectedColor,
-                        size = selectedThickness,
-                        epsilon = 0.1f
-                    )
-                }
+    val activeColor = when (activeTool) {
+        NoteTool.HIGHLIGHTER -> highlighterColor
+        else -> penColor
+    }
+    val activeThickness = when (activeTool) {
+        NoteTool.HIGHLIGHTER -> highlighterThickness
+        else -> penThickness
+    }
+
+    // Brush calculation reacting immediately to independent tool presets
+    val currentBrush = remember(activeTool, penColor, penThickness, highlighterColor, highlighterThickness) {
+        when (activeTool) {
+            NoteTool.HIGHLIGHTER -> {
+                Brush.createWithComposeColor(
+                    family = StockBrushes.highlighter(),
+                    color = highlighterColor.copy(alpha = 0.40f),
+                    size = highlighterThickness,
+                    epsilon = 0.1f
+                )
+            }
+            else -> {
+                Brush.createWithComposeColor(
+                    family = StockBrushes.pressurePen(),
+                    color = penColor,
+                    size = penThickness,
+                    epsilon = 0.1f
+                )
             }
         }
     }
@@ -428,35 +456,42 @@ fun NoteEditorScreen(
         }
     }
 
-    // Image Picker Launcher (places image into whichever note is currently active)
+    // Image Picker Launcher with safe internal copy & auto-persistence
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
-        uri?.let {
-            try {
-                context.contentResolver.openInputStream(it)?.use { stream ->
-                    val bitmap = BitmapFactory.decodeStream(stream)
+        uri?.let { pickedUri ->
+            coroutineScope.launch(Dispatchers.IO) {
+                try {
+                    val imageId = UUID.randomUUID().toString()
+                    val bitmap = NoteStorageManager.copyImageToInternal(context, pickedUri, imageId)
                     if (bitmap != null) {
-                        activeState.deselectAll()
-                        val spawnX = (-activeState.panX + 160f) / activeState.scale
-                        val spawnY = (-activeState.panY + 120f) / activeState.scale
-                        val aspect = (bitmap.width.toFloat() / bitmap.height.toFloat()).coerceIn(0.2f, 5f)
-                        val baseWidth = 280f
-                        val baseHeight = baseWidth / aspect
-                        activeState.imageElements.add(
-                            ImageElement(
-                                x = maxOf(40f, spawnX),
-                                y = maxOf(60f, spawnY),
-                                width = baseWidth,
-                                height = baseHeight,
-                                bitmap = bitmap.asImageBitmap(),
-                                isSelected = true
+                        withContext(Dispatchers.Main) {
+                            activeState.deselectAll()
+                            // Center spawn point in the user's visible viewport
+                            val spawnX = (-activeState.panX + 160f) / activeState.scale
+                            val spawnY = (-activeState.panY + 140f) / activeState.scale
+                            val aspect = (bitmap.width.toFloat() / bitmap.height.toFloat()).coerceIn(0.2f, 5f)
+                            // Clean natural initial size in world canvas pixels (450px wide)
+                            val baseWidth = 450f
+                            val baseHeight = baseWidth / aspect
+                            activeState.imageElements.add(
+                                ImageElement(
+                                    id = imageId,
+                                    x = maxOf(40f, spawnX),
+                                    y = maxOf(60f, spawnY),
+                                    width = baseWidth,
+                                    height = baseHeight,
+                                    bitmap = bitmap.asImageBitmap(),
+                                    isSelected = true
+                                )
                             )
-                        )
+                            activeState.saveActivePageData()
+                        }
                     }
+                } catch (e: Exception) {
+                    e.printStackTrace()
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
             }
         }
     }
@@ -485,8 +520,8 @@ fun NoteEditorScreen(
                     isActive = true,
                     activeTool = activeTool,
                     currentBrush = currentBrush,
-                    selectedColor = selectedColor,
-                    selectedThickness = selectedThickness,
+                    selectedColor = activeColor,
+                    selectedThickness = activeThickness,
                     selectedShapeType = selectedShapeType,
                     onActivate = { activeNoteId = primaryState.note.id },
                     modifier = Modifier
@@ -513,8 +548,8 @@ fun NoteEditorScreen(
                                 isActive = activeNoteId == leftState.note.id,
                                 activeTool = activeTool,
                                 currentBrush = currentBrush,
-                                selectedColor = selectedColor,
-                                selectedThickness = selectedThickness,
+                                selectedColor = activeColor,
+                                selectedThickness = activeThickness,
                                 selectedShapeType = selectedShapeType,
                                 onActivate = { activeNoteId = leftState.note.id },
                                 modifier = Modifier
@@ -549,8 +584,8 @@ fun NoteEditorScreen(
                                 isActive = activeNoteId == rightState.note.id,
                                 activeTool = activeTool,
                                 currentBrush = currentBrush,
-                                selectedColor = selectedColor,
-                                selectedThickness = selectedThickness,
+                                selectedColor = activeColor,
+                                selectedThickness = activeThickness,
                                 selectedShapeType = selectedShapeType,
                                 onActivate = { activeNoteId = rightState.note.id },
                                 modifier = Modifier
@@ -578,6 +613,7 @@ fun NoteEditorScreen(
             leftPaperStyle = leftState.paperStyle,
             leftCurrentPage = leftState.currentPageIndex + 1,
             leftTotalPages = leftState.totalPages,
+            onLeftChangePaperStyle = { leftState.updatePaperStyle(it) },
             rightNoteId = rightState?.note?.id,
             rightTitle = rightState?.noteTitle,
             rightSubject = rightState?.subject,
@@ -609,16 +645,14 @@ fun NoteEditorScreen(
             },
             selectedShapeType = selectedShapeType,
             onSelectShapeType = { selectedShapeType = it },
-            selectedColor = selectedColor,
-            onSelectColor = {
-                selectedColor = it
-                if (activeTool == NoteTool.ERASER) activeTool = NoteTool.PEN
-            },
-            selectedThickness = selectedThickness,
-            onSelectThickness = {
-                selectedThickness = it
-                if (activeTool == NoteTool.ERASER) activeTool = NoteTool.PEN
-            },
+            penColor = penColor,
+            onSelectPenColor = { penColor = it },
+            penThickness = penThickness,
+            onSelectPenThickness = { penThickness = it },
+            highlighterColor = highlighterColor,
+            onSelectHighlighterColor = { highlighterColor = it },
+            highlighterThickness = highlighterThickness,
+            onSelectHighlighterThickness = { highlighterThickness = it },
             onPickImage = {
                 imagePickerLauncher.launch("image/*")
             },
@@ -629,6 +663,8 @@ fun NoteEditorScreen(
             onClearAll = { activeState.clearAll() },
             onExportPdf = { handleExportPdf() },
             isExporting = isExporting,
+            isDarkPaper = activeState.isDarkPaper,
+            onToggleDarkPaper = { activeState.toggleDarkPaper() },
             onBack = { handleBack() },
             modifier = Modifier
                 .align(Alignment.TopCenter)
@@ -775,7 +811,7 @@ private fun NotePaneViewport(
             if (state.canvasType == NoteCanvasType.PDF_DOCUMENT) {
                 Canvas(modifier = Modifier.fillMaxSize().clipToBounds()) {
                     clipRect(0f, 0f, size.width, size.height) {
-                        drawRect(Color(0xFFE2E8F0)) // desk canvas background
+                        drawRect(if (state.isDarkPaper) Color(0xFF091426) else Color(0xFFE2E8F0)) // desk canvas background
                         if (state.pdfPageBitmap != null) {
                             val bmp = state.pdfPageBitmap!!
                             val dstW = bmp.width * state.scale
@@ -803,6 +839,7 @@ private fun NotePaneViewport(
                     panX = state.panX,
                     panY = state.panY,
                     isPaged = state.canvasType == NoteCanvasType.PAGED_NOTE,
+                    isDarkPaper = state.isDarkPaper,
                     modifier = Modifier.fillMaxSize().clipToBounds()
                 )
             }
@@ -834,6 +871,7 @@ private fun NotePaneViewport(
                     state.saveActivePageData()
                 },
                 isEraserMode = activeTool == NoteTool.ERASER && isActive,
+                isDarkPaper = state.isDarkPaper,
                 isDrawingEnabled = activeTool == NoteTool.PEN || activeTool == NoteTool.HIGHLIGHTER || activeTool == NoteTool.ERASER,
                 scale = state.scale,
                 panX = state.panX,
@@ -904,16 +942,17 @@ private fun NotePaneViewport(
                             val w = maxOf(10f, maxX - minX)
                             val h = maxOf(10f, maxY - minY)
                             val strokeW = selectedThickness * state.scale
+                            val shapePreviewColor = if (state.isDarkPaper && (selectedColor == Color.Black || selectedColor == Color(0xFF0F172A) || selectedColor == Color(0xFF191C1E))) Color(0xFFF8FAFC) else selectedColor
 
                             when (selectedShapeType) {
                                 GeometricShapeType.LINE -> {
-                                    drawLine(color = selectedColor, start = Offset(sX, sY), end = Offset(eX, eY), strokeWidth = strokeW)
+                                    drawLine(color = shapePreviewColor, start = Offset(sX, sY), end = Offset(eX, eY), strokeWidth = strokeW)
                                 }
                                 GeometricShapeType.RECTANGLE -> {
-                                    drawRect(color = selectedColor, topLeft = Offset(minX, minY), size = Size(w, h), style = DrawStroke(width = strokeW))
+                                    drawRect(color = shapePreviewColor, topLeft = Offset(minX, minY), size = Size(w, h), style = DrawStroke(width = strokeW))
                                 }
                                 GeometricShapeType.CIRCLE -> {
-                                    drawOval(color = selectedColor, topLeft = Offset(minX, minY), size = Size(w, h), style = DrawStroke(width = strokeW))
+                                    drawOval(color = shapePreviewColor, topLeft = Offset(minX, minY), size = Size(w, h), style = DrawStroke(width = strokeW))
                                 }
                                 GeometricShapeType.TRIANGLE -> {
                                     val path = Path().apply {
@@ -922,23 +961,23 @@ private fun NotePaneViewport(
                                         lineTo(minX, maxY)
                                         close()
                                     }
-                                    drawPath(path = path, color = selectedColor, style = DrawStroke(width = strokeW))
+                                    drawPath(path = path, color = shapePreviewColor, style = DrawStroke(width = strokeW))
                                 }
                                 GeometricShapeType.ARROW -> {
-                                    drawLine(color = selectedColor, start = Offset(sX, sY), end = Offset(eX, eY), strokeWidth = strokeW)
+                                    drawLine(color = shapePreviewColor, start = Offset(sX, sY), end = Offset(eX, eY), strokeWidth = strokeW)
                                     val dx = eX - sX
                                     val dy = eY - sY
                                     val angle = kotlin.math.atan2(dy, dx)
                                     val headLen = minOf(36f * state.scale, kotlin.math.hypot(dx, dy) * 0.35f)
                                     val headAngle = Math.toRadians(30.0).toFloat()
                                     drawLine(
-                                        color = selectedColor,
+                                        color = shapePreviewColor,
                                         start = Offset(eX, eY),
                                         end = Offset(eX - headLen * kotlin.math.cos(angle - headAngle), eY - headLen * kotlin.math.sin(angle - headAngle)),
                                         strokeWidth = strokeW
                                     )
                                     drawLine(
-                                        color = selectedColor,
+                                        color = shapePreviewColor,
                                         start = Offset(eX, eY),
                                         end = Offset(eX - headLen * kotlin.math.cos(angle + headAngle), eY - headLen * kotlin.math.sin(angle + headAngle)),
                                         strokeWidth = strokeW
@@ -1002,12 +1041,13 @@ private fun NotePaneViewport(
                                                         img.x += dx
                                                         img.y += dy
                                                     }
-                                                    val newBounds = selBounds(curSel).translate(Offset(dx, dy))
-                                                    curSel.bounds = newBounds
-                                                    state.lassoSelection = curSel.copy(bounds = newBounds)
+                                                    val sel = state.lassoSelection ?: curSel
+                                                    val newBounds = sel.bounds.translate(Offset(dx, dy))
+                                                    state.lassoSelection = sel.copy(bounds = newBounds)
                                                 }
                                             }
                                         }
+                                        state.saveActivePageData()
                                         return@awaitEachGesture
                                     } else {
                                         state.lassoSelection = null
@@ -1078,19 +1118,21 @@ private fun NotePaneViewport(
                 // Render Lasso Selection Marquee & Action Menu
                 val curSel = state.lassoSelection
                 if (curSel != null && !curSel.isEmpty) {
-                    val screenLeft = curSel.bounds.left * state.scale + state.panX
-                    val screenTop = curSel.bounds.top * state.scale + state.panY
-                    val screenRight = curSel.bounds.right * state.scale + state.panX
-                    val screenBottom = curSel.bounds.bottom * state.scale + state.panY
-                    val selWidth = maxOf(40f, screenRight - screenLeft)
-                    val selHeight = maxOf(40f, screenBottom - screenTop)
-
                     Canvas(modifier = Modifier.fillMaxSize().clipToBounds()) {
+                        val sel = state.lassoSelection ?: return@Canvas
+                        if (sel.isEmpty) return@Canvas
+                        val sLeft = sel.bounds.left * state.scale + state.panX
+                        val sTop = sel.bounds.top * state.scale + state.panY
+                        val sRight = sel.bounds.right * state.scale + state.panX
+                        val sBottom = sel.bounds.bottom * state.scale + state.panY
+                        val sWidth = maxOf(40f, sRight - sLeft)
+                        val sHeight = maxOf(40f, sBottom - sTop)
+
                         clipRect(0f, 0f, size.width, size.height) {
                             drawRoundRect(
                                 color = AccentBlue,
-                                topLeft = Offset(screenLeft, screenTop),
-                                size = Size(selWidth, selHeight),
+                                topLeft = Offset(sLeft, sTop),
+                                size = Size(sWidth, sHeight),
                                 cornerRadius = CornerRadius(8.dp.toPx(), 8.dp.toPx()),
                                 style = DrawStroke(
                                     width = 2.dp.toPx(),
@@ -1100,14 +1142,23 @@ private fun NotePaneViewport(
                         }
                     }
 
-                    // Floating Action Menu
+                    // Floating Action Menu (Follows selection bounds dynamically)
                     Box(
                         modifier = Modifier
                             .offset {
-                                IntOffset(
-                                    x = (screenLeft + selWidth / 2f - 140.dp.toPx()).roundToInt().coerceAtLeast(16),
-                                    y = (screenTop - 52.dp.toPx()).roundToInt().coerceAtLeast(70)
-                                )
+                                val sel = state.lassoSelection
+                                if (sel != null && !sel.isEmpty) {
+                                    val sLeft = sel.bounds.left * state.scale + state.panX
+                                    val sTop = sel.bounds.top * state.scale + state.panY
+                                    val sRight = sel.bounds.right * state.scale + state.panX
+                                    val sWidth = maxOf(40f, sRight - sLeft)
+                                    IntOffset(
+                                        x = (sLeft + sWidth / 2f - 140.dp.toPx()).roundToInt().coerceAtLeast(16),
+                                        y = (sTop - 52.dp.toPx()).roundToInt().coerceAtLeast(70)
+                                    )
+                                } else {
+                                    IntOffset.Zero
+                                }
                             }
                     ) {
                         Surface(
@@ -1150,9 +1201,8 @@ private fun NotePaneViewport(
                                                         img.x += dx
                                                         img.y += dy
                                                     }
-                                                    val newBounds = selBounds(curSel).translate(Offset(dx, dy))
-                                                    curSel.bounds = newBounds
-                                                    state.lassoSelection = curSel.copy(bounds = newBounds)
+                                                    val newBounds = sel.bounds.translate(Offset(dx, dy))
+                                                    state.lassoSelection = sel.copy(bounds = newBounds)
                                                 }
                                             }
                                         }
@@ -1169,13 +1219,14 @@ private fun NotePaneViewport(
                                     shape = RoundedCornerShape(8.dp),
                                     color = Color(0xFFF1F5F9),
                                     modifier = Modifier.clickable {
+                                        val sel = state.lassoSelection ?: return@clickable
                                         val offsetDelta = 35f
-                                        val newDuplicates = curSel.selectedStrokes.map { ShapeRecognizer.translateStroke(it, offsetDelta, offsetDelta) }
+                                        val newDuplicates = sel.selectedStrokes.map { ShapeRecognizer.translateStroke(it, offsetDelta, offsetDelta) }
                                         state.strokes.addAll(newDuplicates)
-                                        curSel.selectedStrokes.clear()
-                                        curSel.selectedStrokes.addAll(newDuplicates)
-                                        curSel.bounds = curSel.bounds.translate(Offset(offsetDelta, offsetDelta))
-                                        state.lassoSelection = curSel.copy(bounds = curSel.bounds)
+                                        sel.selectedStrokes.clear()
+                                        sel.selectedStrokes.addAll(newDuplicates)
+                                        val newBounds = sel.bounds.translate(Offset(offsetDelta, offsetDelta))
+                                        state.lassoSelection = sel.copy(bounds = newBounds)
                                         state.undoneStrokes.clear()
                                         state.saveActivePageData()
                                     }
@@ -1238,11 +1289,13 @@ private fun NotePaneViewport(
                     onCommitMove = { newWorldX, newWorldY ->
                         if (index < state.imageElements.size) {
                             state.imageElements[index] = state.imageElements[index].copy(x = newWorldX, y = newWorldY)
+                            state.saveActivePageData()
                         }
                     },
                     onCommitResize = { newWorldW, newWorldH ->
                         if (index < state.imageElements.size) {
                             state.imageElements[index] = state.imageElements[index].copy(width = newWorldW, height = newWorldH)
+                            state.saveActivePageData()
                         }
                     },
                     onSelect = {
@@ -1251,7 +1304,10 @@ private fun NotePaneViewport(
                             state.imageElements[index] = state.imageElements[index].copy(isSelected = true)
                         }
                     },
-                    onDelete = { state.imageElements.remove(img) }
+                    onDelete = {
+                        state.imageElements.remove(img)
+                        state.saveActivePageData()
+                    }
                 )
             }
 
@@ -1262,6 +1318,7 @@ private fun NotePaneViewport(
                     scale = state.scale,
                     panX = state.panX,
                     panY = state.panY,
+                    isDarkPaper = state.isDarkPaper,
                     onCommitMove = { newWorldX, newWorldY ->
                         if (index < state.textBoxes.size) {
                             state.textBoxes[index] = state.textBoxes[index].copy(x = newWorldX, y = newWorldY)
@@ -1299,6 +1356,7 @@ private fun NotePaneViewport(
                 onNextPage = { state.goToPage(state.currentPageIndex + 1) },
                 onAddPage = { state.addNewPage() },
                 onDeletePage = { showDeletePageDialog = true },
+                onJumpToPage = { targetPage -> state.goToPage(targetPage - 1) },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(bottom = 16.dp)
@@ -1446,6 +1504,7 @@ private fun UnifiedNoteTopBar(
     leftPaperStyle: PaperStyle,
     leftCurrentPage: Int,
     leftTotalPages: Int,
+    onLeftChangePaperStyle: (PaperStyle) -> Unit = {},
     rightNoteId: String?,
     rightTitle: String?,
     rightSubject: String?,
@@ -1458,10 +1517,14 @@ private fun UnifiedNoteTopBar(
     onSelectTool: (NoteTool) -> Unit,
     selectedShapeType: GeometricShapeType = GeometricShapeType.RECTANGLE,
     onSelectShapeType: (GeometricShapeType) -> Unit = {},
-    selectedColor: Color,
-    onSelectColor: (Color) -> Unit,
-    selectedThickness: Float,
-    onSelectThickness: (Float) -> Unit,
+    penColor: Color,
+    onSelectPenColor: (Color) -> Unit,
+    penThickness: Float,
+    onSelectPenThickness: (Float) -> Unit,
+    highlighterColor: Color,
+    onSelectHighlighterColor: (Color) -> Unit,
+    highlighterThickness: Float,
+    onSelectHighlighterThickness: (Float) -> Unit,
     onPickImage: () -> Unit,
     canUndo: Boolean,
     onUndo: () -> Unit,
@@ -1470,6 +1533,8 @@ private fun UnifiedNoteTopBar(
     onClearAll: () -> Unit,
     onExportPdf: () -> Unit,
     isExporting: Boolean,
+    isDarkPaper: Boolean = false,
+    onToggleDarkPaper: () -> Unit = {},
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -1529,17 +1594,62 @@ private fun UnifiedNoteTopBar(
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
-                        Text(
-                            text = when (leftCanvasType) {
-                                NoteCanvasType.PDF_DOCUMENT -> "$leftSubject · PDF Document (Hal $leftCurrentPage/$leftTotalPages)"
-                                NoteCanvasType.PAGED_NOTE -> "$leftSubject · ${leftPaperStyle.displayName} (Hal $leftCurrentPage/$leftTotalPages)"
-                                NoteCanvasType.INFINITE_SCRATCHPAD -> "$leftSubject · Scratchpad Bebas"
-                            },
-                            fontSize = 11.sp,
-                            color = Color(0xFF64748B),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        if (leftCanvasType == NoteCanvasType.INFINITE_SCRATCHPAD) {
+                            var showPaperMenu by remember { mutableStateOf(false) }
+                            Box {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                    modifier = Modifier.clickable { showPaperMenu = true }
+                                ) {
+                                    Text(
+                                        text = "$leftSubject · ${leftPaperStyle.displayName}",
+                                        fontSize = 11.sp,
+                                        color = AccentBlue,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Icon(
+                                        imageVector = Icons.Filled.ArrowDropDown,
+                                        contentDescription = "Ganti Kertas",
+                                        tint = AccentBlue,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                                DropdownMenu(
+                                    expanded = showPaperMenu,
+                                    onDismissRequest = { showPaperMenu = false }
+                                ) {
+                                    PaperStyle.values().forEach { style ->
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    text = style.displayName,
+                                                    fontWeight = if (leftPaperStyle == style) FontWeight.Bold else FontWeight.Normal
+                                                )
+                                            },
+                                            onClick = {
+                                                onLeftChangePaperStyle(style)
+                                                showPaperMenu = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            Text(
+                                text = when (leftCanvasType) {
+                                    NoteCanvasType.PDF_DOCUMENT -> "$leftSubject · PDF Document (Hal $leftCurrentPage/$leftTotalPages)"
+                                    NoteCanvasType.PAGED_NOTE -> "$leftSubject · ${leftPaperStyle.displayName} (Hal $leftCurrentPage/$leftTotalPages)"
+                                    NoteCanvasType.INFINITE_SCRATCHPAD -> "$leftSubject · Scratchpad Bebas"
+                                },
+                                fontSize = 11.sp,
+                                color = Color(0xFF64748B),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
 
                     // Split Screen Toggle Button
@@ -1666,10 +1776,14 @@ private fun UnifiedNoteTopBar(
             onSelectTool = onSelectTool,
             selectedShapeType = selectedShapeType,
             onSelectShapeType = onSelectShapeType,
-            selectedColor = selectedColor,
-            onSelectColor = onSelectColor,
-            selectedThickness = selectedThickness,
-            onSelectThickness = onSelectThickness,
+            penColor = penColor,
+            onSelectPenColor = onSelectPenColor,
+            penThickness = penThickness,
+            onSelectPenThickness = onSelectPenThickness,
+            highlighterColor = highlighterColor,
+            onSelectHighlighterColor = onSelectHighlighterColor,
+            highlighterThickness = highlighterThickness,
+            onSelectHighlighterThickness = onSelectHighlighterThickness,
             onPickImage = onPickImage
         )
 
@@ -1726,6 +1840,24 @@ private fun UnifiedNoteTopBar(
                                 modifier = Modifier.size(17.dp)
                             )
                         }
+                    }
+                }
+
+                // Dark Paper Toggle Button (Dynamic Situational Dark/Light Mode with Smart Inversion)
+                Surface(
+                    shape = CircleShape,
+                    color = if (isDarkPaper) Color(0xFF1E293B) else Color(0xFFF1F5F9),
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clickable(onClick = onToggleDarkPaper)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = if (isDarkPaper) Icons.Filled.DarkMode else Icons.Filled.LightMode,
+                            contentDescription = if (isDarkPaper) "Mode Kertas Gelap (Aktif)" else "Mode Kertas Terang",
+                            tint = if (isDarkPaper) Color(0xFFFBBF24) else Color(0xFF64748B),
+                            modifier = Modifier.size(17.dp)
+                        )
                     }
                 }
 
@@ -1800,8 +1932,23 @@ private fun PageNavigatorBar(
     onNextPage: () -> Unit,
     onAddPage: () -> Unit,
     onDeletePage: () -> Unit,
+    onJumpToPage: (pageIndex: Int) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    var showJumpDialog by remember { mutableStateOf(false) }
+
+    if (showJumpDialog) {
+        JumpToPageDialog(
+            currentPage = currentPage,
+            totalPages = totalPages,
+            onDismiss = { showJumpDialog = false },
+            onJump = { targetPage ->
+                onJumpToPage(targetPage)
+                showJumpDialog = false
+            }
+        )
+    }
+
     Surface(
         shape = RoundedCornerShape(24.dp),
         color = Color.White.copy(alpha = 0.95f),
@@ -1832,19 +1979,33 @@ private fun PageNavigatorBar(
                 }
             }
 
-            // Page Indicator Label
+            // Clickable Page Indicator Label (Jump to Page Dialog trigger)
             Surface(
                 shape = RoundedCornerShape(8.dp),
                 color = LernspaceSurfaceLow,
-                modifier = Modifier.padding(horizontal = 2.dp)
+                border = BorderStroke(1.dp, LernspaceBorder.copy(alpha = 0.6f)),
+                modifier = Modifier
+                    .padding(horizontal = 2.dp)
+                    .clickable { showJumpDialog = true }
             ) {
-                Text(
-                    text = "Halaman $currentPage / $totalPages",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = LernspaceDark,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                )
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    Text(
+                        text = "Halaman $currentPage / $totalPages",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = LernspaceDark
+                    )
+                    Icon(
+                        imageVector = Icons.Filled.UnfoldMore,
+                        contentDescription = "Lompat Halaman",
+                        tint = LernspaceTextSecondary,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
             }
 
             // Next Page Button
@@ -1900,6 +2061,11 @@ private fun PageNavigatorBar(
 
             // Delete Page Button (for Paged Notes when totalPages > 1)
             if (canDeletePage) {
+                VerticalDivider(
+                    modifier = Modifier.height(18.dp),
+                    color = LernspaceBorder
+                )
+
                 Surface(
                     shape = RoundedCornerShape(12.dp),
                     color = Color(0xFFFEE2E2),
@@ -1928,6 +2094,240 @@ private fun PageNavigatorBar(
         }
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DIALOG: Jump To Page (Lompat ke Halaman Cepat)
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun JumpToPageDialog(
+    currentPage: Int,
+    totalPages: Int,
+    onDismiss: () -> Unit,
+    onJump: (targetPage: Int) -> Unit
+) {
+    var pageInput by remember { mutableStateOf(currentPage.toString()) }
+    var sliderValue by remember { mutableFloatStateOf(currentPage.toFloat()) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = Color.White,
+            shadowElevation = 8.dp,
+            border = BorderStroke(1.dp, LernspaceBorder),
+            modifier = Modifier.width(360.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(22.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = AccentBlue.copy(alpha = 0.12f),
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Filled.ImportContacts,
+                                    contentDescription = null,
+                                    tint = AccentBlue,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                        Text(
+                            text = "Lompat ke Halaman",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = LernspaceDark
+                        )
+                    }
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(24.dp)) {
+                        Icon(Icons.Filled.Close, null, modifier = Modifier.size(18.dp))
+                    }
+                }
+
+                Text(
+                    text = "Total $totalPages halaman tersedia",
+                    fontSize = 12.sp,
+                    color = LernspaceTextSecondary
+                )
+
+                // Large Number Input
+                OutlinedTextField(
+                    value = pageInput,
+                    onValueChange = { input ->
+                        val filtered = input.filter { it.isDigit() }
+                        pageInput = filtered
+                        val parsed = filtered.toIntOrNull()
+                        if (parsed != null && parsed in 1..totalPages) {
+                            sliderValue = parsed.toFloat()
+                        }
+                    },
+                    label = { Text("Nomor Halaman") },
+                    singleLine = true,
+                    textStyle = androidx.compose.ui.text.TextStyle(
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        color = LernspaceDark
+                    ),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Number,
+                        imeAction = androidx.compose.ui.text.input.ImeAction.Done
+                    ),
+                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                        onDone = {
+                            val p = pageInput.toIntOrNull()
+                            if (p != null && p in 1..totalPages) {
+                                onJump(p)
+                            }
+                        }
+                    ),
+                    modifier = Modifier.width(160.dp),
+                    shape = RoundedCornerShape(10.dp)
+                )
+
+                // Slider if totalPages > 3
+                if (totalPages > 3) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Slider(
+                            value = sliderValue,
+                            onValueChange = {
+                                sliderValue = it
+                                pageInput = kotlin.math.round(it).toInt().toString()
+                            },
+                            valueRange = 1f..totalPages.toFloat(),
+                            colors = SliderDefaults.colors(
+                                thumbColor = AccentBlue,
+                                activeTrackColor = AccentBlue,
+                                inactiveTrackColor = LernspaceBorder
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("Hal 1", fontSize = 10.sp, color = LernspaceTextSecondary)
+                            Text("Hal $totalPages", fontSize = 10.sp, color = LernspaceTextSecondary)
+                        }
+                    }
+                }
+
+                // Quick Target Chips
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = LernspaceSurfaceLow,
+                        border = BorderStroke(1.dp, LernspaceBorder),
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable {
+                                pageInput = "1"
+                                sliderValue = 1f
+                            }
+                    ) {
+                        Text(
+                            text = "Awal (1)",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = LernspaceDark,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.padding(vertical = 6.dp)
+                        )
+                    }
+
+                    if (totalPages > 4) {
+                        val mid = totalPages / 2
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = LernspaceSurfaceLow,
+                            border = BorderStroke(1.dp, LernspaceBorder),
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable {
+                                    pageInput = mid.toString()
+                                    sliderValue = mid.toFloat()
+                                }
+                        ) {
+                            Text(
+                                text = "Tengah ($mid)",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = LernspaceDark,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                modifier = Modifier.padding(vertical = 6.dp)
+                            )
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = LernspaceSurfaceLow,
+                        border = BorderStroke(1.dp, LernspaceBorder),
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable {
+                                pageInput = totalPages.toString()
+                                sliderValue = totalPages.toFloat()
+                            }
+                    ) {
+                        Text(
+                            text = "Akhir ($totalPages)",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = LernspaceDark,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.padding(vertical = 6.dp)
+                        )
+                    }
+                }
+
+                // Action Buttons
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss) { Text("Batal") }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    val targetP = pageInput.toIntOrNull()
+                    val isValid = targetP != null && targetP in 1..totalPages
+                    Button(
+                        onClick = {
+                            if (isValid) {
+                                onJump(targetP!!)
+                            }
+                        },
+                        enabled = isValid,
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark, contentColor = Color.White)
+                    ) {
+                        Text("Lompat", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // COMPONENT: Zoom Percentage Indicator (Bottom-Start)

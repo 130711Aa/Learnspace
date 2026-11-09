@@ -48,6 +48,7 @@ fun DraggableTextBox(
     scale: Float = 1f,
     panX: Float = 0f,
     panY: Float = 0f,
+    isDarkPaper: Boolean = false,
     onCommitMove: (Float, Float) -> Unit,
     onCommitResize: (Float, Float) -> Unit,
     onTextChange: (String) -> Unit,
@@ -122,12 +123,12 @@ fun DraggableTextBox(
                             .shadow(3.dp, RoundedCornerShape(6.dp))
                             .border(1.5.dp, selectionColor, RoundedCornerShape(6.dp))
                     } else if (textContent.isEmpty()) {
-                        Modifier.border(1.dp, Color(0xFFCBD5E1), RoundedCornerShape(6.dp))
+                        Modifier.border(1.dp, if (isDarkPaper) Color(0xFF334155) else Color(0xFFCBD5E1), RoundedCornerShape(6.dp))
                     } else {
                         Modifier
                     }
                 ),
-            color = if (box.isSelected) Color.White.copy(alpha = 0.98f) else Color.Transparent,
+            color = if (box.isSelected) (if (isDarkPaper) Color(0xFF1E293B) else Color.White.copy(alpha = 0.98f)) else Color.Transparent,
             shape = RoundedCornerShape(6.dp)
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
@@ -137,7 +138,7 @@ fun DraggableTextBox(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(28.dp)
-                            .background(Color(0xFFEFF6FF))
+                            .background(if (isDarkPaper) Color(0xFF0F172A) else Color(0xFFEFF6FF))
                             .pointerInput(box.id, scale) {
                                 detectDragGestures(
                                     onDragEnd = { onCommitMove(worldX, worldY) },
@@ -214,7 +215,7 @@ fun DraggableTextBox(
                                 onTextChange(newText)
                             },
                             textStyle = TextStyle(
-                                color = LernspaceDark,
+                                color = if (isDarkPaper) Color(0xFFF8FAFC) else LernspaceDark,
                                 fontSize = dynamicFontSize,
                                 lineHeight = dynamicLineHeight
                             ),
@@ -229,7 +230,7 @@ fun DraggableTextBox(
                             Text(
                                 text = textContent,
                                 style = TextStyle(
-                                    color = LernspaceDark,
+                                    color = if (isDarkPaper) Color(0xFFF8FAFC) else LernspaceDark,
                                     fontSize = dynamicFontSize,
                                     lineHeight = dynamicLineHeight
                                 ),

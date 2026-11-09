@@ -69,6 +69,10 @@ fun DraggableImage(
         (image.bitmap.width.toFloat() / image.bitmap.height.toFloat()).coerceIn(0.2f, 5f)
     }
 
+    // Convert world canvas pixels (worldWidth * scale) into Compose Dp without density inflation
+    val screenWidthDp = with(density) { (worldWidth * scale).toDp() }
+    val screenHeightDp = with(density) { (worldHeight * scale).toDp() }
+
     Box(
         modifier = modifier
             .offset {
@@ -76,10 +80,9 @@ fun DraggableImage(
                 val screenY = worldY * scale + panY
                 IntOffset(screenX.roundToInt(), screenY.roundToInt())
             }
-            .width((worldWidth * scale).dp)
-            .height((worldHeight * scale).dp)
+            .requiredSize(width = screenWidthDp, height = screenHeightDp)
     ) {
-        // Image Body with clean crisp scaling
+        // Image Body with crisp proportional scaling
         Surface(
             modifier = Modifier
                 .fillMaxSize()
@@ -101,7 +104,7 @@ fun DraggableImage(
                 modifier = Modifier
                     .fillMaxSize()
                     .clip(RoundedCornerShape(8.dp)),
-                contentScale = ContentScale.Fit
+                contentScale = ContentScale.FillBounds
             )
         }
 
@@ -213,10 +216,10 @@ fun DraggableImage(
                             onDragCancel = { currentOnCommitResize(worldWidth, worldHeight) },
                             onDrag = { change, dragAmount ->
                                 change.consume()
-                                val deltaDpX = (dragAmount.x / density.density) / currentScale
-                                val deltaDpY = (dragAmount.y / density.density) / currentScale
-                                val delta = (deltaDpX + deltaDpY * aspectRatio) / 2f
-                                val newWidth = (worldWidth + delta).coerceIn(80f, 1600f)
+                                val deltaWorldX = dragAmount.x / currentScale
+                                val deltaWorldY = dragAmount.y / currentScale
+                                val delta = (deltaWorldX + deltaWorldY * aspectRatio) / 2f
+                                val newWidth = (worldWidth + delta).coerceIn(120f, 2500f)
                                 worldWidth = newWidth
                                 worldHeight = newWidth / aspectRatio
                             }

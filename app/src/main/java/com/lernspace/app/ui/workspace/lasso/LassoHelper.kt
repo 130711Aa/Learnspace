@@ -11,7 +11,7 @@ data class LassoSelectionState(
     val selectedStrokes: MutableList<Stroke> = mutableListOf(),
     val selectedTextBoxes: MutableList<TextBoxElement> = mutableListOf(),
     val selectedImages: MutableList<ImageElement> = mutableListOf(),
-    var bounds: Rect = Rect.Zero
+    val bounds: Rect = Rect.Zero
 ) {
     val isEmpty: Boolean
         get() = selectedStrokes.isEmpty() && selectedTextBoxes.isEmpty() && selectedImages.isEmpty()

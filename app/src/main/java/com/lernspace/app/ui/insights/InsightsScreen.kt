@@ -66,7 +66,7 @@ fun InsightsScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Text(
-                            text = "Learning Insights & Academic Analytics",
+                            text = "Insights & Analytics",
                             style = MaterialTheme.typography.headlineLarge,
                             color = LernspaceDark,
                             fontWeight = FontWeight.Bold
@@ -85,11 +85,6 @@ fun InsightsScreen(
                             )
                         }
                     }
-                    Text(
-                        text = "Reflective metrics, syllabus mastery progression, and cognitive workload balance",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = LernspaceTextSecondary
-                    )
                 }
 
                 // Live Sync Status Chip
@@ -147,7 +142,7 @@ fun InsightsScreen(
                     value = "$completedTasks / $totalTasks",
                     subtitle = "${totalTasks - completedTasks} Tugas aktif menunggu deadline",
                     icon = Icons.Filled.CheckCircle,
-                    accentColor = AccentAmber,
+                    accentColor = Color(0xFF475569),
                     modifier = Modifier.weight(1f)
                 )
                 KpiCard(
@@ -366,7 +361,7 @@ fun SyllabusMasteryOverviewCard(
                             modifier = Modifier
                                 .weight(needsReview.toFloat())
                                 .fillMaxHeight()
-                                .background(Color(0xFFD97706))
+                                .background(Color(0xFF64748B))
                         )
                     }
                     if (notStarted > 0) {
@@ -388,7 +383,7 @@ fun SyllabusMasteryOverviewCard(
                 StatusLegendChip("Mastered", mastered, Color(0xFF7C3AED), Modifier.weight(1f))
                 StatusLegendChip("Comfortable", comfortable, Color(0xFF059669), Modifier.weight(1f))
                 StatusLegendChip("Learning", learning, Color(0xFF1D4ED8), Modifier.weight(1f))
-                StatusLegendChip("Review", needsReview, Color(0xFFD97706), Modifier.weight(1f))
+                StatusLegendChip("Review", needsReview, Color(0xFF64748B), Modifier.weight(1f))
                 StatusLegendChip("Pending", notStarted, Color(0xFF94A3B8), Modifier.weight(1f))
             }
 
@@ -622,10 +617,10 @@ fun SmartAdvisoryCard(
                     modifier = Modifier
                         .size(30.dp)
                         .clip(RoundedCornerShape(8.dp))
-                        .background(AccentAmber.copy(alpha = 0.15f)),
+                        .background(AccentBlue.copy(alpha = 0.12f)),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Filled.Lightbulb, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Filled.Lightbulb, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(16.dp))
                 }
                 Column {
                     Text(
@@ -655,7 +650,7 @@ fun SmartAdvisoryCard(
                         text = "⚠️ Prioritas Review Sebelum Kuis:",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
-                        color = AccentAmber
+                        color = AccentBlue
                     )
                     Text(
                         text = if (needsReviewTopic != null) {
@@ -741,7 +736,7 @@ fun UpcomingDeadlinesCard(
                                     .background(
                                         when (task.priority) {
                                             "HIGH" -> AccentRed
-                                            "MEDIUM" -> AccentAmber
+                                            "MEDIUM" -> Color(0xFF475569)
                                             else -> AccentTeal
                                         }
                                     )
@@ -762,13 +757,13 @@ fun UpcomingDeadlinesCard(
                             }
                             Surface(
                                 shape = RoundedCornerShape(6.dp),
-                                color = if (task.priority == "HIGH") AccentRed.copy(alpha = 0.12f) else AccentAmber.copy(alpha = 0.12f)
+                                color = if (task.priority == "HIGH") AccentRed.copy(alpha = 0.12f) else Color(0xFFF1F5F9)
                             ) {
                                 Text(
                                     text = task.priority,
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
-                                    color = if (task.priority == "HIGH") AccentRed else AccentAmber,
+                                    color = if (task.priority == "HIGH") AccentRed else Color(0xFF475569),
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                 )
                             }

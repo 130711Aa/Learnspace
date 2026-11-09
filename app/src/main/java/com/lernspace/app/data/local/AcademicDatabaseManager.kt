@@ -126,6 +126,7 @@ object AcademicDatabaseManager {
                     isScratchpad = entity.isScratchpad,
                     canvasType = if (entity.isScratchpad) NoteCanvasType.INFINITE_SCRATCHPAD else NoteCanvasType.PAGED_NOTE,
                     paperStyle = paperStyle,
+                    isDarkPaper = storageManager?.isDarkPaper(entity.id) ?: false,
                     pdfUri = entity.pdfUri,
                     pdfTotalPages = entity.pdfTotalPages,
                     pages = loadedPages.toMutableList()
@@ -227,7 +228,7 @@ object AcademicDatabaseManager {
                 updatedAt = System.currentTimeMillis()
             )
             database.noteDao().insertNote(entity)
-            storage.saveNotePages(note.id, note.pages)
+            storage.saveNotePages(note.id, note.pages, note.isDarkPaper)
         }
     }
 

@@ -73,48 +73,28 @@ fun HomeScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = "Dashboard",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = LernspaceDark,
+                    fontWeight = FontWeight.Bold
+                )
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = LernspaceSurfaceLow,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder)
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(AccentTeal)
-                    )
                     Text(
-                        text = "ACADEMIC HORIZON · DAILY COMMAND CENTER",
+                        text = "Senin, 8 Nov 2026",
                         style = MaterialTheme.typography.labelSmall,
-                        color = LernspaceTextSecondary,
-                        fontWeight = FontWeight.Bold
+                        color = AccentBlue,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                     )
-                }
-                Spacer(modifier = Modifier.height(2.dp))
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Text(
-                        text = "Today's Command Center",
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = LernspaceDark,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = LernspaceSurfaceLow,
-                        border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder)
-                    ) {
-                        Text(
-                            text = "Senin, 8 Nov 2026",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = AccentBlue,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                        )
-                    }
                 }
             }
 
@@ -141,7 +121,7 @@ fun HomeScreen(
                 Button(
                     onClick = { showAddTaskDialog = true },
                     shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = AccentAmber),
+                    colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark, contentColor = Color.White),
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
                 ) {
                     Icon(Icons.Filled.AddAlert, null, modifier = Modifier.size(16.dp))
@@ -482,7 +462,7 @@ fun HomeScreen(
                                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         pendingTasks.take(4).forEach { task ->
                                             val subj = subjects.find { it.id == task.subjectId }
-                                            val subColor = subj?.color ?: AccentAmber
+                                            val subColor = subj?.color ?: AccentBlue
 
                                             Surface(
                                                 shape = RoundedCornerShape(8.dp),
@@ -583,7 +563,7 @@ fun HomeScreen(
                                 verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
                                 Text(
-                                    text = "Academic Sprint Snapshot",
+                                    text = "Ringkasan Belajar",
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = LernspaceDark
@@ -630,7 +610,7 @@ fun HomeScreen(
                                     ) {
                                         Column(modifier = Modifier.padding(10.dp)) {
                                             Text("Tugas Pending", fontSize = 10.sp, color = LernspaceTextSecondary)
-                                            Text("${pendingTasks.size} Tugas", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = if (pendingTasks.isNotEmpty()) Color(0xFFD97706) else Color(0xFF16A34A))
+                                            Text("${pendingTasks.size} Tugas", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = if (pendingTasks.isNotEmpty()) AccentBlue else Color(0xFF16A34A))
                                         }
                                     }
 

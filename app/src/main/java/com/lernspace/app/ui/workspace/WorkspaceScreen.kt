@@ -110,32 +110,25 @@ fun WorkspaceScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "Study Desk & Workspace",
-                        style = MaterialTheme.typography.headlineLarge,
-                        color = LernspaceDark,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = LernspaceSurfaceLow,
-                        border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder)
-                    ) {
-                        Text(
-                            text = "${notes.size} Notes Total",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = LernspaceTextSecondary,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                        )
-                    }
-                }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    text = "Central working desk: lecture notes organized by subject & sub-bab, plus freeform scratchpads",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = LernspaceTextSecondary
+                    text = "Workspace",
+                    style = MaterialTheme.typography.headlineLarge,
+                    color = LernspaceDark,
+                    fontWeight = FontWeight.Bold
                 )
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = LernspaceSurfaceLow,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder)
+                ) {
+                    Text(
+                        text = "${notes.size} Catatan",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = LernspaceTextSecondary,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    )
+                }
             }
 
             // Action Buttons (Impor PDF, Quick Scratchpad, New Note)

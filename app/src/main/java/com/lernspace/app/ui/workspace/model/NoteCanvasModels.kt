@@ -97,7 +97,8 @@ data class NoteUiModel(
     val topicName: String? = null,
     val isScratchpad: Boolean = false,
     val canvasType: NoteCanvasType = if (isScratchpad) NoteCanvasType.INFINITE_SCRATCHPAD else NoteCanvasType.PAGED_NOTE,
-    val paperStyle: PaperStyle = PaperStyle.RULED, // Immutable format set at creation
+    var paperStyle: PaperStyle = PaperStyle.RULED,
+    var isDarkPaper: Boolean = false,
     var pdfUri: String? = null,
     var pdfTotalPages: Int = 1,
     val pages: MutableList<NotePageData> = mutableListOf(NotePageData(pageIndex = 0))

@@ -1,6 +1,9 @@
 package com.lernspace.app.ui.components
 
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.Matrix
+import android.graphics.Paint
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -39,6 +42,17 @@ fun createDefaultPenBrush(): Brush {
     )
 }
 
+/**
+ * Checks if a 32-bit ARGB color has low luminance (black, dark slate, charcoal ink).
+ */
+private fun isDarkInkColor(colorInt: Int): Boolean {
+    val r = (colorInt shr 16) and 0xFF
+    val g = (colorInt shr 8) and 0xFF
+    val b = colorInt and 0xFF
+    val lum = (0.299f * r + 0.587f * g + 0.114f * b) / 255f
+    return lum < 0.22f
+}
+
 @Composable
 fun DrawingSurface(
     strokes: List<Stroke>,
@@ -47,6 +61,7 @@ fun DrawingSurface(
     onGetNextBrush: () -> Brush,
     onStrokesFinished: (List<Stroke>) -> Unit,
     isEraserMode: Boolean,
+    isDarkPaper: Boolean = false,
     scale: Float = 1f,
     panX: Float = 0f,
     panY: Float = 0f,
@@ -82,6 +97,21 @@ fun DrawingSurface(
         }
     }
 
+    // Smart Stroke Inversion Filter for Dark Paper:
+    // Dark/black strokes (lum < 0.22f) are rendered into a hardware-accelerated layer that
+    // maps color directly to crisp off-white (#F8FAFC) while preserving the exact stroke antialiasing/alpha.
+    val darkStrokePaint = remember {
+        val cm = ColorMatrix(floatArrayOf(
+            0f, 0f, 0f, 0f, 248f,
+            0f, 0f, 0f, 0f, 250f,
+            0f, 0f, 0f, 0f, 252f,
+            0f, 0f, 0f, 1f, 0f
+        ))
+        Paint().apply {
+            colorFilter = ColorMatrixColorFilter(cm)
+        }
+    }
+
     Box(
         modifier = modifier.clipToBounds()
     ) {
@@ -104,12 +134,45 @@ fun DrawingSurface(
                 nativeCanvas.translate(px, py)
                 nativeCanvas.scale(s, s)
 
-                strokes.fastForEach { stroke ->
-                    canvasStrokeRenderer.draw(
-                        canvas = nativeCanvas,
-                        stroke = stroke,
-                        strokeToScreenTransform = strokeToScreenMatrix,
-                    )
+                if (!isDarkPaper) {
+                    strokes.fastForEach { stroke ->
+                        canvasStrokeRenderer.draw(
+                            canvas = nativeCanvas,
+                            stroke = stroke,
+                            strokeToScreenTransform = strokeToScreenMatrix,
+                        )
+                    }
+                } else {
+                    // Smart Stroke Inversion on Dark Paper:
+                    // Batch consecutive strokes to maintain exact z-order with minimal layer allocations
+                    var i = 0
+                    val count = strokes.size
+                    while (i < count) {
+                        val isDark = isDarkInkColor(strokes[i].brush.colorIntArgb)
+                        val batchStart = i
+                        while (i < count && isDarkInkColor(strokes[i].brush.colorIntArgb) == isDark) {
+                            i++
+                        }
+                        if (isDark) {
+                            nativeCanvas.saveLayer(null, darkStrokePaint)
+                            for (j in batchStart until i) {
+                                canvasStrokeRenderer.draw(
+                                    canvas = nativeCanvas,
+                                    stroke = strokes[j],
+                                    strokeToScreenTransform = strokeToScreenMatrix,
+                                )
+                            }
+                            nativeCanvas.restore()
+                        } else {
+                            for (j in batchStart until i) {
+                                canvasStrokeRenderer.draw(
+                                    canvas = nativeCanvas,
+                                    stroke = strokes[j],
+                                    strokeToScreenTransform = strokeToScreenMatrix,
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -146,18 +209,63 @@ fun DrawingSurface(
             } else {
                 // Active inking via AndroidX Ink.
                 // Wrapped in clipToBounds to strictly stay inside pane boundaries.
+                val effectiveCurrentBrush = remember(currentBrush, isDarkPaper) {
+                    if (isDarkPaper && isDarkInkColor(currentBrush.colorIntArgb)) {
+                        Brush.createWithColorIntArgb(
+                            family = currentBrush.family,
+                            colorIntArgb = 0xFFF8FAFC.toInt(),
+                            size = currentBrush.size,
+                            epsilon = currentBrush.epsilon
+                        )
+                    } else {
+                        currentBrush
+                    }
+                }
+                val effectiveGetNextBrush = remember(onGetNextBrush, isDarkPaper) {
+                    {
+                        val b = onGetNextBrush()
+                        if (isDarkPaper && isDarkInkColor(b.colorIntArgb)) {
+                            Brush.createWithColorIntArgb(
+                                family = b.family,
+                                colorIntArgb = 0xFFF8FAFC.toInt(),
+                                size = b.size,
+                                epsilon = b.epsilon
+                            )
+                        } else {
+                            b
+                        }
+                    }
+                }
+
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .clipToBounds()
                 ) {
-                    InProgressStrokes(
-                        defaultBrush = currentBrush,
-                        nextBrush = onGetNextBrush,
-                        pointerEventToWorldTransform = pointerEventToWorldMatrix,
-                        strokeToWorldTransform = identityComposeMatrix,
-                        onStrokesFinished = onStrokesFinished
-                    )
+                    key(effectiveCurrentBrush) {
+                        InProgressStrokes(
+                            defaultBrush = effectiveCurrentBrush,
+                            nextBrush = effectiveGetNextBrush,
+                            pointerEventToWorldTransform = pointerEventToWorldMatrix,
+                            strokeToWorldTransform = identityComposeMatrix,
+                            onStrokesFinished = { finishedStrokes ->
+                                val normalizedStrokes = if (isDarkPaper && isDarkInkColor(currentBrush.colorIntArgb)) {
+                                    finishedStrokes.map { stroke ->
+                                        // Store stroke with true logical brush (e.g. black)
+                                        // so that PDF export and light paper toggling remain perfectly preserved!
+                                        if (stroke.brush.colorIntArgb == 0xFFF8FAFC.toInt()) {
+                                            Stroke(currentBrush, stroke.inputs)
+                                        } else {
+                                            stroke
+                                        }
+                                    }
+                                } else {
+                                    finishedStrokes
+                                }
+                                onStrokesFinished(normalizedStrokes)
+                            }
+                        )
+                    }
                 }
             }
         }
