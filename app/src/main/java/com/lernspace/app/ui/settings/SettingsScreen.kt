@@ -339,7 +339,7 @@ private fun StylusAndErgonomicsSection() {
                             onClick = { AppSettingsManager.updateShapeSensitivity(option) },
                             shape = RoundedCornerShape(10.dp),
                             color = if (isSelected) LernspaceSurfaceCard else Color.Transparent,
-                            border = BorderStroke(1.dp, if (isSelected) AccentTeal else LernspaceBorder),
+                            border = BorderStroke(1.dp, if (isSelected) LernspaceDark else LernspaceBorder),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Row(
@@ -352,7 +352,10 @@ private fun StylusAndErgonomicsSection() {
                                 RadioButton(
                                     selected = isSelected,
                                     onClick = { AppSettingsManager.updateShapeSensitivity(option) },
-                                    colors = RadioButtonDefaults.colors(selectedColor = AccentTeal)
+                                    colors = RadioButtonDefaults.colors(
+                                        selectedColor = LernspaceDark,
+                                        unselectedColor = LernspaceTextSecondary
+                                    )
                                 )
 
                                 Column(modifier = Modifier.weight(1f)) {
@@ -523,6 +526,7 @@ private fun ThemeOptionCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val isDark = LocalIsDarkTheme.current
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(12.dp),
@@ -540,13 +544,15 @@ private fun ThemeOptionCard(
                 modifier = Modifier
                     .size(40.dp)
                     .clip(CircleShape)
-                    .background(if (isSelected) LernspaceDarkContainer else LernspaceBorder),
+                    .background(if (isSelected) LernspaceDark else LernspaceBorder),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    tint = if (isSelected) LernspaceDark else LernspaceTextSecondary,
+                    tint = if (isSelected) {
+                        if (isDark) Color.Black else Color.White
+                    } else LernspaceTextSecondary,
                     modifier = Modifier.size(20.dp)
                 )
             }
@@ -593,7 +599,7 @@ private fun WorkspaceDefaultsSection() {
                         onClick = { AppSettingsManager.updateDefaultPaperStyle(style) },
                         shape = RoundedCornerShape(10.dp),
                         color = if (isSelected) LernspaceSurfaceCard else Color.Transparent,
-                        border = BorderStroke(1.dp, if (isSelected) AccentBlue else LernspaceBorder),
+                        border = BorderStroke(1.dp, if (isSelected) LernspaceDark else LernspaceBorder),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
@@ -608,7 +614,7 @@ private fun WorkspaceDefaultsSection() {
                                     text = style.displayName,
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = if (isSelected) AccentBlue else LernspaceDark
+                                    color = if (isSelected) LernspaceDark else LernspaceDark.copy(alpha = 0.85f)
                                 )
                                 Text(
                                     text = when (style) {
@@ -626,7 +632,7 @@ private fun WorkspaceDefaultsSection() {
                                 Icon(
                                     imageVector = Icons.Filled.CheckCircle,
                                     contentDescription = "Selected",
-                                    tint = AccentBlue,
+                                    tint = LernspaceDark,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
