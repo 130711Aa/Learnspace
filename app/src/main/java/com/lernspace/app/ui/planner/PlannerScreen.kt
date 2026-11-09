@@ -7,8 +7,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.*
@@ -270,7 +272,7 @@ fun PlannerScreen(
             topics = topics,
             initialDayNumber = selectedCalendarDay,
             onDismiss = { showAddTaskDialog = false },
-            onConfirm = { title, subject, topic, dueDayNumber, dueTime, priority, estMins, notesStr ->
+            onConfirm = { title, subject, topic, dueDate, dueDayNumber, dueTime, priority, estMins, notesStr ->
                 val newTask = TaskUiModel(
                     id = UUID.randomUUID().toString(),
                     title = title,
@@ -278,7 +280,7 @@ fun PlannerScreen(
                     subjectName = subject?.name,
                     topicId = topic?.id,
                     topicName = topic?.title,
-                    dueDate = "Nov $dueDayNumber, 2026",
+                    dueDate = dueDate,
                     dueDayNumber = dueDayNumber,
                     dueTime = dueTime,
                     priority = priority,
@@ -1912,6 +1914,7 @@ private fun AgendaTimelineCard(
 // ─────────────────────────────────────────────────────────────────────────────
 // DIALOG: Input Tugas & Set Deadline
 // ─────────────────────────────────────────────────────────────────────────────
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun InputTaskDialog(
     subjects: List<com.lernspace.app.ui.learning.SubjectUi>,
@@ -1922,6 +1925,7 @@ internal fun InputTaskDialog(
         title: String,
         subject: com.lernspace.app.ui.learning.SubjectUi?,
         topic: com.lernspace.app.ui.learning.TopicUi?,
+        dueDate: String,
         dueDayNumber: Int,
         dueTime: String,
         priority: String,
@@ -1935,21 +1939,110 @@ internal fun InputTaskDialog(
         if (selectedSubject != null) topics.filter { it.subjectId == selectedSubject!!.id } else emptyList()
     }
     var selectedTopic by remember { mutableStateOf<com.lernspace.app.ui.learning.TopicUi?>(null) }
-    var dueDayNumber by remember { mutableIntStateOf(initialDayNumber) }
+
+    // Date states (Default: initialDayNumber in November 2026)
+    var selectedDayNumber by remember { mutableIntStateOf(initialDayNumber.coerceIn(1, 30)) }
+    var selectedMonth by remember { mutableIntStateOf(10) } // 0-based: 10 = Nov
+    var selectedYear by remember { mutableIntStateOf(2026) }
+    var showDatePickerDialog by remember { mutableStateOf(false) }
+
     var dueTime by remember { mutableStateOf("23:59") }
     var priority by remember { mutableStateOf("HIGH") } // HIGH, MEDIUM, LOW
     var estMinutes by remember { mutableIntStateOf(90) }
     var notesStr by remember { mutableStateOf("") }
+
+    val monthNamesId = listOf("Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des")
+    val monthNamesEn = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+    val dayOfWeekName = remember(selectedYear, selectedMonth, selectedDayNumber) {
+        val cal = java.util.Calendar.getInstance().apply {
+            clear()
+            set(selectedYear, selectedMonth, selectedDayNumber)
+        }
+        when (cal.get(java.util.Calendar.DAY_OF_WEEK)) {
+            java.util.Calendar.SUNDAY -> "Minggu"
+            java.util.Calendar.MONDAY -> "Senin"
+            java.util.Calendar.TUESDAY -> "Selasa"
+            java.util.Calendar.WEDNESDAY -> "Rabu"
+            java.util.Calendar.THURSDAY -> "Kamis"
+            java.util.Calendar.FRIDAY -> "Jumat"
+            java.util.Calendar.SATURDAY -> "Sabtu"
+            else -> ""
+        }
+    }
+    val currentMonthId = monthNamesId.getOrElse(selectedMonth) { "Nov" }
+    val currentMonthEn = monthNamesEn.getOrElse(selectedMonth) { "Nov" }
+
+    val displayDate = "$dayOfWeekName, $selectedDayNumber $currentMonthId $selectedYear"
+    val modelDueDate = "$currentMonthEn $selectedDayNumber, $selectedYear"
+
+    // Material 3 Calendar Date Picker Dialog
+    if (showDatePickerDialog) {
+        key(selectedYear, selectedMonth, selectedDayNumber) {
+            val initialUtcMillis = remember {
+                val cal = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC")).apply {
+                    clear()
+                    set(selectedYear, selectedMonth, selectedDayNumber.coerceIn(1, 31))
+                }
+                cal.timeInMillis
+            }
+            val datePickerState = rememberDatePickerState(
+                initialSelectedDateMillis = initialUtcMillis
+            )
+
+            DatePickerDialog(
+                onDismissRequest = { showDatePickerDialog = false },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            datePickerState.selectedDateMillis?.let { utcMillis ->
+                                val cal = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC")).apply {
+                                    timeInMillis = utcMillis
+                                }
+                                selectedDayNumber = cal.get(java.util.Calendar.DAY_OF_MONTH)
+                                selectedMonth = cal.get(java.util.Calendar.MONTH)
+                                selectedYear = cal.get(java.util.Calendar.YEAR)
+                            }
+                            showDatePickerDialog = false
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentAmber)
+                    ) {
+                        Text("Pilih Tanggal", fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDatePickerDialog = false }) {
+                        Text("Batal")
+                    }
+                }
+            ) {
+                DatePicker(
+                    state = datePickerState,
+                    title = {
+                        Text(
+                            text = "Pilih Tanggal Deadline",
+                            modifier = Modifier.padding(start = 24.dp, top = 16.dp),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = LernspaceDark
+                        )
+                    }
+                )
+            }
+        }
+    }
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             shape = RoundedCornerShape(16.dp),
             color = Color.White,
             shadowElevation = 6.dp,
-            modifier = Modifier.width(480.dp)
+            modifier = Modifier.width(500.dp)
         ) {
             Column(
-                modifier = Modifier.padding(24.dp),
+                modifier = Modifier
+                    .padding(24.dp)
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 Row(
@@ -2007,23 +2100,132 @@ internal fun InputTaskDialog(
                     }
                 }
 
-                // Deadline inputs (Tanggal di November & Jam)
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(
-                        value = "$dueDayNumber",
-                        onValueChange = { str -> str.toIntOrNull()?.let { dueDayNumber = it.coerceIn(1, 30) } },
-                        label = { Text("Tgl Nov (1-30)") },
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(8.dp)
-                    )
+                // ── Deadline Section: Tanggalan & Jam ───────────────────────
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Batas Waktu (Deadline)", style = MaterialTheme.typography.labelSmall, color = LernspaceTextSecondary, fontWeight = FontWeight.SemiBold)
 
-                    OutlinedTextField(
-                        value = dueTime,
-                        onValueChange = { dueTime = it },
-                        label = { Text("Jam Deadline") },
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(8.dp)
-                    )
+                    // Clickable Date Picker Card
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showDatePickerDialog = true },
+                        shape = RoundedCornerShape(10.dp),
+                        color = LernspaceSurfaceLow,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = AccentBlue.copy(alpha = 0.12f),
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Filled.CalendarMonth,
+                                            contentDescription = null,
+                                            tint = AccentBlue,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+                                Column {
+                                    Text("Tanggal Deadline (Klik untuk ganti)", fontSize = 11.sp, color = LernspaceTextSecondary)
+                                    Text(
+                                        text = displayDate,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = LernspaceDark
+                                    )
+                                }
+                            }
+
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = AccentBlue.copy(alpha = 0.08f),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, AccentBlue.copy(alpha = 0.3f))
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(Icons.Filled.EditCalendar, null, tint = AccentBlue, modifier = Modifier.size(13.dp))
+                                    Text("Buka Kalender", fontSize = 11.sp, color = AccentBlue, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+                        }
+                    }
+
+                    // Quick Date Preset Chips
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        for ((_, label, dNum) in listOf(
+                            Triple(8, "Hari Ini (8 Nov)", 8),
+                            Triple(9, "Besok (9 Nov)", 9),
+                            Triple(10, "Lusa (10 Nov)", 10),
+                            Triple(15, "+1 Minggu (15 Nov)", 15)
+                        )) {
+                            val isSelected = selectedDayNumber == dNum && selectedMonth == 10 && selectedYear == 2026
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = {
+                                    selectedDayNumber = dNum
+                                    selectedMonth = 10
+                                    selectedYear = 2026
+                                },
+                                label = { Text(label, fontSize = 11.sp) },
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                        }
+                    }
+
+                    // Jam Deadline
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = dueTime,
+                            onValueChange = { dueTime = it },
+                            label = { Text("Jam Deadline (HH:mm)") },
+                            leadingIcon = { Icon(Icons.Filled.AccessTime, null, modifier = Modifier.size(18.dp)) },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(8.dp)
+                        )
+
+                        // Quick Time Chips
+                        Column(
+                            modifier = Modifier.weight(1.3f),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text("Preset Jam", fontSize = 10.sp, color = LernspaceTextSecondary)
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                for (tPreset in listOf("23:59", "17:00", "12:00", "08:00")) {
+                                    FilterChip(
+                                        selected = dueTime == tPreset,
+                                        onClick = { dueTime = tPreset },
+                                        label = { Text(tPreset, fontSize = 10.sp) },
+                                        shape = RoundedCornerShape(6.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // Priority chips
@@ -2034,11 +2236,11 @@ internal fun InputTaskDialog(
                 ) {
                     Text("Prioritas Tugas", style = MaterialTheme.typography.labelMedium, color = LernspaceDark)
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf(
+                        for ((pKey, pLabel, pColor) in listOf(
                             Triple("HIGH", "Tinggi (Urgent)", Color(0xFFE11D48)),
                             Triple("MEDIUM", "Sedang", AccentAmber),
                             Triple("LOW", "Rendah", Color(0xFF64748B))
-                        ).forEach { (pKey, pLabel, pColor) ->
+                        )) {
                             FilterChip(
                                 selected = priority == pKey,
                                 onClick = { priority = pKey },
@@ -2048,6 +2250,16 @@ internal fun InputTaskDialog(
                         }
                     }
                 }
+
+                // Notes optional
+                OutlinedTextField(
+                    value = notesStr,
+                    onValueChange = { notesStr = it },
+                    label = { Text("Catatan Tambahan (Opsional)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp)
+                )
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -2059,7 +2271,17 @@ internal fun InputTaskDialog(
                     Button(
                         onClick = {
                             if (title.isNotBlank()) {
-                                onConfirm(title.trim(), selectedSubject, selectedTopic, dueDayNumber, dueTime.trim(), priority, estMinutes, notesStr.trim())
+                                onConfirm(
+                                    title.trim(),
+                                    selectedSubject,
+                                    selectedTopic,
+                                    modelDueDate,
+                                    selectedDayNumber,
+                                    dueTime.trim(),
+                                    priority,
+                                    estMinutes,
+                                    notesStr.trim()
+                                )
                             }
                         },
                         enabled = title.isNotBlank(),

@@ -7,21 +7,22 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.drag
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.drag
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -43,27 +44,31 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke as DrawStroke
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.ink.brush.Brush
 import androidx.ink.brush.StockBrushes
 import androidx.ink.brush.compose.createWithComposeColor
 import androidx.ink.rendering.android.canvas.CanvasStrokeRenderer
 import androidx.ink.strokes.Stroke
+import com.lernspace.app.data.local.AcademicDatabaseManager
+import com.lernspace.app.data.repository.AcademicWorkspaceState
 import com.lernspace.app.ui.components.DrawingSurface
 import com.lernspace.app.ui.theme.AccentBlue
 import com.lernspace.app.ui.theme.LernspaceBorder
@@ -78,90 +83,79 @@ import com.lernspace.app.ui.workspace.lasso.LassoSelectionState
 import com.lernspace.app.ui.workspace.model.*
 import com.lernspace.app.ui.workspace.pdf.PdfNoteHelper
 import com.lernspace.app.ui.workspace.shape.ShapeRecognizer
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
-@Composable
-fun NoteEditorScreen(
-    note: NoteUiModel,
-    onBack: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val context = LocalContext.current
-    val view = androidx.compose.ui.platform.LocalView.current
-    val coroutineScope = rememberCoroutineScope()
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPER: Detect if stroke points were held stationary at the end (hold-to-refine)
+// ─────────────────────────────────────────────────────────────────────────────
+private fun isStrokeHoldAtEnd(stroke: Stroke, currentScale: Float): Boolean {
+    val inputs = stroke.inputs
+    val count = inputs.size
+    if (count < 8) return false
+    val temp = androidx.ink.strokes.StrokeInput()
+    inputs.populate(count - 1, temp)
+    val endX = temp.x
+    val endY = temp.y
+    val endT = temp.elapsedTimeMillis
 
-    // Note Meta
-    var noteTitle by remember { mutableStateOf(note.title) }
-    val paperStyle = note.paperStyle // Locked/Immutable format set from creation!
-
-    // Multi-page state
-    var currentPageIndex by remember { mutableIntStateOf(0) }
-    var totalPages by remember {
-        mutableIntStateOf(
-            if (note.canvasType == NoteCanvasType.PDF_DOCUMENT) maxOf(1, note.pdfTotalPages)
-            else maxOf(1, note.pages.size)
-        )
-    }
-
-    // Tool State
-    var activeTool by remember { mutableStateOf(NoteTool.PEN) }
-    var selectedColor by remember { mutableStateOf(Color(0xFF16A34A)) } // Green default
-    var selectedThickness by remember { mutableFloatStateOf(7f) }
-    var selectedShapeType by remember { mutableStateOf(GeometricShapeType.RECTANGLE) }
-    // Helper: Detect if stroke points were held stationary at the end (hold-to-refine)
-    fun isStrokeHoldAtEnd(stroke: Stroke, currentScale: Float): Boolean {
-        val inputs = stroke.inputs
-        val count = inputs.size
-        if (count < 8) return false
-        val temp = androidx.ink.strokes.StrokeInput()
-        inputs.populate(count - 1, temp)
-        val endX = temp.x
-        val endY = temp.y
-        val endT = temp.elapsedTimeMillis
-
-        val maxJiggleDistance = maxOf(18f, 32f / currentScale)
-        var stationaryStartTime = endT
-        for (i in count - 2 downTo 0) {
-            inputs.populate(i, temp)
-            val d = kotlin.math.hypot(temp.x - endX, temp.y - endY)
-            if (d > maxJiggleDistance) {
-                stationaryStartTime = temp.elapsedTimeMillis
-                break
-            }
+    val maxJiggleDistance = maxOf(18f, 32f / currentScale)
+    var stationaryStartTime = endT
+    for (i in count - 2 downTo 0) {
+        inputs.populate(i, temp)
+        val d = kotlin.math.hypot(temp.x - endX, temp.y - endY)
+        if (d > maxJiggleDistance) {
+            stationaryStartTime = temp.elapsedTimeMillis
+            break
         }
-        return (endT - stationaryStartTime) >= 260L
     }
+    return (endT - stationaryStartTime) >= 260L
+}
 
-    // Live preview coordinates for Shape Tool
-    var shapeDrawStart by remember { mutableStateOf<Offset?>(null) }
-    var shapeDrawCurrent by remember { mutableStateOf<Offset?>(null) }
+// ─────────────────────────────────────────────────────────────────────────────
+// STATE HOLDER: Encapsulates all data and canvas state for one note pane
+// ─────────────────────────────────────────────────────────────────────────────
+class NotePaneState(
+    var note: NoteUiModel,
+    private val context: android.content.Context,
+    private val coroutineScope: CoroutineScope
+) {
+    var noteTitle by mutableStateOf(note.title)
+    val paperStyle: PaperStyle get() = note.paperStyle
+    val canvasType: NoteCanvasType get() = note.canvasType
+    val subject: String get() = note.subject
+
+    var currentPageIndex by mutableIntStateOf(0)
+    var totalPages by mutableIntStateOf(
+        if (note.canvasType == NoteCanvasType.PDF_DOCUMENT) maxOf(1, note.pdfTotalPages)
+        else maxOf(1, note.pages.size)
+    )
+
+    val strokes = mutableStateListOf<Stroke>()
+    val undoneStrokes = mutableStateListOf<Stroke>()
+    val canvasStrokeRenderer = CanvasStrokeRenderer.create()
+
+    val textBoxes = mutableStateListOf<TextBoxElement>()
+    val imageElements = mutableStateListOf<ImageElement>()
+
+    var pdfPageBitmap by mutableStateOf<ImageBitmap?>(null)
+
+    // Canvas Viewport Pan & Zoom State
+    var scale by mutableFloatStateOf(1f)
+    var panX by mutableFloatStateOf(0f)
+    var panY by mutableFloatStateOf(0f)
 
     // Lasso Selection State
-    var lassoSelection by remember { mutableStateOf<LassoSelectionState?>(null) }
-    val currentLassoLoop = remember { mutableStateListOf<Offset>() }
+    var lassoSelection by mutableStateOf<LassoSelectionState?>(null)
+    val currentLassoLoop = mutableStateListOf<Offset>()
 
-    // Inking State for the active page
-    val strokes = remember { mutableStateListOf<Stroke>() }
-    val undoneStrokes = remember { mutableStateListOf<Stroke>() }
-    val canvasStrokeRenderer = remember { CanvasStrokeRenderer.create() }
+    // Shape Tool live preview
+    var shapeDrawStart by mutableStateOf<Offset?>(null)
+    var shapeDrawCurrent by mutableStateOf<Offset?>(null)
 
-    // Text Boxes & Images for the active page
-    val textBoxes = remember { mutableStateListOf<TextBoxElement>() }
-    val imageElements = remember { mutableStateListOf<ImageElement>() }
-
-    // PDF Page background bitmap state
-    var pdfPageBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
-    var isExporting by remember { mutableStateOf(false) }
-
-    // Canvas Viewport Pan & Zoom State (Fingers only for Pan & Zoom, Stylus dedicated to Inking!)
-    var scale by remember { mutableFloatStateOf(1f) }
-    var panX by remember { mutableFloatStateOf(0f) }
-    var panY by remember { mutableFloatStateOf(0f) }
-
-    // Page Synchronization Functions
     fun saveActivePageData() {
         while (note.pages.size <= currentPageIndex) {
             note.pages.add(NotePageData(pageIndex = note.pages.size))
@@ -173,7 +167,7 @@ fun NoteEditorScreen(
         target.textBoxes.addAll(textBoxes)
         target.imageElements.clear()
         target.imageElements.addAll(imageElements)
-        com.lernspace.app.data.local.AcademicDatabaseManager.persistNote(note)
+        AcademicDatabaseManager.persistNote(note)
     }
 
     fun loadActivePageData(index: Int) {
@@ -195,16 +189,8 @@ fun NoteEditorScreen(
         imageElements.addAll(source.imageElements)
     }
 
-    // Auto-save active page when leaving NoteEditorScreen
-    DisposableEffect(Unit) {
-        onDispose {
-            saveActivePageData()
-        }
-    }
-
-    // Load initial page from disk or memory
-    LaunchedEffect(Unit) {
-        val diskPages = com.lernspace.app.data.local.AcademicDatabaseManager.loadPagesForNote(note.id)
+    fun loadFromDisk() {
+        val diskPages = AcademicDatabaseManager.loadPagesForNote(note.id)
         if (diskPages != null && diskPages.isNotEmpty()) {
             note.pages.clear()
             note.pages.addAll(diskPages)
@@ -213,24 +199,25 @@ fun NoteEditorScreen(
         loadActivePageData(0)
     }
 
-    // Load PDF Page Bitmap when currentPageIndex changes
-    LaunchedEffect(currentPageIndex, note.pdfUri) {
+    fun loadPdfPage() {
         if (note.canvasType == NoteCanvasType.PDF_DOCUMENT && note.pdfUri != null) {
-            withContext(Dispatchers.IO) {
+            coroutineScope.launch(Dispatchers.IO) {
                 val bmp = PdfNoteHelper.renderPdfPage(context, Uri.parse(note.pdfUri), currentPageIndex, targetWidth = 1800)
                 if (bmp != null) {
-                    pdfPageBitmap = bmp.asImageBitmap()
+                    withContext(Dispatchers.Main) {
+                        pdfPageBitmap = bmp.asImageBitmap()
+                    }
                 }
             }
         }
     }
 
-    // Multi-page navigation helpers
     fun goToPage(targetIndex: Int) {
         if (targetIndex != currentPageIndex && targetIndex in 0 until totalPages) {
             saveActivePageData()
             currentPageIndex = targetIndex
             loadActivePageData(targetIndex)
+            loadPdfPage()
         }
     }
 
@@ -243,8 +230,6 @@ fun NoteEditorScreen(
         loadActivePageData(currentPageIndex)
     }
 
-    var showDeletePageDialog by remember { mutableStateOf(false) }
-
     fun deleteCurrentPage() {
         if (note.pages.size > 1) {
             note.pages.removeAt(currentPageIndex)
@@ -253,34 +238,10 @@ fun NoteEditorScreen(
             currentPageIndex = newIdx
             totalPages = note.pages.size
             loadActivePageData(newIdx)
+            loadPdfPage()
         }
     }
 
-    fun handleBack() {
-        saveActivePageData()
-        onBack()
-    }
-
-    // Intercept hardware / gesture back button to ensure strokes are saved before exit
-    BackHandler {
-        handleBack()
-    }
-
-    fun handleExportPdf() {
-        saveActivePageData()
-        isExporting = true
-        coroutineScope.launch(Dispatchers.IO) {
-            val file = PdfNoteHelper.exportNoteToPdf(context, note, canvasStrokeRenderer)
-            withContext(Dispatchers.Main) {
-                isExporting = false
-                if (file != null) {
-                    PdfNoteHelper.sharePdf(context, file)
-                }
-            }
-        }
-    }
-
-    // Helper: Deselect all objects
     fun deselectAll() {
         lassoSelection = null
         for (i in textBoxes.indices) {
@@ -291,64 +252,30 @@ fun NoteEditorScreen(
         }
     }
 
-    // Image Picker Launcher
-    val imagePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        uri?.let {
-            try {
-                context.contentResolver.openInputStream(it)?.use { stream ->
-                    val bitmap = BitmapFactory.decodeStream(stream)
-                    if (bitmap != null) {
-                        deselectAll()
-                        val spawnX = (-panX + 160f) / scale
-                        val spawnY = (-panY + 120f) / scale
-                        val aspect = (bitmap.width.toFloat() / bitmap.height.toFloat()).coerceIn(0.2f, 5f)
-                        val baseWidth = 280f
-                        val baseHeight = baseWidth / aspect
-                        imageElements.add(
-                            ImageElement(
-                                x = maxOf(40f, spawnX),
-                                y = maxOf(60f, spawnY),
-                                width = baseWidth,
-                                height = baseHeight,
-                                bitmap = bitmap.asImageBitmap(),
-                                isSelected = true
-                            )
-                        )
-                    }
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+    fun undo() {
+        if (strokes.isNotEmpty()) {
+            val removed = strokes.removeLast()
+            undoneStrokes.add(removed)
+            saveActivePageData()
         }
     }
 
-    // Brush calculation
-    val currentBrush by remember(activeTool, selectedColor, selectedThickness) {
-        derivedStateOf {
-            when (activeTool) {
-                NoteTool.HIGHLIGHTER -> {
-                    Brush.createWithComposeColor(
-                        family = StockBrushes.pressurePen(),
-                        color = selectedColor.copy(alpha = 0.35f),
-                        size = selectedThickness * 2.8f,
-                        epsilon = 0.1f
-                    )
-                }
-                else -> {
-                    Brush.createWithComposeColor(
-                        family = StockBrushes.pressurePen(),
-                        color = selectedColor,
-                        size = selectedThickness,
-                        epsilon = 0.1f
-                    )
-                }
-            }
+    fun redo() {
+        if (undoneStrokes.isNotEmpty()) {
+            val restored = undoneStrokes.removeLast()
+            strokes.add(restored)
+            saveActivePageData()
         }
     }
 
-    // Erase helper function with segment-distance checking & zoom compensation
+    fun clearAll() {
+        strokes.clear()
+        undoneStrokes.clear()
+        textBoxes.clear()
+        imageElements.clear()
+        saveActivePageData()
+    }
+
     fun eraseNear(touchX: Float, touchY: Float) {
         val effectiveRadius = 40f / scale
         val radiusSquared = effectiveRadius * effectiveRadius
@@ -387,699 +314,288 @@ fun NoteEditorScreen(
             false
         }
     }
+}
 
-    Box(modifier = modifier.fillMaxSize()) {
-        // 1. Vector Note Canvas Viewport (Handles 1-finger pan & 2-finger zoom across ALL tools!)
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .pointerInput(Unit) {
-                    awaitEachGesture {
-                        val down = awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
-                        if (down.type == PointerType.Touch) {
-                            down.consume()
+@Composable
+fun rememberNotePaneState(
+    note: NoteUiModel,
+    context: android.content.Context = LocalContext.current,
+    coroutineScope: CoroutineScope = rememberCoroutineScope()
+): NotePaneState {
+    val state = remember(note.id) {
+        NotePaneState(note, context, coroutineScope)
+    }
+    LaunchedEffect(note.id) {
+        state.loadFromDisk()
+        state.loadPdfPage()
+    }
+    DisposableEffect(note.id) {
+        onDispose {
+            state.saveActivePageData()
+        }
+    }
+    return state
+}
 
-                            var isTransforming = false
-                            var accumulatedPan = Offset.Zero
-                            val touchSlop = viewConfiguration.touchSlop
+// ─────────────────────────────────────────────────────────────────────────────
+// MAIN SCREEN: NoteEditorScreen with Unified Toolbar & Optional Split-Screen
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+fun NoteEditorScreen(
+    note: NoteUiModel,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
 
-                            while (true) {
-                                val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+    // Primary state (never reallocated, survives split and swap!)
+    val primaryState = rememberNotePaneState(note)
 
-                                // Palm rejection: ignore finger if stylus is on-screen
-                                val hasStylus = event.changes.any {
-                                    it.type == PointerType.Stylus || it.type == PointerType.Eraser
-                                }
-                                if (hasStylus) {
-                                    event.changes.forEach { if (it.type == PointerType.Touch) it.consume() }
-                                    continue
-                                }
+    // Secondary note and state
+    var secondaryNote by remember { mutableStateOf<NoteUiModel?>(null) }
+    val secondaryState = secondaryNote?.let { rememberNotePaneState(it) }
 
-                                val pressedFingers = event.changes.filter {
-                                    it.type == PointerType.Touch && it.pressed
-                                }
-                                if (pressedFingers.isEmpty()) {
-                                    if (!isTransforming && accumulatedPan.getDistance() < touchSlop) {
-                                        deselectAll()
-                                    }
-                                    break
-                                }
+    // Swap state: if true, left pane is secondary, right pane is primary
+    var isSwapped by remember { mutableStateOf(false) }
 
-                                if (pressedFingers.size >= 2) {
-                                    // 2-finger pinch-to-zoom & pan
-                                    isTransforming = true
-                                    val zoom = event.calculateZoom()
-                                    val pan = event.calculatePan()
-                                    val centroid = event.calculateCentroid(useCurrent = false)
-                                    event.changes.forEach { it.consume() }
+    // Active Note Tracking by Note ID
+    var activeNoteId by remember(note.id) { mutableStateOf(note.id) }
 
-                                    if (centroid != Offset.Unspecified && !zoom.isNaN() && zoom > 0f) {
-                                        val newScale = (scale * zoom).coerceIn(0.5f, 3.5f)
-                                        val effectiveZoom = newScale / scale
-                                        panX = centroid.x - (centroid.x - panX) * effectiveZoom + pan.x
-                                        panY = centroid.y - (centroid.y - panY) * effectiveZoom + pan.y
-                                        scale = newScale
-                                    }
-                                } else if (pressedFingers.size == 1) {
-                                    // 1-finger pan
-                                    val change = pressedFingers[0]
-                                    val panDelta = change.positionChange()
-                                    change.consume()
+    // Current active state connected to the top toolbar
+    val activeState = if (secondaryState != null && activeNoteId == secondaryState.note.id) secondaryState else primaryState
 
-                                    if (!isTransforming) {
-                                        accumulatedPan += panDelta
-                                        if (accumulatedPan.getDistance() > touchSlop) {
-                                            isTransforming = true
-                                            panX += accumulatedPan.x
-                                            panY += accumulatedPan.y
-                                        }
-                                    } else {
-                                        panX += panDelta.x
-                                        panY += panDelta.y
-                                    }
-                                }
-                            }
-                        }
-                    }
+    // Split ratio: 0.20f to 0.80f (Default 50:50)
+    var splitRatio by remember { mutableFloatStateOf(0.5f) }
+    var showSplitNoteDialog by remember { mutableStateOf(false) }
+
+    // Resolved Left and Right Pane States
+    val leftState = if (isSwapped && secondaryState != null) secondaryState else primaryState
+    val rightState = if (isSwapped) primaryState else secondaryState
+
+    // Shared Tool State across the single unified toolbar system
+    var activeTool by remember { mutableStateOf(NoteTool.PEN) }
+    var selectedColor by remember { mutableStateOf(Color(0xFF16A34A)) } // Green default
+    var selectedThickness by remember { mutableFloatStateOf(7f) }
+    var selectedShapeType by remember { mutableStateOf(GeometricShapeType.RECTANGLE) }
+    var isExporting by remember { mutableStateOf(false) }
+
+    // Brush calculation
+    val currentBrush by remember(activeTool, selectedColor, selectedThickness) {
+        derivedStateOf {
+            when (activeTool) {
+                NoteTool.HIGHLIGHTER -> {
+                    Brush.createWithComposeColor(
+                        family = StockBrushes.pressurePen(),
+                        color = selectedColor.copy(alpha = 0.35f),
+                        size = selectedThickness * 2.8f,
+                        epsilon = 0.1f
+                    )
                 }
-        ) {
-            // Background Layer: Either PDF Document Page or Paper Style
-            if (note.canvasType == NoteCanvasType.PDF_DOCUMENT) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    drawRect(Color(0xFFE2E8F0)) // desk canvas background
-                    if (pdfPageBitmap != null) {
-                        val bmp = pdfPageBitmap!!
-                        val dstW = bmp.width * scale
-                        val dstH = bmp.height * scale
-
-                        // Drop shadow behind PDF page sheet
-                        drawRoundRect(
-                            color = Color(0x1F0F172A),
-                            topLeft = Offset(panX + 4f, panY + 6f),
-                            size = Size(dstW, dstH),
-                            cornerRadius = CornerRadius(6f, 6f)
-                        )
-
-                        drawImage(
-                            image = bmp,
-                            dstOffset = IntOffset(panX.toInt(), panY.toInt()),
-                            dstSize = IntSize(dstW.toInt(), dstH.toInt())
-                        )
-                    }
-                }
-            } else {
-                PaperBackground(
-                    style = paperStyle,
-                    scale = scale,
-                    panX = panX,
-                    panY = panY,
-                    isPaged = note.canvasType == NoteCanvasType.PAGED_NOTE,
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
-
-            // Inking Layer (AndroidX Ink Native Vector Tessellation)
-            DrawingSurface(
-                strokes = strokes,
-                canvasStrokeRenderer = canvasStrokeRenderer,
-                currentBrush = currentBrush,
-                onGetNextBrush = { currentBrush },
-                onStrokesFinished = { newStrokes ->
-                    val processedStrokes = newStrokes.map { stroke ->
-                        if (isStrokeHoldAtEnd(stroke, scale)) {
-                            val refined = ShapeRecognizer.refineStroke(stroke)
-                            if (refined != null) {
-                                try {
-                                    view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-                                } catch (e: Exception) {}
-                                refined
-                            } else {
-                                stroke
-                            }
-                        } else {
-                            stroke
-                        }
-                    }
-                    strokes.addAll(processedStrokes)
-                    undoneStrokes.clear()
-                    saveActivePageData()
-                },
-                isEraserMode = activeTool == NoteTool.ERASER,
-                isDrawingEnabled = activeTool == NoteTool.PEN || activeTool == NoteTool.HIGHLIGHTER || activeTool == NoteTool.ERASER,
-                scale = scale,
-                panX = panX,
-                panY = panY,
-                onErase = { worldX, worldY -> eraseNear(worldX, worldY) },
-                onEraseEnd = { saveActivePageData() },
-                modifier = Modifier.fillMaxSize()
-            )
-
-            // ── SHAPE TOOL DRAWING & LIVE PREVIEW LAYER ──
-            if (activeTool == NoteTool.SHAPE) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .pointerInput(selectedShapeType, currentBrush) {
-                            awaitEachGesture {
-                                val down = awaitFirstDown(requireUnconsumed = false)
-                                // STYLUS ONLY: Fingers are for canvas pan & zoom!
-                                if (down.type != androidx.compose.ui.input.pointer.PointerType.Stylus && down.type != androidx.compose.ui.input.pointer.PointerType.Eraser) {
-                                    return@awaitEachGesture
-                                }
-
-                                val worldStart = Offset((down.position.x - panX) / scale, (down.position.y - panY) / scale)
-                                shapeDrawStart = worldStart
-                                shapeDrawCurrent = worldStart
-
-                                drag(down.id) { change ->
-                                    if (change.type == androidx.compose.ui.input.pointer.PointerType.Stylus || change.type == androidx.compose.ui.input.pointer.PointerType.Eraser) {
-                                        change.consume()
-                                        shapeDrawCurrent = Offset((change.position.x - panX) / scale, (change.position.y - panY) / scale)
-                                    }
-                                }
-
-                                val start = shapeDrawStart
-                                val end = shapeDrawCurrent
-                                if (start != null && end != null && (end - start).getDistance() > 15f) {
-                                    val newStroke = ShapeRecognizer.generateGeometricShape(
-                                        type = selectedShapeType,
-                                        start = start,
-                                        end = end,
-                                        brush = currentBrush
-                                    )
-                                    strokes.add(newStroke)
-                                    undoneStrokes.clear()
-                                    saveActivePageData()
-                                }
-                                shapeDrawStart = null
-                                shapeDrawCurrent = null
-                            }
-                        }
-                )
-
-                // Live Preview Canvas
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val start = shapeDrawStart
-                    val end = shapeDrawCurrent
-                    if (start != null && end != null) {
-                        val sX = start.x * scale + panX
-                        val sY = start.y * scale + panY
-                        val eX = end.x * scale + panX
-                        val eY = end.y * scale + panY
-
-                        val minX = minOf(sX, eX)
-                        val maxX = maxOf(sX, eX)
-                        val minY = minOf(sY, eY)
-                        val maxY = maxOf(sY, eY)
-                        val w = maxOf(10f, maxX - minX)
-                        val h = maxOf(10f, maxY - minY)
-                        val strokeW = selectedThickness * scale
-
-                        when (selectedShapeType) {
-                            GeometricShapeType.LINE -> {
-                                drawLine(
-                                    color = selectedColor,
-                                    start = Offset(sX, sY),
-                                    end = Offset(eX, eY),
-                                    strokeWidth = strokeW
-                                )
-                            }
-                            GeometricShapeType.RECTANGLE -> {
-                                drawRect(
-                                    color = selectedColor,
-                                    topLeft = Offset(minX, minY),
-                                    size = Size(w, h),
-                                    style = DrawStroke(width = strokeW)
-                                )
-                            }
-                            GeometricShapeType.CIRCLE -> {
-                                drawOval(
-                                    color = selectedColor,
-                                    topLeft = Offset(minX, minY),
-                                    size = Size(w, h),
-                                    style = DrawStroke(width = strokeW)
-                                )
-                            }
-                            GeometricShapeType.TRIANGLE -> {
-                                val path = Path().apply {
-                                    moveTo((minX + maxX) / 2f, minY)
-                                    lineTo(maxX, maxY)
-                                    lineTo(minX, maxY)
-                                    close()
-                                }
-                                drawPath(
-                                    path = path,
-                                    color = selectedColor,
-                                    style = DrawStroke(width = strokeW)
-                                )
-                            }
-                            GeometricShapeType.ARROW -> {
-                                drawLine(
-                                    color = selectedColor,
-                                    start = Offset(sX, sY),
-                                    end = Offset(eX, eY),
-                                    strokeWidth = strokeW
-                                )
-                                val dx = eX - sX
-                                val dy = eY - sY
-                                val angle = kotlin.math.atan2(dy, dx)
-                                val headLen = minOf(36f * scale, kotlin.math.hypot(dx, dy) * 0.35f)
-                                val headAngle = Math.toRadians(30.0).toFloat()
-                                drawLine(
-                                    color = selectedColor,
-                                    start = Offset(eX, eY),
-                                    end = Offset(
-                                        eX - headLen * kotlin.math.cos(angle - headAngle),
-                                        eY - headLen * kotlin.math.sin(angle - headAngle)
-                                    ),
-                                    strokeWidth = strokeW
-                                )
-                                drawLine(
-                                    color = selectedColor,
-                                    start = Offset(eX, eY),
-                                    end = Offset(
-                                        eX - headLen * kotlin.math.cos(angle + headAngle),
-                                        eY - headLen * kotlin.math.sin(angle + headAngle)
-                                    ),
-                                    strokeWidth = strokeW
-                                )
-                            }
-                        }
-                    }
+                else -> {
+                    Brush.createWithComposeColor(
+                        family = StockBrushes.pressurePen(),
+                        color = selectedColor,
+                        size = selectedThickness,
+                        epsilon = 0.1f
+                    )
                 }
             }
+        }
+    }
 
-            // ── LASSO TOOL SELECTION & MANIPULATION LAYER ──
-            if (activeTool == NoteTool.LASSO || lassoSelection != null) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .pointerInput(activeTool, lassoSelection == null) {
-                            awaitEachGesture {
-                                val down = awaitFirstDown(requireUnconsumed = false)
-                                // STYLUS ONLY: Fingers are for canvas pan & zoom!
-                                if (down.type != androidx.compose.ui.input.pointer.PointerType.Stylus && down.type != androidx.compose.ui.input.pointer.PointerType.Eraser) {
-                                    return@awaitEachGesture
-                                }
+    // Auto-save on exit or disposal
+    fun handleBack() {
+        primaryState.saveActivePageData()
+        secondaryState?.saveActivePageData()
+        onBack()
+    }
 
-                                val screenPoint = down.position
-                                val worldPoint = Offset((screenPoint.x - panX) / scale, (screenPoint.y - panY) / scale)
+    fun handleCloseSplit() {
+        secondaryState?.saveActivePageData()
+        secondaryNote?.let { AcademicDatabaseManager.persistNote(it) }
+        secondaryNote = null
+        isSwapped = false
+        activeNoteId = primaryState.note.id
+    }
 
-                                val curSel = lassoSelection
-                                if (curSel != null && !curSel.isEmpty) {
-                                    val screenBounds = Rect(
-                                        curSel.bounds.left * scale + panX,
-                                        curSel.bounds.top * scale + panY,
-                                        curSel.bounds.right * scale + panX,
-                                        curSel.bounds.bottom * scale + panY
-                                    )
-                                    if (screenBounds.contains(screenPoint)) {
-                                        val strokeIndices = curSel.selectedStrokes.map { strokes.indexOf(it) }
+    // Hardware / gesture back button handling
+    BackHandler {
+        if (secondaryNote != null) {
+            handleCloseSplit()
+        } else {
+            handleBack()
+        }
+    }
 
-                                        // Drag inside selection bounding box with stylus to MOVE selected items!
-                                        drag(down.id) { change ->
-                                            if (change.type == androidx.compose.ui.input.pointer.PointerType.Stylus || change.type == androidx.compose.ui.input.pointer.PointerType.Eraser) {
-                                                val delta = change.positionChange()
-                                                change.consume()
-                                                val dx = delta.x / scale
-                                                val dy = delta.y / scale
-
-                                                if (dx != 0f || dy != 0f) {
-                                                    // 1. Move selected strokes
-                                                    for (i in curSel.selectedStrokes.indices) {
-                                                        val oldStroke = curSel.selectedStrokes[i]
-                                                        val newStroke = ShapeRecognizer.translateStroke(oldStroke, dx, dy)
-                                                        val idxInMain = strokeIndices[i]
-                                                        if (idxInMain != -1 && idxInMain < strokes.size) {
-                                                            strokes[idxInMain] = newStroke
-                                                        }
-                                                        curSel.selectedStrokes[i] = newStroke
-                                                    }
-
-                                                    // 2. Move selected text boxes
-                                                    for (box in curSel.selectedTextBoxes) {
-                                                        box.x += dx
-                                                        box.y += dy
-                                                    }
-
-                                                    // 3. Move selected images
-                                                    for (img in curSel.selectedImages) {
-                                                        img.x += dx
-                                                        img.y += dy
-                                                    }
-
-                                                    curSel.bounds = curSel.bounds.translate(Offset(dx, dy))
-                                                    lassoSelection = curSel.copy(bounds = curSel.bounds)
-                                                }
-                                            }
-                                        }
-                                        return@awaitEachGesture
-                                    } else {
-                                        // Stylus tapped outside bounding box -> deselect!
-                                        lassoSelection = null
-                                    }
-                                }
-
-                                if (activeTool == NoteTool.LASSO) {
-                                    // Draw new lasso loop with stylus
-                                    currentLassoLoop.clear()
-                                    currentLassoLoop.add(worldPoint)
-
-                                    drag(down.id) { change ->
-                                        if (change.type == androidx.compose.ui.input.pointer.PointerType.Stylus || change.type == androidx.compose.ui.input.pointer.PointerType.Eraser) {
-                                            change.consume()
-                                            val curWorld = Offset((change.position.x - panX) / scale, (change.position.y - panY) / scale)
-                                            currentLassoLoop.add(curWorld)
-                                        }
-                                    }
-
-                                    // Finished drawing lasso loop: calculate matches!
-                                    if (currentLassoLoop.size >= 4) {
-                                        val loopCopy = currentLassoLoop.toList()
-                                        val matchedStrokes = strokes.filter { LassoHelper.isStrokeSelected(it, loopCopy) }.toMutableList()
-                                        val matchedBoxes = textBoxes.filter { LassoHelper.isTextBoxSelected(it, loopCopy) }.toMutableList()
-                                        val matchedImages = imageElements.filter { LassoHelper.isImageSelected(it, loopCopy) }.toMutableList()
-
-                                        val bounds = LassoHelper.computeCombinedBounds(matchedStrokes, matchedBoxes, matchedImages)
-                                        if (bounds != null && (matchedStrokes.isNotEmpty() || matchedBoxes.isNotEmpty() || matchedImages.isNotEmpty())) {
-                                            lassoSelection = LassoSelectionState(
-                                                selectedStrokes = matchedStrokes,
-                                                selectedTextBoxes = matchedBoxes,
-                                                selectedImages = matchedImages,
-                                                bounds = bounds
-                                            )
-                                        } else {
-                                            lassoSelection = null
-                                        }
-                                    }
-                                    currentLassoLoop.clear()
-                                }
-                            }
-                        }
-                )
-
-                // Render in-progress Lasso loop (dashed path + semi-transparent fill)
-                if (currentLassoLoop.size >= 2) {
-                    Canvas(modifier = Modifier.fillMaxSize()) {
-                        val path = Path().apply {
-                            val p0 = currentLassoLoop[0]
-                            moveTo(p0.x * scale + panX, p0.y * scale + panY)
-                            for (i in 1 until currentLassoLoop.size) {
-                                val p = currentLassoLoop[i]
-                                lineTo(p.x * scale + panX, p.y * scale + panY)
-                            }
-                        }
-                        drawPath(
-                            path = path,
-                            color = AccentBlue.copy(alpha = 0.12f),
-                            style = Fill
-                        )
-                        drawPath(
-                            path = path,
-                            color = AccentBlue,
-                            style = DrawStroke(
-                                width = 2.dp.toPx(),
-                                pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 10f), 0f)
+    // Image Picker Launcher (places image into whichever note is currently active)
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            try {
+                context.contentResolver.openInputStream(it)?.use { stream ->
+                    val bitmap = BitmapFactory.decodeStream(stream)
+                    if (bitmap != null) {
+                        activeState.deselectAll()
+                        val spawnX = (-activeState.panX + 160f) / activeState.scale
+                        val spawnY = (-activeState.panY + 120f) / activeState.scale
+                        val aspect = (bitmap.width.toFloat() / bitmap.height.toFloat()).coerceIn(0.2f, 5f)
+                        val baseWidth = 280f
+                        val baseHeight = baseWidth / aspect
+                        activeState.imageElements.add(
+                            ImageElement(
+                                x = maxOf(40f, spawnX),
+                                y = maxOf(60f, spawnY),
+                                width = baseWidth,
+                                height = baseHeight,
+                                bitmap = bitmap.asImageBitmap(),
+                                isSelected = true
                             )
                         )
                     }
                 }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
 
-                // Render Lasso Selection Bounding Box & Floating Action Menu
-                val curSel = lassoSelection
-                if (curSel != null && !curSel.isEmpty) {
-                    val screenLeft = curSel.bounds.left * scale + panX
-                    val screenTop = curSel.bounds.top * scale + panY
-                    val screenRight = curSel.bounds.right * scale + panX
-                    val screenBottom = curSel.bounds.bottom * scale + panY
-                    val selWidth = maxOf(40f, screenRight - screenLeft)
-                    val selHeight = maxOf(40f, screenBottom - screenTop)
+    fun handleExportPdf() {
+        activeState.saveActivePageData()
+        isExporting = true
+        coroutineScope.launch(Dispatchers.IO) {
+            val file = PdfNoteHelper.exportNoteToPdf(context, activeState.note, activeState.canvasStrokeRenderer)
+            withContext(Dispatchers.Main) {
+                isExporting = false
+                if (file != null) {
+                    PdfNoteHelper.sharePdf(context, file)
+                }
+            }
+        }
+    }
 
-                    // Dashed selection marquee
-                    Canvas(modifier = Modifier.fillMaxSize()) {
-                        drawRoundRect(
-                            color = AccentBlue,
-                            topLeft = Offset(screenLeft, screenTop),
-                            size = Size(selWidth, selHeight),
-                            cornerRadius = CornerRadius(8.dp.toPx(), 8.dp.toPx()),
-                            style = DrawStroke(
-                                width = 2.dp.toPx(),
-                                pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 8f), 0f)
-                            )
-                        )
-                    }
+    Box(modifier = modifier.fillMaxSize().clipToBounds()) {
+        // ── 1. CANVASES: Full Screen or Dual Split View ──
+        if (secondaryNote == null || rightState == null) {
+            // SINGLE NOTE MODE (Full Width)
+            key(primaryState.note.id) {
+                NotePaneViewport(
+                    state = primaryState,
+                    isActive = true,
+                    activeTool = activeTool,
+                    currentBrush = currentBrush,
+                    selectedColor = selectedColor,
+                    selectedThickness = selectedThickness,
+                    selectedShapeType = selectedShapeType,
+                    onActivate = { activeNoteId = primaryState.note.id },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clipToBounds()
+                )
+            }
+        } else {
+            // DUAL-NOTE SPLIT SCREEN MODE (Clean canvas, double-tap divider to swap!)
+            BoxWithConstraints(modifier = Modifier.fillMaxSize().clipToBounds()) {
+                val totalWidthPx = constraints.maxWidth.toFloat()
 
-                    // Floating Action Menu (Geser / Duplikat / Hapus / Selesai)
+                Row(modifier = Modifier.fillMaxSize().clipToBounds()) {
+                    // LEFT PANE (Strictly clipped & keyed by note ID)
                     Box(
                         modifier = Modifier
-                            .offset {
-                                IntOffset(
-                                    x = (screenLeft + selWidth / 2f - 140.dp.toPx()).roundToInt().coerceAtLeast(16),
-                                    y = (screenTop - 52.dp.toPx()).roundToInt().coerceAtLeast(70)
-                                )
-                            }
+                            .weight(splitRatio)
+                            .fillMaxHeight()
+                            .clipToBounds()
                     ) {
-                        Surface(
-                            shape = RoundedCornerShape(20.dp),
-                            color = Color.White,
-                            shadowElevation = 8.dp,
-                            border = BorderStroke(1.5.dp, Color(0xFFE2E8F0))
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                // Drag Move pill (both draggable and indicates drag area)
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(3.dp),
-                                    modifier = Modifier
-                                        .pointerInput(lassoSelection == null) {
-                                            detectDragGestures { change, dragAmount ->
-                                                change.consume()
-                                                val sel = lassoSelection ?: return@detectDragGestures
-                                                val dx = dragAmount.x / scale
-                                                val dy = dragAmount.y / scale
-                                                if (dx != 0f || dy != 0f) {
-                                                    for (i in sel.selectedStrokes.indices) {
-                                                        val oldStroke = sel.selectedStrokes[i]
-                                                        val newStroke = ShapeRecognizer.translateStroke(oldStroke, dx, dy)
-                                                        val idxInMain = strokes.indexOf(oldStroke)
-                                                        if (idxInMain != -1) {
-                                                            strokes[idxInMain] = newStroke
-                                                        }
-                                                        sel.selectedStrokes[i] = newStroke
-                                                    }
-                                                    for (box in sel.selectedTextBoxes) {
-                                                        box.x += dx
-                                                        box.y += dy
-                                                    }
-                                                    for (img in sel.selectedImages) {
-                                                        img.x += dx
-                                                        img.y += dy
-                                                    }
-                                                    val newBounds = sel.bounds.translate(Offset(dx, dy))
-                                                    lassoSelection = sel.copy(bounds = newBounds)
-                                                }
-                                            }
-                                        }
-                                        .padding(horizontal = 4.dp, vertical = 2.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Filled.OpenWith,
-                                        contentDescription = "Geser",
-                                        tint = AccentBlue,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Text(
-                                        text = "Geser",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = AccentBlue
-                                    )
-                                }
+                        key(leftState.note.id) {
+                            NotePaneViewport(
+                                state = leftState,
+                                isActive = activeNoteId == leftState.note.id,
+                                activeTool = activeTool,
+                                currentBrush = currentBrush,
+                                selectedColor = selectedColor,
+                                selectedThickness = selectedThickness,
+                                selectedShapeType = selectedShapeType,
+                                onActivate = { activeNoteId = leftState.note.id },
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clipToBounds()
+                            )
+                        }
+                    }
 
-                                VerticalDivider(modifier = Modifier.height(16.dp), color = Color(0xFFE2E8F0))
+                    // MIDDLE DRAGGABLE DIVIDER (Double-tap to Swap notes!)
+                    SplitScreenDivider(
+                        onDrag = { dragDeltaPx ->
+                            val ratioDelta = dragDeltaPx / totalWidthPx
+                            splitRatio = (splitRatio + ratioDelta).coerceIn(0.20f, 0.80f)
+                        },
+                        onDoubleTap = {
+                            isSwapped = !isSwapped
+                        },
+                        modifier = Modifier.zIndex(2f)
+                    )
 
-                                // Duplicate button
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = Color(0xFFF1F5F9),
-                                    modifier = Modifier.clickable {
-                                        val offsetDelta = 35f
-                                        val newDuplicates = curSel.selectedStrokes.map {
-                                            ShapeRecognizer.translateStroke(it, offsetDelta, offsetDelta)
-                                        }
-                                        strokes.addAll(newDuplicates)
-                                        curSel.selectedStrokes.clear()
-                                        curSel.selectedStrokes.addAll(newDuplicates)
-                                        curSel.bounds = curSel.bounds.translate(Offset(offsetDelta, offsetDelta))
-                                        lassoSelection = curSel.copy(bounds = curSel.bounds)
-                                        undoneStrokes.clear()
-                                        saveActivePageData()
-                                    }
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(3.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Filled.ContentCopy,
-                                            contentDescription = "Duplikat",
-                                            tint = LernspaceDark,
-                                            modifier = Modifier.size(13.dp)
-                                        )
-                                        Text(
-                                            text = "Duplikat",
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = LernspaceDark
-                                        )
-                                    }
-                                }
-
-                                // Delete button
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = Color(0xFFFEE2E2),
-                                    modifier = Modifier.clickable {
-                                        strokes.removeAll(curSel.selectedStrokes)
-                                        textBoxes.removeAll(curSel.selectedTextBoxes)
-                                        imageElements.removeAll(curSel.selectedImages)
-                                        lassoSelection = null
-                                        saveActivePageData()
-                                    }
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(3.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Filled.Delete,
-                                            contentDescription = "Hapus",
-                                            tint = Color(0xFFDC2626),
-                                            modifier = Modifier.size(13.dp)
-                                        )
-                                        Text(
-                                            text = "Hapus",
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = Color(0xFFDC2626)
-                                        )
-                                    }
-                                }
-
-                                // Done / Close button
-                                Surface(
-                                    shape = CircleShape,
-                                    color = Color(0xFFF1F5F9),
-                                    modifier = Modifier
-                                        .size(26.dp)
-                                        .clickable { lassoSelection = null }
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = Icons.Filled.Close,
-                                            contentDescription = "Selesai",
-                                            tint = Color(0xFF64748B),
-                                            modifier = Modifier.size(14.dp)
-                                        )
-                                    }
-                                }
-                            }
+                    // RIGHT PANE (Strictly clipped & keyed by note ID)
+                    Box(
+                        modifier = Modifier
+                            .weight(1f - splitRatio)
+                            .fillMaxHeight()
+                            .clipToBounds()
+                    ) {
+                        key(rightState.note.id) {
+                            NotePaneViewport(
+                                state = rightState,
+                                isActive = activeNoteId == rightState.note.id,
+                                activeTool = activeTool,
+                                currentBrush = currentBrush,
+                                selectedColor = selectedColor,
+                                selectedThickness = selectedThickness,
+                                selectedShapeType = selectedShapeType,
+                                onActivate = { activeNoteId = rightState.note.id },
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clipToBounds()
+                            )
                         }
                     }
                 }
-            }
-
-            // Placed Images Layer
-            imageElements.forEachIndexed { index, img ->
-                DraggableImage(
-                    image = img,
-                    scale = scale,
-                    panX = panX,
-                    panY = panY,
-                    onCommitMove = { newWorldX, newWorldY ->
-                        if (index < imageElements.size) {
-                            imageElements[index] = imageElements[index].copy(x = newWorldX, y = newWorldY)
-                        }
-                    },
-                    onCommitResize = { newWorldW, newWorldH ->
-                        if (index < imageElements.size) {
-                            imageElements[index] = imageElements[index].copy(width = newWorldW, height = newWorldH)
-                        }
-                    },
-                    onSelect = {
-                        deselectAll()
-                        if (index < imageElements.size) {
-                            imageElements[index] = imageElements[index].copy(isSelected = true)
-                        }
-                    },
-                    onDelete = { imageElements.remove(img) }
-                )
-            }
-
-            // Placed Draggable Text Boxes Layer
-            textBoxes.forEachIndexed { index, boxElement ->
-                DraggableTextBox(
-                    box = boxElement,
-                    scale = scale,
-                    panX = panX,
-                    panY = panY,
-                    onCommitMove = { newWorldX, newWorldY ->
-                        if (index < textBoxes.size) {
-                            textBoxes[index] = textBoxes[index].copy(x = newWorldX, y = newWorldY)
-                        }
-                    },
-                    onCommitResize = { newWorldW, newWorldH ->
-                        if (index < textBoxes.size) {
-                            textBoxes[index] = textBoxes[index].copy(width = newWorldW, height = newWorldH)
-                        }
-                    },
-                    onTextChange = { newText ->
-                        if (index < textBoxes.size) {
-                            textBoxes[index] = textBoxes[index].copy(text = newText)
-                        }
-                    },
-                    onSelect = {
-                        deselectAll()
-                        if (index < textBoxes.size) {
-                            textBoxes[index] = textBoxes[index].copy(isSelected = true)
-                        }
-                        activeTool = NoteTool.TEXT
-                    },
-                    onDelete = {
-                        textBoxes.remove(boxElement)
-                    }
-                )
             }
         }
 
-        // 2. Unified Top App Bar (Title Capsule + Center Tools Toolbar + Action Capsule)
+        // ── 2. SINGLE UNIFIED TOP APP BAR (Serves both notes seamlessly) ──
         UnifiedNoteTopBar(
-            title = noteTitle,
-            onTitleChange = {
-                noteTitle = it
-                note.title = it
+            isSplitMode = secondaryNote != null && rightState != null,
+            activeNoteId = activeNoteId,
+            leftNoteId = leftState.note.id,
+            leftTitle = leftState.noteTitle,
+            onLeftTitleChange = {
+                leftState.noteTitle = it
+                leftState.note.title = it
             },
-            subject = note.subject,
-            canvasType = note.canvasType,
-            paperStyle = paperStyle,
-            currentPage = currentPageIndex + 1,
-            totalPages = totalPages,
+            leftSubject = leftState.subject,
+            leftCanvasType = leftState.canvasType,
+            leftPaperStyle = leftState.paperStyle,
+            leftCurrentPage = leftState.currentPageIndex + 1,
+            leftTotalPages = leftState.totalPages,
+            rightNoteId = rightState?.note?.id,
+            rightTitle = rightState?.noteTitle,
+            rightSubject = rightState?.subject,
+            rightCurrentPage = (rightState?.currentPageIndex ?: 0) + 1,
+            rightTotalPages = rightState?.totalPages ?: 1,
+            onSelectActiveNote = { activeNoteId = it },
+            onToggleSplitMode = { showSplitNoteDialog = true },
+            onCloseSplit = { handleCloseSplit() },
             activeTool = activeTool,
             onSelectTool = { tool ->
                 activeTool = tool
                 if (tool != NoteTool.TEXT) {
-                    deselectAll()
+                    activeState.deselectAll()
                 } else {
-                    deselectAll()
-                    val screenCenterX = (-panX + 260f) / scale
-                    val screenCenterY = (-panY + 220f) / scale
-                    textBoxes.add(
+                    activeState.deselectAll()
+                    val screenCenterX = (-activeState.panX + 260f) / activeState.scale
+                    val screenCenterY = (-activeState.panY + 220f) / activeState.scale
+                    activeState.textBoxes.add(
                         TextBoxElement(
                             x = maxOf(40f, screenCenterX),
                             y = maxOf(60f, screenCenterY),
@@ -1106,47 +622,682 @@ fun NoteEditorScreen(
             onPickImage = {
                 imagePickerLauncher.launch("image/*")
             },
-            canUndo = strokes.isNotEmpty(),
-            onUndo = {
-                if (strokes.isNotEmpty()) {
-                    val removed = strokes.removeLast()
-                    undoneStrokes.add(removed)
-                    saveActivePageData()
-                }
-            },
-            canRedo = undoneStrokes.isNotEmpty(),
-            onRedo = {
-                if (undoneStrokes.isNotEmpty()) {
-                    val restored = undoneStrokes.removeLast()
-                    strokes.add(restored)
-                    saveActivePageData()
-                }
-            },
-            onClearAll = {
-                strokes.clear()
-                undoneStrokes.clear()
-                textBoxes.clear()
-                imageElements.clear()
-                saveActivePageData()
-            },
+            canUndo = activeState.strokes.isNotEmpty(),
+            onUndo = { activeState.undo() },
+            canRedo = activeState.undoneStrokes.isNotEmpty(),
+            onRedo = { activeState.redo() },
+            onClearAll = { activeState.clearAll() },
             onExportPdf = { handleExportPdf() },
             isExporting = isExporting,
             onBack = { handleBack() },
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
+                .zIndex(10f)
         )
 
-        // 3. Floating Page Navigator Bar (Bottom Center) - Multi-Page and PDF Document
-        if (note.canvasType != NoteCanvasType.INFINITE_SCRATCHPAD) {
+        // ── 3. MODAL DIALOG: Choose or Create Secondary Note for Split Screen ──
+        if (showSplitNoteDialog) {
+            SplitNotePickerDialog(
+                currentNoteId = primaryState.note.id,
+                availableNotes = AcademicWorkspaceState.notes,
+                onSelectNote = { selectedNote ->
+                    primaryState.saveActivePageData()
+                    val pages = AcademicDatabaseManager.loadPagesForNote(selectedNote.id)
+                    if (pages != null && pages.isNotEmpty()) {
+                        selectedNote.pages.clear()
+                        selectedNote.pages.addAll(pages)
+                    }
+                    secondaryNote = selectedNote
+                    activeNoteId = selectedNote.id
+                    isSwapped = false
+                    showSplitNoteDialog = false
+                },
+                onCreateScratchpad = {
+                    primaryState.saveActivePageData()
+                    val newScratch = AcademicWorkspaceState.createScratchpad("Scratchpad Pembanding")
+                    secondaryNote = newScratch
+                    activeNoteId = newScratch.id
+                    isSwapped = false
+                    showSplitNoteDialog = false
+                },
+                onDismiss = { showSplitNoteDialog = false }
+            )
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPONENT: NotePaneViewport (Clean Full-Height Canvas Viewport)
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun NotePaneViewport(
+    state: NotePaneState,
+    isActive: Boolean,
+    activeTool: NoteTool,
+    currentBrush: Brush,
+    selectedColor: Color,
+    selectedThickness: Float,
+    selectedShapeType: GeometricShapeType,
+    onActivate: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val view = LocalView.current
+    var showDeletePageDialog by remember { mutableStateOf(false) }
+
+    Box(
+        modifier = modifier
+            .clipToBounds()
+            // Auto-activate pane on any touch or stylus down (keyed strictly to state.note.id)
+            .pointerInput(state.note.id) {
+                awaitEachGesture {
+                    awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
+                    onActivate()
+                }
+            }
+    ) {
+        // ── 1. Pan & Zoom Gesture Detector (Fingers for Pan/Zoom, Stylus for Inking) ──
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clipToBounds()
+                .pointerInput(state.note.id) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
+                        if (down.type == PointerType.Touch) {
+                            down.consume()
+
+                            var isTransforming = false
+                            var accumulatedPan = Offset.Zero
+                            val touchSlop = viewConfiguration.touchSlop
+
+                            while (true) {
+                                val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+
+                                // Palm rejection: ignore finger if stylus is on-screen
+                                val hasStylus = event.changes.any {
+                                    it.type == PointerType.Stylus || it.type == PointerType.Eraser
+                                }
+                                if (hasStylus) {
+                                    event.changes.forEach { if (it.type == PointerType.Touch) it.consume() }
+                                    continue
+                                }
+
+                                val pressedFingers = event.changes.filter {
+                                    it.type == PointerType.Touch && it.pressed
+                                }
+                                if (pressedFingers.isEmpty()) {
+                                    if (!isTransforming && accumulatedPan.getDistance() < touchSlop) {
+                                        state.deselectAll()
+                                    }
+                                    break
+                                }
+
+                                if (pressedFingers.size >= 2) {
+                                    // 2-finger pinch-to-zoom & pan
+                                    isTransforming = true
+                                    val zoom = event.calculateZoom()
+                                    val pan = event.calculatePan()
+                                    val centroid = event.calculateCentroid(useCurrent = false)
+                                    event.changes.forEach { it.consume() }
+
+                                    if (centroid != Offset.Unspecified && !zoom.isNaN() && zoom > 0f) {
+                                        val newScale = (state.scale * zoom).coerceIn(0.5f, 3.5f)
+                                        val effectiveZoom = newScale / state.scale
+                                        state.panX = centroid.x - (centroid.x - state.panX) * effectiveZoom + pan.x
+                                        state.panY = centroid.y - (centroid.y - state.panY) * effectiveZoom + pan.y
+                                        state.scale = newScale
+                                    }
+                                } else if (pressedFingers.size == 1) {
+                                    // 1-finger pan
+                                    val change = pressedFingers[0]
+                                    val panDelta = change.positionChange()
+                                    change.consume()
+
+                                    if (!isTransforming) {
+                                        accumulatedPan += panDelta
+                                        if (accumulatedPan.getDistance() > touchSlop) {
+                                            isTransforming = true
+                                            state.panX += accumulatedPan.x
+                                            state.panY += accumulatedPan.y
+                                        }
+                                    } else {
+                                        state.panX += panDelta.x
+                                        state.panY += panDelta.y
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+        ) {
+            // Background Layer: Either PDF Document Page or Paper Style (Strictly clipped)
+            if (state.canvasType == NoteCanvasType.PDF_DOCUMENT) {
+                Canvas(modifier = Modifier.fillMaxSize().clipToBounds()) {
+                    clipRect(0f, 0f, size.width, size.height) {
+                        drawRect(Color(0xFFE2E8F0)) // desk canvas background
+                        if (state.pdfPageBitmap != null) {
+                            val bmp = state.pdfPageBitmap!!
+                            val dstW = bmp.width * state.scale
+                            val dstH = bmp.height * state.scale
+
+                            drawRoundRect(
+                                color = Color(0x1F0F172A),
+                                topLeft = Offset(state.panX + 4f, state.panY + 6f),
+                                size = Size(dstW, dstH),
+                                cornerRadius = CornerRadius(6f, 6f)
+                            )
+
+                            drawImage(
+                                image = bmp,
+                                dstOffset = IntOffset(state.panX.toInt(), state.panY.toInt()),
+                                dstSize = IntSize(dstW.toInt(), dstH.toInt())
+                            )
+                        }
+                    }
+                }
+            } else {
+                PaperBackground(
+                    style = state.paperStyle,
+                    scale = state.scale,
+                    panX = state.panX,
+                    panY = state.panY,
+                    isPaged = state.canvasType == NoteCanvasType.PAGED_NOTE,
+                    modifier = Modifier.fillMaxSize().clipToBounds()
+                )
+            }
+
+            // Inking Layer (AndroidX Ink Native Vector Tessellation - Strictly clipped)
+            DrawingSurface(
+                strokes = state.strokes,
+                canvasStrokeRenderer = state.canvasStrokeRenderer,
+                currentBrush = currentBrush,
+                onGetNextBrush = { currentBrush },
+                onStrokesFinished = { newStrokes ->
+                    val processedStrokes = newStrokes.map { stroke ->
+                        if (isStrokeHoldAtEnd(stroke, state.scale)) {
+                            val refined = ShapeRecognizer.refineStroke(stroke)
+                            if (refined != null) {
+                                try {
+                                    view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                                } catch (e: Exception) {}
+                                refined
+                            } else {
+                                stroke
+                            }
+                        } else {
+                            stroke
+                        }
+                    }
+                    state.strokes.addAll(processedStrokes)
+                    state.undoneStrokes.clear()
+                    state.saveActivePageData()
+                },
+                isEraserMode = activeTool == NoteTool.ERASER && isActive,
+                isDrawingEnabled = activeTool == NoteTool.PEN || activeTool == NoteTool.HIGHLIGHTER || activeTool == NoteTool.ERASER,
+                scale = state.scale,
+                panX = state.panX,
+                panY = state.panY,
+                onErase = { worldX, worldY -> state.eraseNear(worldX, worldY) },
+                onEraseEnd = { state.saveActivePageData() },
+                modifier = Modifier.fillMaxSize().clipToBounds()
+            )
+
+            // Shape Tool Drawing & Live Preview Layer (Strictly clipped)
+            if (activeTool == NoteTool.SHAPE && isActive) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clipToBounds()
+                        .pointerInput(state.note.id, selectedShapeType, currentBrush) {
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                if (down.type != PointerType.Stylus && down.type != PointerType.Eraser) {
+                                    return@awaitEachGesture
+                                }
+
+                                val worldStart = Offset((down.position.x - state.panX) / state.scale, (down.position.y - state.panY) / state.scale)
+                                state.shapeDrawStart = worldStart
+                                state.shapeDrawCurrent = worldStart
+
+                                drag(down.id) { change ->
+                                    if (change.type == PointerType.Stylus || change.type == PointerType.Eraser) {
+                                        change.consume()
+                                        state.shapeDrawCurrent = Offset((change.position.x - state.panX) / state.scale, (change.position.y - state.panY) / state.scale)
+                                    }
+                                }
+
+                                val start = state.shapeDrawStart
+                                val end = state.shapeDrawCurrent
+                                if (start != null && end != null && (end - start).getDistance() > 15f) {
+                                    val newStroke = ShapeRecognizer.generateGeometricShape(
+                                        type = selectedShapeType,
+                                        start = start,
+                                        end = end,
+                                        brush = currentBrush
+                                    )
+                                    state.strokes.add(newStroke)
+                                    state.undoneStrokes.clear()
+                                    state.saveActivePageData()
+                                }
+                                state.shapeDrawStart = null
+                                state.shapeDrawCurrent = null
+                            }
+                        }
+                )
+
+                // Live Preview Canvas
+                Canvas(modifier = Modifier.fillMaxSize().clipToBounds()) {
+                    clipRect(0f, 0f, size.width, size.height) {
+                        val start = state.shapeDrawStart
+                        val end = state.shapeDrawCurrent
+                        if (start != null && end != null) {
+                            val sX = start.x * state.scale + state.panX
+                            val sY = start.y * state.scale + state.panY
+                            val eX = end.x * state.scale + state.panX
+                            val eY = end.y * state.scale + state.panY
+
+                            val minX = minOf(sX, eX)
+                            val maxX = maxOf(sX, eX)
+                            val minY = minOf(sY, eY)
+                            val maxY = maxOf(sY, eY)
+                            val w = maxOf(10f, maxX - minX)
+                            val h = maxOf(10f, maxY - minY)
+                            val strokeW = selectedThickness * state.scale
+
+                            when (selectedShapeType) {
+                                GeometricShapeType.LINE -> {
+                                    drawLine(color = selectedColor, start = Offset(sX, sY), end = Offset(eX, eY), strokeWidth = strokeW)
+                                }
+                                GeometricShapeType.RECTANGLE -> {
+                                    drawRect(color = selectedColor, topLeft = Offset(minX, minY), size = Size(w, h), style = DrawStroke(width = strokeW))
+                                }
+                                GeometricShapeType.CIRCLE -> {
+                                    drawOval(color = selectedColor, topLeft = Offset(minX, minY), size = Size(w, h), style = DrawStroke(width = strokeW))
+                                }
+                                GeometricShapeType.TRIANGLE -> {
+                                    val path = Path().apply {
+                                        moveTo((minX + maxX) / 2f, minY)
+                                        lineTo(maxX, maxY)
+                                        lineTo(minX, maxY)
+                                        close()
+                                    }
+                                    drawPath(path = path, color = selectedColor, style = DrawStroke(width = strokeW))
+                                }
+                                GeometricShapeType.ARROW -> {
+                                    drawLine(color = selectedColor, start = Offset(sX, sY), end = Offset(eX, eY), strokeWidth = strokeW)
+                                    val dx = eX - sX
+                                    val dy = eY - sY
+                                    val angle = kotlin.math.atan2(dy, dx)
+                                    val headLen = minOf(36f * state.scale, kotlin.math.hypot(dx, dy) * 0.35f)
+                                    val headAngle = Math.toRadians(30.0).toFloat()
+                                    drawLine(
+                                        color = selectedColor,
+                                        start = Offset(eX, eY),
+                                        end = Offset(eX - headLen * kotlin.math.cos(angle - headAngle), eY - headLen * kotlin.math.sin(angle - headAngle)),
+                                        strokeWidth = strokeW
+                                    )
+                                    drawLine(
+                                        color = selectedColor,
+                                        start = Offset(eX, eY),
+                                        end = Offset(eX - headLen * kotlin.math.cos(angle + headAngle), eY - headLen * kotlin.math.sin(angle + headAngle)),
+                                        strokeWidth = strokeW
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Lasso Tool Selection & Manipulation Layer (Strictly clipped)
+            if ((activeTool == NoteTool.LASSO || state.lassoSelection != null) && isActive) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clipToBounds()
+                        .pointerInput(state.note.id, activeTool, state.lassoSelection == null) {
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                if (down.type != PointerType.Stylus && down.type != PointerType.Eraser) {
+                                    return@awaitEachGesture
+                                }
+
+                                val screenPoint = down.position
+                                val worldPoint = Offset((screenPoint.x - state.panX) / state.scale, (screenPoint.y - state.panY) / state.scale)
+
+                                val curSel = state.lassoSelection
+                                if (curSel != null && !curSel.isEmpty) {
+                                    val screenBounds = Rect(
+                                        curSel.bounds.left * state.scale + state.panX,
+                                        curSel.bounds.top * state.scale + state.panY,
+                                        curSel.bounds.right * state.scale + state.panX,
+                                        curSel.bounds.bottom * state.scale + state.panY
+                                    )
+                                    if (screenBounds.contains(screenPoint)) {
+                                        val strokeIndices = curSel.selectedStrokes.map { state.strokes.indexOf(it) }
+
+                                        drag(down.id) { change ->
+                                            if (change.type == PointerType.Stylus || change.type == PointerType.Eraser) {
+                                                val delta = change.positionChange()
+                                                change.consume()
+                                                val dx = delta.x / state.scale
+                                                val dy = delta.y / state.scale
+
+                                                if (dx != 0f || dy != 0f) {
+                                                    for (i in curSel.selectedStrokes.indices) {
+                                                        val oldStroke = curSel.selectedStrokes[i]
+                                                        val newStroke = ShapeRecognizer.translateStroke(oldStroke, dx, dy)
+                                                        val idxInMain = strokeIndices[i]
+                                                        if (idxInMain != -1 && idxInMain < state.strokes.size) {
+                                                            state.strokes[idxInMain] = newStroke
+                                                        }
+                                                        curSel.selectedStrokes[i] = newStroke
+                                                    }
+                                                    for (box in curSel.selectedTextBoxes) {
+                                                        box.x += dx
+                                                        box.y += dy
+                                                    }
+                                                    for (img in curSel.selectedImages) {
+                                                        img.x += dx
+                                                        img.y += dy
+                                                    }
+                                                    val newBounds = selBounds(curSel).translate(Offset(dx, dy))
+                                                    curSel.bounds = newBounds
+                                                    state.lassoSelection = curSel.copy(bounds = newBounds)
+                                                }
+                                            }
+                                        }
+                                        return@awaitEachGesture
+                                    } else {
+                                        state.lassoSelection = null
+                                    }
+                                }
+
+                                if (activeTool == NoteTool.LASSO) {
+                                    state.currentLassoLoop.clear()
+                                    state.currentLassoLoop.add(worldPoint)
+
+                                    drag(down.id) { change ->
+                                        if (change.type == PointerType.Stylus || change.type == PointerType.Eraser) {
+                                            change.consume()
+                                            val curWorld = Offset((change.position.x - state.panX) / state.scale, (change.position.y - state.panY) / state.scale)
+                                            state.currentLassoLoop.add(curWorld)
+                                        }
+                                    }
+
+                                    if (state.currentLassoLoop.size >= 4) {
+                                        val loopCopy = state.currentLassoLoop.toList()
+                                        val matchedStrokes = state.strokes.filter { LassoHelper.isStrokeSelected(it, loopCopy) }.toMutableList()
+                                        val matchedBoxes = state.textBoxes.filter { LassoHelper.isTextBoxSelected(it, loopCopy) }.toMutableList()
+                                        val matchedImages = state.imageElements.filter { LassoHelper.isImageSelected(it, loopCopy) }.toMutableList()
+
+                                        val bounds = LassoHelper.computeCombinedBounds(matchedStrokes, matchedBoxes, matchedImages)
+                                        if (bounds != null && (matchedStrokes.isNotEmpty() || matchedBoxes.isNotEmpty() || matchedImages.isNotEmpty())) {
+                                            state.lassoSelection = LassoSelectionState(
+                                                selectedStrokes = matchedStrokes,
+                                                selectedTextBoxes = matchedBoxes,
+                                                selectedImages = matchedImages,
+                                                bounds = bounds
+                                            )
+                                        } else {
+                                            state.lassoSelection = null
+                                        }
+                                    }
+                                    state.currentLassoLoop.clear()
+                                }
+                            }
+                        }
+                )
+
+                // Render in-progress Lasso loop (Strictly clipped)
+                if (state.currentLassoLoop.size >= 2) {
+                    Canvas(modifier = Modifier.fillMaxSize().clipToBounds()) {
+                        clipRect(0f, 0f, size.width, size.height) {
+                            val path = Path().apply {
+                                val p0 = state.currentLassoLoop[0]
+                                moveTo(p0.x * state.scale + state.panX, p0.y * state.scale + state.panY)
+                                for (i in 1 until state.currentLassoLoop.size) {
+                                    val p = state.currentLassoLoop[i]
+                                    lineTo(p.x * state.scale + state.panX, p.y * state.scale + state.panY)
+                                }
+                            }
+                            drawPath(path = path, color = AccentBlue.copy(alpha = 0.12f), style = Fill)
+                            drawPath(
+                                path = path,
+                                color = AccentBlue,
+                                style = DrawStroke(
+                                    width = 2.dp.toPx(),
+                                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 10f), 0f)
+                                )
+                            )
+                        }
+                    }
+                }
+
+                // Render Lasso Selection Marquee & Action Menu
+                val curSel = state.lassoSelection
+                if (curSel != null && !curSel.isEmpty) {
+                    val screenLeft = curSel.bounds.left * state.scale + state.panX
+                    val screenTop = curSel.bounds.top * state.scale + state.panY
+                    val screenRight = curSel.bounds.right * state.scale + state.panX
+                    val screenBottom = curSel.bounds.bottom * state.scale + state.panY
+                    val selWidth = maxOf(40f, screenRight - screenLeft)
+                    val selHeight = maxOf(40f, screenBottom - screenTop)
+
+                    Canvas(modifier = Modifier.fillMaxSize().clipToBounds()) {
+                        clipRect(0f, 0f, size.width, size.height) {
+                            drawRoundRect(
+                                color = AccentBlue,
+                                topLeft = Offset(screenLeft, screenTop),
+                                size = Size(selWidth, selHeight),
+                                cornerRadius = CornerRadius(8.dp.toPx(), 8.dp.toPx()),
+                                style = DrawStroke(
+                                    width = 2.dp.toPx(),
+                                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 8f), 0f)
+                                )
+                            )
+                        }
+                    }
+
+                    // Floating Action Menu
+                    Box(
+                        modifier = Modifier
+                            .offset {
+                                IntOffset(
+                                    x = (screenLeft + selWidth / 2f - 140.dp.toPx()).roundToInt().coerceAtLeast(16),
+                                    y = (screenTop - 52.dp.toPx()).roundToInt().coerceAtLeast(70)
+                                )
+                            }
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(20.dp),
+                            color = Color.White,
+                            shadowElevation = 8.dp,
+                            border = BorderStroke(1.5.dp, Color(0xFFE2E8F0))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                // Geser
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                    modifier = Modifier
+                                        .pointerInput(state.note.id, state.lassoSelection == null) {
+                                            detectDragGestures { change, dragAmount ->
+                                                change.consume()
+                                                val sel = state.lassoSelection ?: return@detectDragGestures
+                                                val dx = dragAmount.x / state.scale
+                                                val dy = dragAmount.y / state.scale
+                                                if (dx != 0f || dy != 0f) {
+                                                    for (i in sel.selectedStrokes.indices) {
+                                                        val oldStroke = sel.selectedStrokes[i]
+                                                        val newStroke = ShapeRecognizer.translateStroke(oldStroke, dx, dy)
+                                                        val idxInMain = state.strokes.indexOf(oldStroke)
+                                                        if (idxInMain != -1) {
+                                                            state.strokes[idxInMain] = newStroke
+                                                        }
+                                                        sel.selectedStrokes[i] = newStroke
+                                                    }
+                                                    for (box in sel.selectedTextBoxes) {
+                                                        box.x += dx
+                                                        box.y += dy
+                                                    }
+                                                    for (img in sel.selectedImages) {
+                                                        img.x += dx
+                                                        img.y += dy
+                                                    }
+                                                    val newBounds = selBounds(curSel).translate(Offset(dx, dy))
+                                                    curSel.bounds = newBounds
+                                                    state.lassoSelection = curSel.copy(bounds = newBounds)
+                                                }
+                                            }
+                                        }
+                                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                                ) {
+                                    Icon(Icons.Filled.OpenWith, contentDescription = "Geser", tint = AccentBlue, modifier = Modifier.size(16.dp))
+                                    Text("Geser", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = AccentBlue)
+                                }
+
+                                VerticalDivider(modifier = Modifier.height(16.dp), color = Color(0xFFE2E8F0))
+
+                                // Duplikat
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = Color(0xFFF1F5F9),
+                                    modifier = Modifier.clickable {
+                                        val offsetDelta = 35f
+                                        val newDuplicates = curSel.selectedStrokes.map { ShapeRecognizer.translateStroke(it, offsetDelta, offsetDelta) }
+                                        state.strokes.addAll(newDuplicates)
+                                        curSel.selectedStrokes.clear()
+                                        curSel.selectedStrokes.addAll(newDuplicates)
+                                        curSel.bounds = curSel.bounds.translate(Offset(offsetDelta, offsetDelta))
+                                        state.lassoSelection = curSel.copy(bounds = curSel.bounds)
+                                        state.undoneStrokes.clear()
+                                        state.saveActivePageData()
+                                    }
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                    ) {
+                                        Icon(Icons.Filled.ContentCopy, contentDescription = "Duplikat", tint = LernspaceDark, modifier = Modifier.size(13.dp))
+                                        Text("Duplikat", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = LernspaceDark)
+                                    }
+                                }
+
+                                // Hapus
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = Color(0xFFFEE2E2),
+                                    modifier = Modifier.clickable {
+                                        state.strokes.removeAll(curSel.selectedStrokes)
+                                        state.textBoxes.removeAll(curSel.selectedTextBoxes)
+                                        state.imageElements.removeAll(curSel.selectedImages)
+                                        state.lassoSelection = null
+                                        state.saveActivePageData()
+                                    }
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                    ) {
+                                        Icon(Icons.Filled.Delete, contentDescription = "Hapus", tint = Color(0xFFDC2626), modifier = Modifier.size(13.dp))
+                                        Text("Hapus", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFDC2626))
+                                    }
+                                }
+
+                                // Selesai
+                                Surface(
+                                    shape = CircleShape,
+                                    color = Color(0xFFF1F5F9),
+                                    modifier = Modifier.size(26.dp).clickable { state.lassoSelection = null }
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(Icons.Filled.Close, contentDescription = "Selesai", tint = Color(0xFF64748B), modifier = Modifier.size(14.dp))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Placed Images Layer (Rendered inside pane)
+            state.imageElements.forEachIndexed { index, img ->
+                DraggableImage(
+                    image = img,
+                    scale = state.scale,
+                    panX = state.panX,
+                    panY = state.panY,
+                    onCommitMove = { newWorldX, newWorldY ->
+                        if (index < state.imageElements.size) {
+                            state.imageElements[index] = state.imageElements[index].copy(x = newWorldX, y = newWorldY)
+                        }
+                    },
+                    onCommitResize = { newWorldW, newWorldH ->
+                        if (index < state.imageElements.size) {
+                            state.imageElements[index] = state.imageElements[index].copy(width = newWorldW, height = newWorldH)
+                        }
+                    },
+                    onSelect = {
+                        state.deselectAll()
+                        if (index < state.imageElements.size) {
+                            state.imageElements[index] = state.imageElements[index].copy(isSelected = true)
+                        }
+                    },
+                    onDelete = { state.imageElements.remove(img) }
+                )
+            }
+
+            // Placed Draggable Text Boxes Layer (Rendered inside pane)
+            state.textBoxes.forEachIndexed { index, boxElement ->
+                DraggableTextBox(
+                    box = boxElement,
+                    scale = state.scale,
+                    panX = state.panX,
+                    panY = state.panY,
+                    onCommitMove = { newWorldX, newWorldY ->
+                        if (index < state.textBoxes.size) {
+                            state.textBoxes[index] = state.textBoxes[index].copy(x = newWorldX, y = newWorldY)
+                        }
+                    },
+                    onCommitResize = { newWorldW, newWorldH ->
+                        if (index < state.textBoxes.size) {
+                            state.textBoxes[index] = state.textBoxes[index].copy(width = newWorldW, height = newWorldH)
+                        }
+                    },
+                    onTextChange = { newText ->
+                        if (index < state.textBoxes.size) {
+                            state.textBoxes[index] = state.textBoxes[index].copy(text = newText)
+                        }
+                    },
+                    onSelect = {
+                        state.deselectAll()
+                        if (index < state.textBoxes.size) {
+                            state.textBoxes[index] = state.textBoxes[index].copy(isSelected = true)
+                        }
+                    },
+                    onDelete = { state.textBoxes.remove(boxElement) }
+                )
+            }
+        }
+
+        // ── 2. Floating Page Navigator Bar (Bottom Center of this Pane) ──
+        if (state.canvasType != NoteCanvasType.INFINITE_SCRATCHPAD) {
             PageNavigatorBar(
-                currentPage = currentPageIndex + 1,
-                totalPages = totalPages,
-                canAddPage = note.canvasType == NoteCanvasType.PAGED_NOTE,
-                canDeletePage = note.canvasType == NoteCanvasType.PAGED_NOTE && totalPages > 1,
-                onPrevPage = { goToPage(currentPageIndex - 1) },
-                onNextPage = { goToPage(currentPageIndex + 1) },
-                onAddPage = { addNewPage() },
+                currentPage = state.currentPageIndex + 1,
+                totalPages = state.totalPages,
+                canAddPage = state.canvasType == NoteCanvasType.PAGED_NOTE,
+                canDeletePage = state.canvasType == NoteCanvasType.PAGED_NOTE && state.totalPages > 1,
+                onPrevPage = { state.goToPage(state.currentPageIndex - 1) },
+                onNextPage = { state.goToPage(state.currentPageIndex + 1) },
+                onAddPage = { state.addNewPage() },
                 onDeletePage = { showDeletePageDialog = true },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -1160,14 +1311,14 @@ fun NoteEditorScreen(
                 onDismissRequest = { showDeletePageDialog = false },
                 title = {
                     Text(
-                        text = "Hapus Halaman ${currentPageIndex + 1}?",
+                        text = "Hapus Halaman ${state.currentPageIndex + 1}?",
                         fontWeight = FontWeight.Bold,
                         color = LernspaceDark
                     )
                 },
                 text = {
                     Text(
-                        text = "Seluruh coretan dan konten pada halaman ${currentPageIndex + 1} akan dihapus secara permanen. Tindakan ini tidak dapat dibatalkan.",
+                        text = "Seluruh coretan dan konten pada halaman ${state.currentPageIndex + 1} akan dihapus secara permanen. Tindakan ini tidak dapat dibatalkan.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = Color(0xFF64748B)
                     )
@@ -1175,7 +1326,7 @@ fun NoteEditorScreen(
                 confirmButton = {
                     Button(
                         onClick = {
-                            deleteCurrentPage()
+                            state.deleteCurrentPage()
                             showDeletePageDialog = false
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
@@ -1194,35 +1345,115 @@ fun NoteEditorScreen(
             )
         }
 
-        // 4. Floating Zoom Percentage Indicator (Bottom-Left Corner of Canvas)
+        // ── 3. Floating Zoom Percentage Indicator (Bottom-Start of this Pane) ──
         ZoomIndicator(
-            scale = scale,
-            panX = panX,
-            panY = panY,
+            scale = state.scale,
+            panX = state.panX,
+            panY = state.panY,
             onReset = {
-                scale = 1f
-                panX = 0f
-                panY = 0f
+                state.scale = 1f
+                state.panX = 0f
+                state.panY = 0f
             },
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .padding(start = 20.dp, bottom = 20.dp)
+                .padding(start = 14.dp, bottom = 16.dp)
         )
     }
 }
 
+private fun selBounds(sel: LassoSelectionState): Rect = sel.bounds
+
 // ─────────────────────────────────────────────────────────────────────────────
-// COMPONENT: Unified Floating Note Top Bar
+// COMPONENT: Draggable Middle Divider (Double-Tap to Swap Notes!)
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun SplitScreenDivider(
+    onDrag: (Float) -> Unit,
+    onDoubleTap: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val view = LocalView.current
+    var isDragging by remember { mutableStateOf(false) }
+
+    Box(
+        modifier = modifier
+            .fillMaxHeight()
+            .width(22.dp)
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onDoubleTap = {
+                        try {
+                            view.performHapticFeedback(android.view.HapticFeedbackConstants.CONTEXT_CLICK)
+                        } catch (e: Exception) {}
+                        onDoubleTap()
+                    }
+                )
+            }
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragStart = { isDragging = true },
+                    onDragEnd = { isDragging = false },
+                    onDragCancel = { isDragging = false },
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        onDrag(dragAmount.x)
+                    }
+                )
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        // Vertical Divider Line
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .width(if (isDragging) 3.dp else 2.dp)
+                .background(if (isDragging) AccentBlue else Color(0xFFCBD5E1))
+        )
+
+        // Center Tactile Handle
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = if (isDragging) AccentBlue else Color.White,
+            shadowElevation = if (isDragging) 6.dp else 3.dp,
+            border = BorderStroke(1.dp, if (isDragging) AccentBlue else Color(0xFFCBD5E1)),
+            modifier = Modifier.size(width = 16.dp, height = 54.dp)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = Icons.Filled.DragIndicator,
+                    contentDescription = "Geser Pembagi (Ketuk 2x untuk Menukar Posisi Catatan)",
+                    tint = if (isDragging) Color.White else Color(0xFF64748B),
+                    modifier = Modifier.size(13.dp)
+                )
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPONENT: Single Unified Floating Top Bar
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun UnifiedNoteTopBar(
-    title: String,
-    onTitleChange: (String) -> Unit,
-    subject: String,
-    canvasType: NoteCanvasType,
-    paperStyle: PaperStyle,
-    currentPage: Int,
-    totalPages: Int,
+    isSplitMode: Boolean,
+    activeNoteId: String,
+    leftNoteId: String,
+    leftTitle: String,
+    onLeftTitleChange: (String) -> Unit,
+    leftSubject: String,
+    leftCanvasType: NoteCanvasType,
+    leftPaperStyle: PaperStyle,
+    leftCurrentPage: Int,
+    leftTotalPages: Int,
+    rightNoteId: String?,
+    rightTitle: String?,
+    rightSubject: String?,
+    rightCurrentPage: Int,
+    rightTotalPages: Int,
+    onSelectActiveNote: (String) -> Unit,
+    onToggleSplitMode: () -> Unit,
+    onCloseSplit: () -> Unit,
     activeTool: NoteTool,
     onSelectTool: (NoteTool) -> Unit,
     selectedShapeType: GeometricShapeType = GeometricShapeType.RECTANGLE,
@@ -1249,69 +1480,187 @@ private fun UnifiedNoteTopBar(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.Top
     ) {
-        // ── 1. LEFT CAPSULE: Back Button + Title & Immutable Format Label (Max 300dp) ──
+        // ── 1. LEFT CAPSULE: Back Button + Title or Clean Tabs ──
         Surface(
             shape = RoundedCornerShape(24.dp),
             color = Color.White.copy(alpha = 0.95f),
             shadowElevation = 4.dp,
             border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-            modifier = Modifier.widthIn(min = 180.dp, max = 300.dp)
+            modifier = Modifier.widthIn(min = 180.dp, max = 340.dp)
         ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Surface(
-                    shape = CircleShape,
-                    color = Color(0xFFF1F5F9),
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clickable(onClick = onBack)
+            if (!isSplitMode) {
+                // SINGLE NOTE HEADER
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = LernspaceDark,
-                            modifier = Modifier.size(18.dp)
+                    Surface(
+                        shape = CircleShape,
+                        color = Color(0xFFF1F5F9),
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clickable(onClick = onBack)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back",
+                                tint = LernspaceDark,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .padding(end = 4.dp)
+                    ) {
+                        BasicTextField(
+                            value = leftTitle,
+                            onValueChange = onLeftTitleChange,
+                            textStyle = TextStyle(
+                                color = LernspaceDark,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold
+                            ),
+                            cursorBrush = SolidColor(LernspaceDark),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Text(
+                            text = when (leftCanvasType) {
+                                NoteCanvasType.PDF_DOCUMENT -> "$leftSubject · PDF Document (Hal $leftCurrentPage/$leftTotalPages)"
+                                NoteCanvasType.PAGED_NOTE -> "$leftSubject · ${leftPaperStyle.displayName} (Hal $leftCurrentPage/$leftTotalPages)"
+                                NoteCanvasType.INFINITE_SCRATCHPAD -> "$leftSubject · Scratchpad Bebas"
+                            },
+                            fontSize = 11.sp,
+                            color = Color(0xFF64748B),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
-                }
 
-                Column(
-                    modifier = Modifier
-                        .weight(1f, fill = false)
-                        .padding(end = 4.dp)
+                    // Split Screen Toggle Button
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFFEFF6FF),
+                        border = BorderStroke(1.dp, AccentBlue.copy(alpha = 0.35f)),
+                        modifier = Modifier.clickable(onClick = onToggleSplitMode)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.VerticalSplit,
+                                contentDescription = "Buka Catatan Samping",
+                                tint = AccentBlue,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Text(
+                                text = "Split",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = AccentBlue
+                            )
+                        }
+                    }
+                }
+            } else {
+                // SPLIT SCREEN DUAL TABS (Clean and elegant note title tabs)
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    BasicTextField(
-                        value = title,
-                        onValueChange = onTitleChange,
-                        textStyle = TextStyle(
-                            color = LernspaceDark,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold
-                        ),
-                        cursorBrush = SolidColor(LernspaceDark),
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Text(
-                        text = when (canvasType) {
-                            NoteCanvasType.PDF_DOCUMENT -> "$subject · PDF Document (Hal $currentPage/$totalPages)"
-                            NoteCanvasType.PAGED_NOTE -> "$subject · ${paperStyle.displayName} (Hal $currentPage/$totalPages)"
-                            NoteCanvasType.INFINITE_SCRATCHPAD -> "$subject · Scratchpad Bebas"
-                        },
-                        fontSize = 11.sp,
-                        color = Color(0xFF64748B),
-                        maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                    )
+                    Surface(
+                        shape = CircleShape,
+                        color = Color(0xFFF1F5F9),
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clickable(onClick = onBack)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back",
+                                tint = LernspaceDark,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+
+                    // Tab Left Note
+                    val isLeftActive = activeNoteId == leftNoteId
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isLeftActive) AccentBlue.copy(alpha = 0.12f) else Color(0xFFF8FAFC),
+                        border = BorderStroke(1.dp, if (isLeftActive) AccentBlue else Color(0xFFE2E8F0)),
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .clickable { onSelectActiveNote(leftNoteId) }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(7.dp)
+                                    .background(if (isLeftActive) AccentBlue else Color(0xFF94A3B8), CircleShape)
+                            )
+                            Text(
+                                text = leftTitle,
+                                fontSize = 11.sp,
+                                fontWeight = if (isLeftActive) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isLeftActive) AccentBlue else LernspaceDark,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+
+                    // Tab Right Note
+                    if (rightNoteId != null) {
+                        val isRightActive = activeNoteId == rightNoteId
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (isRightActive) AccentBlue.copy(alpha = 0.12f) else Color(0xFFF8FAFC),
+                            border = BorderStroke(1.dp, if (isRightActive) AccentBlue else Color(0xFFE2E8F0)),
+                            modifier = Modifier
+                                .weight(1f, fill = false)
+                                .clickable { onSelectActiveNote(rightNoteId) }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(7.dp)
+                                        .background(if (isRightActive) AccentBlue else Color(0xFF94A3B8), CircleShape)
+                                )
+                                Text(
+                                    text = rightTitle ?: "Catatan 2",
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isRightActive) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (isRightActive) AccentBlue else LernspaceDark,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
 
-        // ── 2. CENTER: NoteFloatingToolbar ──────────────────────────────────────
+        // ── 2. CENTER: Single Unified NoteFloatingToolbar ──
         NoteFloatingToolbar(
             activeTool = activeTool,
             onSelectTool = onSelectTool,
@@ -1324,7 +1673,7 @@ private fun UnifiedNoteTopBar(
             onPickImage = onPickImage
         )
 
-        // ── 3. RIGHT CAPSULE: Export PDF, Undo, Redo, Clear ────────────────────
+        // ── 3. RIGHT CAPSULE: Close Split (if split) + Export PDF + Undo + Redo + Clear ──
         Surface(
             shape = RoundedCornerShape(24.dp),
             color = Color.White.copy(alpha = 0.95f),
@@ -1336,6 +1685,28 @@ private fun UnifiedNoteTopBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
+                if (isSplitMode) {
+                    // Close Split Button (Minimal red circle)
+                    Surface(
+                        shape = CircleShape,
+                        color = Color(0xFFFEE2E2),
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clickable(onClick = onCloseSplit)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Filled.Close,
+                                contentDescription = "Tutup Split Screen",
+                                tint = Color(0xFFDC2626),
+                                modifier = Modifier.size(17.dp)
+                            )
+                        }
+                    }
+
+                    VerticalDivider(modifier = Modifier.height(20.dp), color = Color(0xFFE2E8F0))
+                }
+
                 // Export PDF Button
                 Surface(
                     shape = CircleShape,
@@ -1559,7 +1930,7 @@ private fun PageNavigatorBar(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// COMPONENT: Zoom Percentage Indicator (Bottom-Left)
+// COMPONENT: Zoom Percentage Indicator (Bottom-Start)
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun ZoomIndicator(
@@ -1575,8 +1946,7 @@ private fun ZoomIndicator(
         color = Color.White.copy(alpha = 0.92f),
         shadowElevation = 4.dp,
         border = BorderStroke(1.dp, LernspaceBorder),
-        modifier = modifier
-            .clickable(onClick = onReset)
+        modifier = modifier.clickable(onClick = onReset)
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
@@ -1597,4 +1967,215 @@ private fun ZoomIndicator(
             )
         }
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DIALOG: Pick an existing note or create scratchpad for Split Screen
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun SplitNotePickerDialog(
+    currentNoteId: String,
+    availableNotes: List<NoteUiModel>,
+    onSelectNote: (NoteUiModel) -> Unit,
+    onCreateScratchpad: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    var searchQuery by remember { mutableStateOf("") }
+    val filteredNotes = remember(searchQuery, availableNotes, currentNoteId) {
+        availableNotes.filter { note ->
+            note.id != currentNoteId && (
+                searchQuery.isEmpty() ||
+                note.title.contains(searchQuery, ignoreCase = true) ||
+                note.subject.contains(searchQuery, ignoreCase = true)
+            )
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.VerticalSplit,
+                        contentDescription = null,
+                        tint = AccentBlue,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Text(
+                        text = "Buka Catatan Samping",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        color = LernspaceDark
+                    )
+                }
+                Text(
+                    text = "Pilih catatan lain untuk dipelajari berdampingan (Split Screen)",
+                    fontSize = 12.sp,
+                    color = Color(0xFF64748B)
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Search field
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("Cari catatan atau mata kuliah...", fontSize = 13.sp) },
+                    leadingIcon = {
+                        Icon(Icons.Filled.Search, contentDescription = null, tint = Color(0xFF94A3B8), modifier = Modifier.size(18.dp))
+                    },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(Icons.Filled.Close, contentDescription = "Clear", tint = Color(0xFF94A3B8), modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = AccentBlue,
+                        unfocusedBorderColor = Color(0xFFE2E8F0)
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                // Quick action: New Scratchpad
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFFEFF6FF),
+                    border = BorderStroke(1.dp, AccentBlue.copy(alpha = 0.35f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onCreateScratchpad)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = AccentBlue,
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(Icons.Filled.Add, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Buka Scratchpad Kosong Baru",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = AccentBlue
+                            )
+                            Text(
+                                text = "Coret-coret rumus bebas atau konsep cepat",
+                                fontSize = 11.sp,
+                                color = Color(0xFF64748B)
+                            )
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = Color(0xFFE2E8F0))
+
+                // Notes list
+                if (filteredNotes.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (searchQuery.isNotEmpty()) "Tidak ada catatan yang cocok dengan \"$searchQuery\""
+                            else "Belum ada catatan lain. Buat scratchpad baru di atas!",
+                            fontSize = 12.sp,
+                            color = Color(0xFF94A3B8)
+                        )
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(filteredNotes, key = { it.id }) { item ->
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFFF8FAFC),
+                                border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onSelectNote(item) }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = Color(0xFFE2E8F0),
+                                        modifier = Modifier.size(34.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = when (item.canvasType) {
+                                                    NoteCanvasType.PDF_DOCUMENT -> Icons.Filled.PictureAsPdf
+                                                    NoteCanvasType.INFINITE_SCRATCHPAD -> Icons.Filled.Draw
+                                                    NoteCanvasType.PAGED_NOTE -> Icons.Filled.Description
+                                                },
+                                                contentDescription = null,
+                                                tint = LernspaceDark,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = item.title,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = LernspaceDark,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = "${item.subject} · ${when (item.canvasType) {
+                                                NoteCanvasType.PDF_DOCUMENT -> "PDF"
+                                                NoteCanvasType.INFINITE_SCRATCHPAD -> "Scratchpad"
+                                                NoteCanvasType.PAGED_NOTE -> item.paperStyle.displayName
+                                            }}",
+                                            fontSize = 11.sp,
+                                            color = Color(0xFF64748B)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Batal", color = Color(0xFF64748B), fontWeight = FontWeight.SemiBold)
+            }
+        },
+        shape = RoundedCornerShape(20.dp),
+        containerColor = Color.White
+    )
 }

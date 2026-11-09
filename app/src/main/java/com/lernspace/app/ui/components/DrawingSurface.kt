@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
@@ -66,30 +67,9 @@ fun DrawingSurface(
     val currentPanX by rememberUpdatedState(panX)
     val currentPanY by rememberUpdatedState(panY)
 
-    // =========================================================================
-    // COORDINATE SYSTEM (World Space):
-    //   screenX = worldX * scale + panX   →  worldX = (screenX - panX) / scale
-    //   screenY = worldY * scale + panY   →  worldY = (screenY - panY) / scale
-    //
-    // strokeToScreen (android.graphics.Matrix, used by CanvasStrokeRenderer):
-    //   postScale(scale, scale)  → postTranslate(panX, panY)
-    //   Maps: world → screen
-    //
-    // pointerEventToWorld (androidx.compose.ui.graphics.Matrix, expected by InProgressStrokes):
-    //   Compose Matrix operations post-multiply: M_new = M_prev × M_op
-    //   Compose Matrix.scale(sx,sy) then .translate(tx,ty) maps:
-    //     (x,y) → ((x + tx)*sx, (y + ty)*sy)
-    //   We want worldX = (screenX - panX) / scale, so:
-    //     tx = -panX, sx = 1/scale  →  scale(1/s, 1/s) FIRST, then translate(-panX, -panY)
-    //   This is the EXACT inverse of the strokeToScreen transform.
-    // =========================================================================
-
     val strokeToScreenMatrix = remember { Matrix() }
     val identityComposeMatrix = remember { androidx.compose.ui.graphics.Matrix() }
 
-    // Mathematically exact inverse computed by android.graphics.Matrix.invert()
-    // and mapped directly into Compose Matrix via setFrom(inv).
-    // This guarantees 100% precision for any scale & pan values!
     val pointerEventToWorldMatrix = remember(scale, panX, panY) {
         val renderMatrix = Matrix().apply {
             postScale(scale, scale)
@@ -103,11 +83,9 @@ fun DrawingSurface(
     }
 
     Box(
-        modifier = modifier
+        modifier = modifier.clipToBounds()
     ) {
         // ─── Layer 1: Completed (dry) strokes rendered with hardware canvas transform & vector LOD ───
-        // nativeCanvas.translate + nativeCanvas.scale physically locks strokes to the notebook paper,
-        // while strokeToScreenTransform = strokeToScreenMatrix feeds dynamic zoom LOD to CanvasStrokeRenderer!
         Canvas(modifier = Modifier.fillMaxSize()) {
             val s = currentScale
             val px = currentPanX
@@ -119,6 +97,10 @@ fun DrawingSurface(
 
             val nativeCanvas = drawContext.canvas.nativeCanvas
             nativeCanvas.withSave {
+                // Strict clipping to DrawingSurface viewport:
+                // Prevents strokes from ever bleeding outside their pane in split-screen mode!
+                nativeCanvas.clipRect(0f, 0f, size.width, size.height)
+
                 nativeCanvas.translate(px, py)
                 nativeCanvas.scale(s, s)
 
@@ -139,6 +121,7 @@ fun DrawingSurface(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
+                        .clipToBounds()
                         .pointerInput(Unit) {
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false)
@@ -162,15 +145,20 @@ fun DrawingSurface(
                 )
             } else {
                 // Active inking via AndroidX Ink.
-                // pointerEventToWorldMatrix is the exact mathematical inverse of strokeToScreen,
-                // so "wet" (in-progress) strokes land in the same world space as "dry" strokes.
-                InProgressStrokes(
-                    defaultBrush = currentBrush,
-                    nextBrush = onGetNextBrush,
-                    pointerEventToWorldTransform = pointerEventToWorldMatrix,
-                    strokeToWorldTransform = identityComposeMatrix,
-                    onStrokesFinished = onStrokesFinished
-                )
+                // Wrapped in clipToBounds to strictly stay inside pane boundaries.
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clipToBounds()
+                ) {
+                    InProgressStrokes(
+                        defaultBrush = currentBrush,
+                        nextBrush = onGetNextBrush,
+                        pointerEventToWorldTransform = pointerEventToWorldMatrix,
+                        strokeToWorldTransform = identityComposeMatrix,
+                        onStrokesFinished = onStrokesFinished
+                    )
+                }
             }
         }
     }
