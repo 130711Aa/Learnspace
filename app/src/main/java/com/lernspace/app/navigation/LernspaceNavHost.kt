@@ -11,6 +11,7 @@ import com.lernspace.app.ui.home.HomeViewModel
 import com.lernspace.app.ui.insights.InsightsScreen
 import com.lernspace.app.ui.learning.LearningScreen
 import com.lernspace.app.ui.planner.PlannerScreen
+import com.lernspace.app.ui.settings.SettingsScreen
 import com.lernspace.app.ui.workspace.WorkspaceScreen
 
 /**
@@ -125,6 +126,17 @@ fun LernspaceTabHost(
                         onNavigate(Screen.Workspace.route)
                     }
                 )
+            }
+        }
+
+        // Tab 6: Settings
+        if (visitedTabs.contains(Screen.Settings.route)) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .keepAliveTab(currentRoute == Screen.Settings.route)
+            ) {
+                SettingsScreen()
             }
         }
     }

@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -12,6 +13,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.lernspace.app.data.local.AppSettingsManager
+import com.lernspace.app.data.local.AppThemeMode
 import com.lernspace.app.data.repository.AcademicWorkspaceState
 import com.lernspace.app.navigation.LernspaceTabHost
 import com.lernspace.app.navigation.Screen
@@ -35,7 +38,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            LernspaceTheme {
+            val isDarkTheme = when (AppSettingsManager.themeMode) {
+                AppThemeMode.SYSTEM -> isSystemInDarkTheme()
+                AppThemeMode.LIGHT -> false
+                AppThemeMode.DARK -> true
+            }
+
+            LernspaceTheme(darkTheme = isDarkTheme) {
                 // Instant keep-alive route state
                 var currentRoute by remember { mutableStateOf(Screen.Home.route) }
                 val visitedTabs = remember { mutableStateListOf(Screen.Home.route) }

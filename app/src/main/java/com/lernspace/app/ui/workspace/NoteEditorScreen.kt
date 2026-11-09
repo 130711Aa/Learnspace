@@ -73,11 +73,7 @@ import com.lernspace.app.data.local.AcademicDatabaseManager
 import com.lernspace.app.data.local.NoteStorageManager
 import com.lernspace.app.data.repository.AcademicWorkspaceState
 import com.lernspace.app.ui.components.DrawingSurface
-import com.lernspace.app.ui.theme.AccentBlue
-import com.lernspace.app.ui.theme.LernspaceBorder
-import com.lernspace.app.ui.theme.LernspaceDark
-import com.lernspace.app.ui.theme.LernspaceSurfaceLow
-import com.lernspace.app.ui.theme.LernspaceTextSecondary
+import com.lernspace.app.ui.theme.*
 import com.lernspace.app.ui.workspace.components.DraggableImage
 import com.lernspace.app.ui.workspace.components.DraggableTextBox
 import com.lernspace.app.ui.workspace.components.NoteFloatingToolbar
@@ -87,6 +83,8 @@ import com.lernspace.app.ui.workspace.lasso.LassoSelectionState
 import com.lernspace.app.ui.workspace.model.*
 import com.lernspace.app.ui.workspace.pdf.PdfNoteHelper
 import com.lernspace.app.ui.workspace.shape.ShapeRecognizer
+import com.lernspace.app.data.local.AppSettingsManager
+import com.lernspace.app.data.local.Handedness
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -97,6 +95,9 @@ import kotlin.math.roundToInt
 // HELPER: Detect if stroke points were held stationary at the end (hold-to-refine)
 // ─────────────────────────────────────────────────────────────────────────────
 private fun isStrokeHoldAtEnd(stroke: Stroke, currentScale: Float): Boolean {
+    val threshold = AppSettingsManager.shapeSensitivity.thresholdMs
+    if (threshold == Long.MAX_VALUE) return false
+
     val inputs = stroke.inputs
     val count = inputs.size
     if (count < 8) return false
@@ -116,7 +117,7 @@ private fun isStrokeHoldAtEnd(stroke: Stroke, currentScale: Float): Boolean {
             break
         }
     }
-    return (endT - stationaryStartTime) >= 260L
+    return (endT - stationaryStartTime) >= threshold
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1403,7 +1404,8 @@ private fun NotePaneViewport(
             )
         }
 
-        // ── 3. Floating Zoom Percentage Indicator (Bottom-Start of this Pane) ──
+        // ── 3. Floating Zoom Percentage Indicator (Bottom-Start or Bottom-End for Left-Handed) ──
+        val isLeftHanded = AppSettingsManager.handedness == Handedness.LEFT_HANDED
         ZoomIndicator(
             scale = state.scale,
             panX = state.panX,
@@ -1414,8 +1416,12 @@ private fun NotePaneViewport(
                 state.panY = 0f
             },
             modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(start = 14.dp, bottom = 16.dp)
+                .align(if (isLeftHanded) Alignment.BottomEnd else Alignment.BottomStart)
+                .padding(
+                    start = if (isLeftHanded) 0.dp else 14.dp,
+                    end = if (isLeftHanded) 14.dp else 0.dp,
+                    bottom = 16.dp
+                )
         )
     }
 }
@@ -1545,229 +1551,41 @@ private fun UnifiedNoteTopBar(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.Top
     ) {
-        // ── 1. LEFT CAPSULE: Back Button + Title or Clean Tabs ──
-        Surface(
-            shape = RoundedCornerShape(24.dp),
-            color = Color.White.copy(alpha = 0.95f),
-            shadowElevation = 4.dp,
-            border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-            modifier = Modifier.widthIn(min = 180.dp, max = 340.dp)
-        ) {
-            if (!isSplitMode) {
-                // SINGLE NOTE HEADER
-                Row(
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = Color(0xFFF1F5F9),
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clickable(onClick = onBack)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back",
-                                tint = LernspaceDark,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
+        val isLeftHanded = AppSettingsManager.handedness == Handedness.LEFT_HANDED
 
-                    Column(
-                        modifier = Modifier
-                            .weight(1f, fill = false)
-                            .padding(end = 4.dp)
-                    ) {
-                        BasicTextField(
-                            value = leftTitle,
-                            onValueChange = onLeftTitleChange,
-                            textStyle = TextStyle(
-                                color = LernspaceDark,
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold
-                            ),
-                            cursorBrush = SolidColor(LernspaceDark),
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        if (leftCanvasType == NoteCanvasType.INFINITE_SCRATCHPAD) {
-                            var showPaperMenu by remember { mutableStateOf(false) }
-                            Box {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(2.dp),
-                                    modifier = Modifier.clickable { showPaperMenu = true }
-                                ) {
-                                    Text(
-                                        text = "$leftSubject · ${leftPaperStyle.displayName}",
-                                        fontSize = 11.sp,
-                                        color = AccentBlue,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Icon(
-                                        imageVector = Icons.Filled.ArrowDropDown,
-                                        contentDescription = "Ganti Kertas",
-                                        tint = AccentBlue,
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                }
-                                DropdownMenu(
-                                    expanded = showPaperMenu,
-                                    onDismissRequest = { showPaperMenu = false }
-                                ) {
-                                    PaperStyle.values().forEach { style ->
-                                        DropdownMenuItem(
-                                            text = {
-                                                Text(
-                                                    text = style.displayName,
-                                                    fontWeight = if (leftPaperStyle == style) FontWeight.Bold else FontWeight.Normal
-                                                )
-                                            },
-                                            onClick = {
-                                                onLeftChangePaperStyle(style)
-                                                showPaperMenu = false
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                        } else {
-                            Text(
-                                text = when (leftCanvasType) {
-                                    NoteCanvasType.PDF_DOCUMENT -> "$leftSubject · PDF Document (Hal $leftCurrentPage/$leftTotalPages)"
-                                    NoteCanvasType.PAGED_NOTE -> "$leftSubject · ${leftPaperStyle.displayName} (Hal $leftCurrentPage/$leftTotalPages)"
-                                    NoteCanvasType.INFINITE_SCRATCHPAD -> "$leftSubject · Scratchpad Bebas"
-                                },
-                                fontSize = 11.sp,
-                                color = Color(0xFF64748B),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-
-                    // Split Screen Toggle Button
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = Color(0xFFEFF6FF),
-                        border = BorderStroke(1.dp, AccentBlue.copy(alpha = 0.35f)),
-                        modifier = Modifier.clickable(onClick = onToggleSplitMode)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.VerticalSplit,
-                                contentDescription = "Buka Catatan Samping",
-                                tint = AccentBlue,
-                                modifier = Modifier.size(15.dp)
-                            )
-                            Text(
-                                text = "Split",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = AccentBlue
-                            )
-                        }
-                    }
-                }
-            } else {
-                // SPLIT SCREEN DUAL TABS (Clean and elegant note title tabs)
-                Row(
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = Color(0xFFF1F5F9),
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clickable(onClick = onBack)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back",
-                                tint = LernspaceDark,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
-
-                    // Tab Left Note
-                    val isLeftActive = activeNoteId == leftNoteId
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = if (isLeftActive) AccentBlue.copy(alpha = 0.12f) else Color(0xFFF8FAFC),
-                        border = BorderStroke(1.dp, if (isLeftActive) AccentBlue else Color(0xFFE2E8F0)),
-                        modifier = Modifier
-                            .weight(1f, fill = false)
-                            .clickable { onSelectActiveNote(leftNoteId) }
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(7.dp)
-                                    .background(if (isLeftActive) AccentBlue else Color(0xFF94A3B8), CircleShape)
-                            )
-                            Text(
-                                text = leftTitle,
-                                fontSize = 11.sp,
-                                fontWeight = if (isLeftActive) FontWeight.Bold else FontWeight.Medium,
-                                color = if (isLeftActive) AccentBlue else LernspaceDark,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-
-                    // Tab Right Note
-                    if (rightNoteId != null) {
-                        val isRightActive = activeNoteId == rightNoteId
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (isRightActive) AccentBlue.copy(alpha = 0.12f) else Color(0xFFF8FAFC),
-                            border = BorderStroke(1.dp, if (isRightActive) AccentBlue else Color(0xFFE2E8F0)),
-                            modifier = Modifier
-                                .weight(1f, fill = false)
-                                .clickable { onSelectActiveNote(rightNoteId) }
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(7.dp)
-                                        .background(if (isRightActive) AccentBlue else Color(0xFF94A3B8), CircleShape)
-                                )
-                                Text(
-                                    text = rightTitle ?: "Catatan 2",
-                                    fontSize = 11.sp,
-                                    fontWeight = if (isRightActive) FontWeight.Bold else FontWeight.Medium,
-                                    color = if (isRightActive) AccentBlue else LernspaceDark,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                    }
-                }
-            }
+        if (!isLeftHanded) {
+            NoteTitleCapsule(
+                isSplitMode = isSplitMode,
+                activeNoteId = activeNoteId,
+                leftNoteId = leftNoteId,
+                leftTitle = leftTitle,
+                onLeftTitleChange = onLeftTitleChange,
+                leftSubject = leftSubject,
+                leftCanvasType = leftCanvasType,
+                leftPaperStyle = leftPaperStyle,
+                leftCurrentPage = leftCurrentPage,
+                leftTotalPages = leftTotalPages,
+                onLeftChangePaperStyle = onLeftChangePaperStyle,
+                rightNoteId = rightNoteId,
+                rightTitle = rightTitle,
+                onSelectActiveNote = onSelectActiveNote,
+                onToggleSplitMode = onToggleSplitMode,
+                onBack = onBack
+            )
+        } else {
+            NoteActionsCapsule(
+                isSplitMode = isSplitMode,
+                onCloseSplit = onCloseSplit,
+                isExporting = isExporting,
+                onExportPdf = onExportPdf,
+                isDarkPaper = isDarkPaper,
+                onToggleDarkPaper = onToggleDarkPaper,
+                canUndo = canUndo,
+                onUndo = onUndo,
+                canRedo = canRedo,
+                onRedo = onRedo,
+                onClearAll = onClearAll
+            )
         }
 
         // ── 2. CENTER: Single Unified NoteFloatingToolbar ──
@@ -1787,132 +1605,423 @@ private fun UnifiedNoteTopBar(
             onPickImage = onPickImage
         )
 
-        // ── 3. RIGHT CAPSULE: Close Split (if split) + Export PDF + Undo + Redo + Clear ──
-        Surface(
-            shape = RoundedCornerShape(24.dp),
-            color = Color.White.copy(alpha = 0.95f),
-            shadowElevation = 4.dp,
-            border = BorderStroke(1.dp, Color(0xFFE2E8F0))
-        ) {
+        if (!isLeftHanded) {
+            NoteActionsCapsule(
+                isSplitMode = isSplitMode,
+                onCloseSplit = onCloseSplit,
+                isExporting = isExporting,
+                onExportPdf = onExportPdf,
+                isDarkPaper = isDarkPaper,
+                onToggleDarkPaper = onToggleDarkPaper,
+                canUndo = canUndo,
+                onUndo = onUndo,
+                canRedo = canRedo,
+                onRedo = onRedo,
+                onClearAll = onClearAll
+            )
+        } else {
+            NoteTitleCapsule(
+                isSplitMode = isSplitMode,
+                activeNoteId = activeNoteId,
+                leftNoteId = leftNoteId,
+                leftTitle = leftTitle,
+                onLeftTitleChange = onLeftTitleChange,
+                leftSubject = leftSubject,
+                leftCanvasType = leftCanvasType,
+                leftPaperStyle = leftPaperStyle,
+                leftCurrentPage = leftCurrentPage,
+                leftTotalPages = leftTotalPages,
+                onLeftChangePaperStyle = onLeftChangePaperStyle,
+                rightNoteId = rightNoteId,
+                rightTitle = rightTitle,
+                onSelectActiveNote = onSelectActiveNote,
+                onToggleSplitMode = onToggleSplitMode,
+                onBack = onBack
+            )
+        }
+    }
+}
+
+@Composable
+private fun NoteTitleCapsule(
+    isSplitMode: Boolean,
+    activeNoteId: String,
+    leftNoteId: String,
+    leftTitle: String,
+    onLeftTitleChange: (String) -> Unit,
+    leftSubject: String,
+    leftCanvasType: NoteCanvasType,
+    leftPaperStyle: PaperStyle,
+    leftCurrentPage: Int,
+    leftTotalPages: Int,
+    onLeftChangePaperStyle: (PaperStyle) -> Unit,
+    rightNoteId: String?,
+    rightTitle: String?,
+    onSelectActiveNote: (String) -> Unit,
+    onToggleSplitMode: () -> Unit,
+    onBack: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(24.dp),
+        color = LernspaceSurfaceCard.copy(alpha = 0.95f),
+        shadowElevation = 4.dp,
+        border = BorderStroke(1.dp, LernspaceBorder),
+        modifier = Modifier.widthIn(min = 180.dp, max = 340.dp)
+    ) {
+        if (!isSplitMode) {
             Row(
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = LernspaceSurfaceLow,
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clickable(onClick = onBack)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = LernspaceDark,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+
+                Column(
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .padding(end = 4.dp)
+                ) {
+                    BasicTextField(
+                        value = leftTitle,
+                        onValueChange = onLeftTitleChange,
+                        textStyle = TextStyle(
+                            color = LernspaceDark,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        cursorBrush = SolidColor(LernspaceDark),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (leftCanvasType == NoteCanvasType.INFINITE_SCRATCHPAD) {
+                        var showPaperMenu by remember { mutableStateOf(false) }
+                        Box {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                modifier = Modifier.clickable { showPaperMenu = true }
+                            ) {
+                                Text(
+                                    text = "$leftSubject · ${leftPaperStyle.displayName}",
+                                    fontSize = 11.sp,
+                                    color = AccentBlue,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Icon(
+                                    imageVector = Icons.Filled.ArrowDropDown,
+                                    contentDescription = "Ganti Kertas",
+                                    tint = AccentBlue,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = showPaperMenu,
+                                onDismissRequest = { showPaperMenu = false }
+                            ) {
+                                PaperStyle.values().forEach { style ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = style.displayName,
+                                                fontWeight = if (leftPaperStyle == style) FontWeight.Bold else FontWeight.Normal
+                                            )
+                                        },
+                                        onClick = {
+                                            onLeftChangePaperStyle(style)
+                                            showPaperMenu = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        Text(
+                            text = when (leftCanvasType) {
+                                NoteCanvasType.PDF_DOCUMENT -> "$leftSubject · PDF Document (Hal $leftCurrentPage/$leftTotalPages)"
+                                NoteCanvasType.PAGED_NOTE -> "$leftSubject · ${leftPaperStyle.displayName} (Hal $leftCurrentPage/$leftTotalPages)"
+                                NoteCanvasType.INFINITE_SCRATCHPAD -> "$leftSubject · Scratchpad Bebas"
+                            },
+                            fontSize = 11.sp,
+                            color = LernspaceTextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                // Split Screen Toggle Button
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = AccentBlueContainer.copy(alpha = 0.5f),
+                    border = BorderStroke(1.dp, AccentBlue.copy(alpha = 0.35f)),
+                    modifier = Modifier.clickable(onClick = onToggleSplitMode)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.VerticalSplit,
+                            contentDescription = "Buka Catatan Samping",
+                            tint = AccentBlue,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Text(
+                            text = "Split",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = AccentBlue
+                        )
+                    }
+                }
+            }
+        } else {
+            // SPLIT SCREEN DUAL TABS
+            Row(
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                if (isSplitMode) {
-                    // Close Split Button (Minimal red circle)
-                    Surface(
-                        shape = CircleShape,
-                        color = Color(0xFFFEE2E2),
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clickable(onClick = onCloseSplit)
+                Surface(
+                    shape = CircleShape,
+                    color = LernspaceSurfaceLow,
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clickable(onClick = onBack)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = LernspaceDark,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+
+                // Tab Left Note
+                val isLeftActive = activeNoteId == leftNoteId
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (isLeftActive) AccentBlue.copy(alpha = 0.12f) else LernspaceSurfaceLow,
+                    border = BorderStroke(1.dp, if (isLeftActive) AccentBlue else LernspaceBorder),
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .clickable { onSelectActiveNote(leftNoteId) }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Filled.Close,
-                                contentDescription = "Tutup Split Screen",
-                                tint = Color(0xFFDC2626),
-                                modifier = Modifier.size(17.dp)
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .background(if (isLeftActive) AccentBlue else Color(0xFF94A3B8), CircleShape)
+                        )
+                        Text(
+                            text = leftTitle,
+                            fontSize = 11.sp,
+                            fontWeight = if (isLeftActive) FontWeight.Bold else FontWeight.Medium,
+                            color = if (isLeftActive) AccentBlue else LernspaceDark,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                // Tab Right Note
+                if (rightNoteId != null) {
+                    val isRightActive = activeNoteId == rightNoteId
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isRightActive) AccentBlue.copy(alpha = 0.12f) else LernspaceSurfaceLow,
+                        border = BorderStroke(1.dp, if (isRightActive) AccentBlue else LernspaceBorder),
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .clickable { onSelectActiveNote(rightNoteId) }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(7.dp)
+                                    .background(if (isRightActive) AccentBlue else Color(0xFF94A3B8), CircleShape)
+                            )
+                            Text(
+                                text = rightTitle ?: "Catatan 2",
+                                fontSize = 11.sp,
+                                fontWeight = if (isRightActive) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isRightActive) AccentBlue else LernspaceDark,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
-
-                    VerticalDivider(modifier = Modifier.height(20.dp), color = Color(0xFFE2E8F0))
                 }
+            }
+        }
+    }
+}
 
-                // Export PDF Button
-                Surface(
-                    shape = CircleShape,
-                    color = Color(0xFFEFF6FF),
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clickable(enabled = !isExporting, onClick = onExportPdf)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        if (isExporting) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = AccentBlue)
-                        } else {
-                            Icon(
-                                imageVector = Icons.Filled.Share,
-                                contentDescription = "Export PDF",
-                                tint = AccentBlue,
-                                modifier = Modifier.size(17.dp)
-                            )
-                        }
-                    }
-                }
-
-                // Dark Paper Toggle Button (Dynamic Situational Dark/Light Mode with Smart Inversion)
-                Surface(
-                    shape = CircleShape,
-                    color = if (isDarkPaper) Color(0xFF1E293B) else Color(0xFFF1F5F9),
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clickable(onClick = onToggleDarkPaper)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = if (isDarkPaper) Icons.Filled.DarkMode else Icons.Filled.LightMode,
-                            contentDescription = if (isDarkPaper) "Mode Kertas Gelap (Aktif)" else "Mode Kertas Terang",
-                            tint = if (isDarkPaper) Color(0xFFFBBF24) else Color(0xFF64748B),
-                            modifier = Modifier.size(17.dp)
-                        )
-                    }
-                }
-
-                // Undo
-                Surface(
-                    shape = CircleShape,
-                    color = if (canUndo) Color(0xFFF1F5F9) else Color.Transparent,
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clickable(enabled = canUndo, onClick = onUndo)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.Undo,
-                            contentDescription = "Undo",
-                            tint = if (canUndo) LernspaceDark else Color(0xFFCBD5E1),
-                            modifier = Modifier.size(17.dp)
-                        )
-                    }
-                }
-
-                // Redo
-                Surface(
-                    shape = CircleShape,
-                    color = if (canRedo) Color(0xFFF1F5F9) else Color.Transparent,
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clickable(enabled = canRedo, onClick = onRedo)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.Redo,
-                            contentDescription = "Redo",
-                            tint = if (canRedo) LernspaceDark else Color(0xFFCBD5E1),
-                            modifier = Modifier.size(17.dp)
-                        )
-                    }
-                }
-
-                // Clear Canvas
+@Composable
+private fun NoteActionsCapsule(
+    isSplitMode: Boolean,
+    onCloseSplit: () -> Unit,
+    isExporting: Boolean,
+    onExportPdf: () -> Unit,
+    isDarkPaper: Boolean,
+    onToggleDarkPaper: () -> Unit,
+    canUndo: Boolean,
+    onUndo: () -> Unit,
+    canRedo: Boolean,
+    onRedo: () -> Unit,
+    onClearAll: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(24.dp),
+        color = LernspaceSurfaceCard.copy(alpha = 0.95f),
+        shadowElevation = 4.dp,
+        border = BorderStroke(1.dp, LernspaceBorder)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            if (isSplitMode) {
                 Surface(
                     shape = CircleShape,
                     color = Color(0xFFFEE2E2),
                     modifier = Modifier
                         .size(36.dp)
-                        .clickable(onClick = onClearAll)
+                        .clickable(onClick = onCloseSplit)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
-                            imageVector = Icons.Filled.DeleteSweep,
-                            contentDescription = "Clear all",
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Tutup Split Screen",
                             tint = Color(0xFFDC2626),
                             modifier = Modifier.size(17.dp)
                         )
                     }
+                }
+
+                VerticalDivider(modifier = Modifier.height(20.dp), color = LernspaceBorder)
+            }
+
+            // Export PDF Button
+            Surface(
+                shape = CircleShape,
+                color = AccentBlueContainer.copy(alpha = 0.5f),
+                modifier = Modifier
+                    .size(36.dp)
+                    .clickable(enabled = !isExporting, onClick = onExportPdf)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    if (isExporting) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = AccentBlue)
+                    } else {
+                        Icon(
+                            imageVector = Icons.Filled.Share,
+                            contentDescription = "Export PDF",
+                            tint = AccentBlue,
+                            modifier = Modifier.size(17.dp)
+                        )
+                    }
+                }
+            }
+
+            // Dark Paper Toggle Button
+            Surface(
+                shape = CircleShape,
+                color = if (isDarkPaper) Color(0xFF1E293B) else LernspaceSurfaceLow,
+                modifier = Modifier
+                    .size(36.dp)
+                    .clickable(onClick = onToggleDarkPaper)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = if (isDarkPaper) Icons.Filled.DarkMode else Icons.Filled.LightMode,
+                        contentDescription = if (isDarkPaper) "Mode Kertas Gelap (Aktif)" else "Mode Kertas Terang",
+                        tint = if (isDarkPaper) Color(0xFFFBBF24) else LernspaceTextSecondary,
+                        modifier = Modifier.size(17.dp)
+                    )
+                }
+            }
+
+            // Undo
+            Surface(
+                shape = CircleShape,
+                color = if (canUndo) LernspaceSurfaceLow else Color.Transparent,
+                modifier = Modifier
+                    .size(36.dp)
+                    .clickable(enabled = canUndo, onClick = onUndo)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Undo,
+                        contentDescription = "Undo",
+                        tint = if (canUndo) LernspaceDark else LernspaceBorder,
+                        modifier = Modifier.size(17.dp)
+                    )
+                }
+            }
+
+            // Redo
+            Surface(
+                shape = CircleShape,
+                color = if (canRedo) LernspaceSurfaceLow else Color.Transparent,
+                modifier = Modifier
+                    .size(36.dp)
+                    .clickable(enabled = canRedo, onClick = onRedo)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Redo,
+                        contentDescription = "Redo",
+                        tint = if (canRedo) LernspaceDark else LernspaceBorder,
+                        modifier = Modifier.size(17.dp)
+                    )
+                }
+            }
+
+            // Clear Canvas
+            Surface(
+                shape = CircleShape,
+                color = Color(0xFFFEE2E2),
+                modifier = Modifier
+                    .size(36.dp)
+                    .clickable(onClick = onClearAll)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Filled.DeleteSweep,
+                        contentDescription = "Clear all",
+                        tint = Color(0xFFDC2626),
+                        modifier = Modifier.size(17.dp)
+                    )
                 }
             }
         }

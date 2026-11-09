@@ -29,6 +29,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.lernspace.app.data.local.AppSettingsManager
 import com.lernspace.app.data.repository.AcademicWorkspaceState
 import com.lernspace.app.ui.theme.*
 import com.lernspace.app.ui.workspace.model.*
@@ -575,7 +576,7 @@ private fun CreateNoteDialog(
     val context = LocalContext.current
     var title by remember { mutableStateOf("") }
     var selectedCanvasType by remember { mutableStateOf(NoteCanvasType.PAGED_NOTE) }
-    var selectedPaperStyle by remember { mutableStateOf(PaperStyle.RULED) }
+    var selectedPaperStyle by remember { mutableStateOf(AppSettingsManager.defaultPaperStyle) }
 
     var selectedPdfUri by remember { mutableStateOf<String?>(null) }
     var selectedPdfName by remember { mutableStateOf<String?>(null) }

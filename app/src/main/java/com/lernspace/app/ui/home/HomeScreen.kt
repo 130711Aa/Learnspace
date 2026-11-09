@@ -41,6 +41,7 @@ fun HomeScreen(
     val tasks = AcademicWorkspaceState.tasks
     val weeklyClasses = AcademicWorkspaceState.weeklyClasses
 
+    val isDark = LocalIsDarkTheme.current
     var showAddTaskDialog by remember { mutableStateOf(false) }
 
     // Computed values (memoized to avoid redundant re-filtering)
@@ -91,7 +92,7 @@ fun HomeScreen(
                     Text(
                         text = "Senin, 8 Nov 2026",
                         style = MaterialTheme.typography.labelSmall,
-                        color = AccentBlue,
+                        color = LernspaceTextSecondary,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                     )
@@ -110,18 +111,22 @@ fun HomeScreen(
                         AcademicWorkspaceState.openNoteEditor(newScratchpad)
                     },
                     shape = RoundedCornerShape(10.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder),
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
                 ) {
-                    Icon(Icons.Filled.Draw, null, modifier = Modifier.size(16.dp), tint = AccentBlue)
+                    Icon(Icons.Filled.Draw, null, modifier = Modifier.size(16.dp), tint = LernspaceDark)
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Catatan Cepat", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = AccentBlue)
+                    Text("Catatan Cepat", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = LernspaceDark)
                 }
 
                 // Input Tugas button
                 Button(
                     onClick = { showAddTaskDialog = true },
                     shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark, contentColor = Color.White),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isDark) Color.White else Color.Black,
+                        contentColor = if (isDark) Color.Black else Color.White
+                    ),
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
                 ) {
                     Icon(Icons.Filled.AddAlert, null, modifier = Modifier.size(16.dp))
@@ -258,7 +263,10 @@ fun HomeScreen(
                                                 }
                                             },
                                             shape = RoundedCornerShape(8.dp),
-                                            colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = if (isDark) Color.White else Color.Black,
+                                                contentColor = if (isDark) Color.Black else Color.White
+                                            ),
                                             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
                                         ) {
                                             Icon(Icons.Filled.Draw, null, modifier = Modifier.size(15.dp))
@@ -270,6 +278,7 @@ fun HomeScreen(
                                         OutlinedButton(
                                             onClick = { onNavigateToScreen(Screen.Learning.route) },
                                             shape = RoundedCornerShape(8.dp),
+                                            border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder),
                                             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
                                         ) {
                                             Icon(Icons.Filled.AutoStories, null, modifier = Modifier.size(15.dp), tint = LernspaceDark)
@@ -324,13 +333,24 @@ fun HomeScreen(
                                         }
                                     }
 
-                                    Text(
-                                        text = "Buka Jadwal Penuh ->",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = AccentBlue,
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
                                         modifier = Modifier.clickable { onNavigateToScreen(Screen.Planner.route) }
-                                    )
+                                    ) {
+                                        Text(
+                                            text = "Buka Jadwal Penuh",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = LernspaceDark
+                                        )
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                            contentDescription = null,
+                                            tint = LernspaceDark,
+                                            modifier = Modifier.size(13.dp)
+                                        )
+                                    }
                                 }
 
                                 if (mondayClasses.isEmpty()) {
@@ -443,13 +463,24 @@ fun HomeScreen(
                                         }
                                     }
 
-                                    Text(
-                                        text = "Buka Daftar Tugas ->",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = AccentBlue,
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
                                         modifier = Modifier.clickable { onNavigateToScreen(Screen.Planner.route) }
-                                    )
+                                    ) {
+                                        Text(
+                                            text = "Buka Daftar Tugas",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = LernspaceDark
+                                        )
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                            contentDescription = null,
+                                            tint = LernspaceDark,
+                                            modifier = Modifier.size(13.dp)
+                                        )
+                                    }
                                 }
 
                                 if (pendingTasks.isEmpty()) {
@@ -654,13 +685,24 @@ fun HomeScreen(
                                         fontWeight = FontWeight.Bold,
                                         color = LernspaceDark
                                     )
-                                    Text(
-                                        text = "Ke Workspace ->",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = AccentBlue,
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
                                         modifier = Modifier.clickable { onNavigateToScreen(Screen.Workspace.route) }
-                                    )
+                                    ) {
+                                        Text(
+                                            text = "Ke Workspace",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = LernspaceDark
+                                        )
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                            contentDescription = null,
+                                            tint = LernspaceDark,
+                                            modifier = Modifier.size(13.dp)
+                                        )
+                                    }
                                 }
 
                                 if (recentNotes.isEmpty()) {
@@ -760,13 +802,24 @@ fun HomeScreen(
                                         fontWeight = FontWeight.Bold,
                                         color = LernspaceDark
                                     )
-                                    Text(
-                                        text = "Ke Silabus ->",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = AccentBlue,
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
                                         modifier = Modifier.clickable { onNavigateToScreen(Screen.Learning.route) }
-                                    )
+                                    ) {
+                                        Text(
+                                            text = "Ke Silabus",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = LernspaceDark
+                                        )
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                            contentDescription = null,
+                                            tint = LernspaceDark,
+                                            modifier = Modifier.size(13.dp)
+                                        )
+                                    }
                                 }
 
                                 if (subjects.isEmpty()) {

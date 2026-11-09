@@ -2,6 +2,7 @@ package com.lernspace.app
 
 import android.app.Application
 import com.lernspace.app.data.local.AcademicDatabaseManager
+import com.lernspace.app.data.local.AppSettingsManager
 import com.lernspace.app.data.local.LernspaceDatabase
 import com.lernspace.app.data.repository.SubjectRepository
 import com.lernspace.app.data.repository.TaskRepository
@@ -22,6 +23,7 @@ class LernspaceApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        AppSettingsManager.init(this)
         AcademicDatabaseManager.init(database, this)
     }
 }

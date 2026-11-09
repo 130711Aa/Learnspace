@@ -58,7 +58,7 @@ fun GlobalSearchPill(
             .clickable { onClick() },
         shape = CircleShape,
         color = LernspaceSurfaceLow,
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E4E8))
+        border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder)
     ) {
         Row(
             modifier = Modifier
@@ -69,7 +69,7 @@ fun GlobalSearchPill(
             Icon(
                 imageVector = Icons.Filled.Search,
                 contentDescription = "Search",
-                tint = Color(0xFF45474C),
+                tint = LernspaceTextSecondary,
                 modifier = Modifier.size(18.dp)
             )
 
@@ -77,7 +77,7 @@ fun GlobalSearchPill(
 
             Text(
                 text = "Search concepts, citations, syllabi...",
-                color = Color(0xFF75777D),
+                color = LernspaceTextSecondary,
                 fontSize = 13.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
