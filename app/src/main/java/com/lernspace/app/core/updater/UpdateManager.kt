@@ -39,7 +39,7 @@ object UpdateManager {
      * Checks GitHub Releases API for the latest release (including stable and pre-release)
      * and compares with current app version.
      */
-    suspend fun checkForUpdates(currentVersion: String = "1.0.0"): Result<AppReleaseInfo> = withContext(Dispatchers.IO) {
+    suspend fun checkForUpdates(currentVersion: String = "1.1.0"): Result<AppReleaseInfo> = withContext(Dispatchers.IO) {
         try {
             val url = URL(API_URL)
             val connection = (url.openConnection() as HttpURLConnection).apply {

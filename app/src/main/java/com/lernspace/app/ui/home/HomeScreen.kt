@@ -393,7 +393,7 @@ fun HomeScreen(
                                                         )
                                                         Column {
                                                             Text(
-                                                                text = "${c.subjectName} (${c.subjectCode})",
+                                                                text = if (c.subjectCode.isNotBlank()) "${c.subjectName} (${c.subjectCode})" else c.subjectName,
                                                                 fontSize = 13.sp,
                                                                 fontWeight = FontWeight.Bold,
                                                                 color = LernspaceDark

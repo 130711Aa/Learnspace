@@ -14,7 +14,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.MenuBook
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -28,10 +28,19 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.zIndex
 import com.lernspace.app.data.repository.*
+import com.lernspace.app.ui.learning.TopicStatus
+import com.lernspace.app.ui.learning.TopicUi
+import com.lernspace.app.ui.components.WheelTimePicker
+import com.lernspace.app.ui.planner.ocr.ImportKrsDialog
 import com.lernspace.app.ui.theme.*
 import com.lernspace.app.ui.workspace.NoteEditorScreen
 import com.lernspace.app.ui.workspace.model.NoteUiModel
+import java.time.DayOfWeek
+import java.time.LocalDate
+import java.time.LocalTime
+import java.util.Locale
 import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -59,8 +68,11 @@ fun PlannerScreen(
 
     var showAddTaskDialog by remember { mutableStateOf(false) }
     var showAddWeeklyClassDialog by remember { mutableStateOf(false) }
+    var showImportKrsDialog by remember { mutableStateOf(false) }
     var showHybridSuggestDialog by remember { mutableStateOf(false) }
+    var showAddDayAgendaDialog by remember { mutableStateOf(false) }
     var selectedCalendarDay by remember { mutableIntStateOf(8) } // Selected date in Nov 2026
+    var selectedDayAgendaOffset by remember { mutableIntStateOf(0) }
 
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -102,27 +114,71 @@ fun PlannerScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Add Task / Deadline button
-                Button(
-                    onClick = { showAddTaskDialog = true },
-                    shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark, contentColor = Color.White),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
-                ) {
-                    Icon(imageVector = Icons.Filled.AddAlert, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Input Tugas", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                }
+                if (selectedTab == 3) {
+                    Button(
+                        onClick = { showHybridSuggestDialog = true },
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark, contentColor = Color.White),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                    ) {
+                        Icon(imageVector = Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Auto-Study", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
 
-                // Set Weekly Class button
-                OutlinedButton(
-                    onClick = { showAddWeeklyClassDialog = true },
-                    shape = RoundedCornerShape(10.dp),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
-                ) {
-                    Icon(imageVector = Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Set Jadwal Mapel", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = LernspaceDark)
+                    OutlinedButton(
+                        onClick = { showAddDayAgendaDialog = true },
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                    ) {
+                        Icon(imageVector = Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Tambah Agenda", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = LernspaceDark)
+                    }
+                } else if (selectedTab == 2) {
+                    OutlinedButton(
+                        onClick = { showImportKrsDialog = true },
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                    ) {
+                        Icon(imageVector = Icons.Filled.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp), tint = LernspaceDark)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Paste Teks Jadwal", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                    }
+
+                    Button(
+                        onClick = { showAddWeeklyClassDialog = true },
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark, contentColor = Color.White),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                    ) {
+                        Icon(imageVector = Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Set Jadwal Mapel", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                } else {
+                    // Add Task / Deadline button
+                    Button(
+                        onClick = { showAddTaskDialog = true },
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark, contentColor = Color.White),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                    ) {
+                        Icon(imageVector = Icons.Filled.AddAlert, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Input Tugas", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    // Set Weekly Class button
+                    OutlinedButton(
+                        onClick = { showAddWeeklyClassDialog = true },
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                    ) {
+                        Icon(imageVector = Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Set Jadwal Mapel", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = LernspaceDark)
+                    }
                 }
             }
         }
@@ -217,6 +273,7 @@ fun PlannerScreen(
                     weeklyClasses = weeklyClasses,
                     subjects = subjects,
                     onAddClass = { showAddWeeklyClassDialog = true },
+                    onOpenImportKrs = { showImportKrsDialog = true },
                     onDeleteClass = {
                         weeklyClasses.remove(it)
                         com.lernspace.app.data.local.AcademicDatabaseManager.deleteCalendarEvent(it.id)
@@ -228,13 +285,42 @@ fun PlannerScreen(
                     weeklyClasses = weeklyClasses,
                     tasks = tasks,
                     subjects = subjects,
+                    selectedDayOffset = selectedDayAgendaOffset,
+                    onSelectDayOffset = { selectedDayAgendaOffset = it },
                     onAcceptSuggestion = { id -> AcademicWorkspaceState.acceptHybridSuggestion(id) },
-                    onToggleComplete = { item ->
+                    onTogglePlannerComplete = { item ->
                         val idx = scheduleItems.indexOfFirst { it.id == item.id }
                         if (idx != -1) {
                             val updated = item.copy(isCompleted = !item.isCompleted)
                             scheduleItems[idx] = updated
                             com.lernspace.app.data.local.AcademicDatabaseManager.persistPlannerItem(updated)
+                        }
+                    },
+                    onToggleTaskComplete = { taskId ->
+                        AcademicWorkspaceState.toggleTaskCompletion(taskId)
+                    },
+                    onOpenNoteForSubject = { subjectId, subjectName ->
+                        val existingNote = notes.find { it.subjectId == subjectId }
+                        if (existingNote != null) {
+                            AcademicWorkspaceState.openNoteEditor(existingNote)
+                        } else {
+                            val subj = subjects.find { it.id == subjectId }
+                            if (subj != null) {
+                                val newNote = AcademicWorkspaceState.createNoteForTopic(
+                                    subj,
+                                    TopicUi(
+                                        id = UUID.randomUUID().toString(),
+                                        subjectId = subj.id,
+                                        title = "Catatan ${subj.name}",
+                                        description = "",
+                                        status = TopicStatus.LEARNING
+                                    )
+                                )
+                                AcademicWorkspaceState.openNoteEditor(newNote)
+                            } else {
+                                val newNote = AcademicWorkspaceState.createScratchpad(subjectName ?: "Catatan Kuliah")
+                                AcademicWorkspaceState.openNoteEditor(newNote)
+                            }
                         }
                     },
                     onOpenNoteForTopic = { topicId, topicTitle, subjectId, subjectName ->
@@ -259,6 +345,7 @@ fun PlannerScreen(
                         }
                     },
                     onAutoSchedule = { showHybridSuggestDialog = true },
+                    onAddManualAgenda = { showAddDayAgendaDialog = true },
                     onDeleteItem = {
                         scheduleItems.remove(it)
                         com.lernspace.app.data.local.AcademicDatabaseManager.deleteCalendarEvent(it.id)
@@ -316,8 +403,68 @@ fun PlannerScreen(
                     type = type
                 )
                 weeklyClasses.add(newClass)
-                com.lernspace.app.data.local.AcademicDatabaseManager.persistWeeklyClass(newClass)
-                showAddWeeklyClassDialog = false
+                com.lernspace.app.data.local.AcademicDatabaseManager.persistWeeklyClass(newClass, subject)
+            }
+        )
+    }
+
+    // ── Dialog: Smart Import Jadwal KRS (ML Kit OCR & Fast Paste) ────────────
+    if (showImportKrsDialog) {
+        ImportKrsDialog(
+            onDismiss = { showImportKrsDialog = false },
+            onConfirmImport = { items ->
+                val colorPalette = listOf(
+                    AccentBlue,
+                    AccentTeal,
+                    Color(0xFF8B5CF6),
+                    Color(0xFFF59E0B),
+                    Color(0xFFEC4899),
+                    Color(0xFF10B981),
+                    Color(0xFF6366F1)
+                )
+
+                val newSubjectsList = mutableListOf<com.lernspace.app.ui.learning.SubjectUi>()
+                val newClassesList = mutableListOf<WeeklyClassUi>()
+
+                items.forEachIndexed { index, parsed ->
+                    // 1. Find or create Subject
+                    var subj = subjects.find { it.name.equals(parsed.subjectName, ignoreCase = true) }
+                    if (subj == null) {
+                        val color = colorPalette[(subjects.size + newSubjectsList.size) % colorPalette.size]
+                        subj = com.lernspace.app.ui.learning.SubjectUi(
+                            id = UUID.randomUUID().toString(),
+                            name = parsed.subjectName,
+                            code = parsed.subjectCode.trim(),
+                            description = "Jadwal dari paste teks",
+                            color = color
+                        )
+                        subjects.add(subj)
+                        newSubjectsList.add(subj)
+                    }
+
+                    // 2. Create WeeklyClassUi
+                    val newClass = WeeklyClassUi(
+                        id = UUID.randomUUID().toString(),
+                        subjectId = subj.id,
+                        subjectName = subj.name,
+                        subjectCode = subj.code,
+                        dayOfWeek = parsed.dayOfWeek,
+                        startTime = parsed.startTime,
+                        endTime = parsed.endTime,
+                        room = parsed.room.ifBlank { null },
+                        lecturer = parsed.lecturer.ifBlank { null },
+                        type = "Lecture"
+                    )
+                    weeklyClasses.add(newClass)
+                    newClassesList.add(newClass)
+                }
+
+                // Batch persist safely to SQLite
+                com.lernspace.app.data.local.AcademicDatabaseManager.importWeeklyClassesBatch(
+                    newSubjects = newSubjectsList,
+                    newClasses = newClassesList
+                )
+                showImportKrsDialog = false
             }
         )
     }
@@ -327,25 +474,59 @@ fun PlannerScreen(
         HybridSuggestDialog(
             subjects = subjects,
             topics = topics,
+            weeklyClasses = weeklyClasses,
+            tasks = tasks,
+            scheduleItems = scheduleItems,
+            initialDayOffset = selectedDayAgendaOffset,
             onDismiss = { showHybridSuggestDialog = false },
-            onAccept = { subject, topic, durationMinutes, startStr, endStr, reason ->
-                scheduleItems.add(
-                    PlannerItemUi(
-                        id = UUID.randomUUID().toString(),
-                        title = "Hybrid Review: ${topic.title}",
-                        type = ScheduleType.HYBRID_SUGGESTION,
-                        startTime = startStr,
-                        endTime = endStr,
-                        dayOfWeek = 1,
-                        dayOffset = 0,
-                        subjectId = subject.id,
-                        subjectName = subject.name,
-                        topicId = topic.id,
-                        topicName = topic.title,
-                        aiReason = reason
-                    )
+            onAccept = { subject, customSubjectName, topic, customTopicName, durationMinutes, dayOffset, dayOfWeek, startStr, endStr, reason ->
+                val finalSubName = subject?.name ?: customSubjectName.ifBlank { "Belajar Mandiri" }
+                val finalTopicTitle = topic?.title ?: customTopicName.ifBlank { "Sesi Fokus Mandiri" }
+                val newItem = PlannerItemUi(
+                    id = UUID.randomUUID().toString(),
+                    title = "Hybrid Review: $finalTopicTitle",
+                    type = ScheduleType.HYBRID_SUGGESTION,
+                    startTime = startStr,
+                    endTime = endStr,
+                    dayOfWeek = dayOfWeek,
+                    dayOffset = dayOffset,
+                    subjectId = subject?.id,
+                    subjectName = finalSubName,
+                    topicId = topic?.id,
+                    topicName = finalTopicTitle,
+                    aiReason = reason
                 )
+                scheduleItems.add(newItem)
+                com.lernspace.app.data.local.AcademicDatabaseManager.persistPlannerItem(newItem)
                 showHybridSuggestDialog = false
+            }
+        )
+    }
+
+    // ── Dialog: Input Day Agenda Manual ──────────────────────────────────────
+    if (showAddDayAgendaDialog) {
+        InputDayAgendaDialog(
+            subjects = subjects,
+            initialDayOffset = selectedDayAgendaOffset,
+            onDismiss = { showAddDayAgendaDialog = false },
+            onConfirm = { title, type, subject, customSubjectName, startTime, endTime, dayOffset, dayOfWeek, room ->
+                val finalSubName = subject?.name ?: customSubjectName.ifBlank { null }
+                val newItem = PlannerItemUi(
+                    id = UUID.randomUUID().toString(),
+                    title = title,
+                    type = type,
+                    startTime = startTime,
+                    endTime = endTime,
+                    dayOfWeek = dayOfWeek,
+                    dayOffset = dayOffset,
+                    subjectId = subject?.id,
+                    subjectName = finalSubName,
+                    locationOrRoom = room.ifBlank { null },
+                    isCompleted = false
+                )
+                scheduleItems.add(newItem)
+                com.lernspace.app.data.local.AcademicDatabaseManager.persistPlannerItem(newItem)
+                showAddDayAgendaDialog = false
             }
         )
     }
@@ -768,7 +949,12 @@ private fun CalendarDeadlineFullView(
                                                     Text(text = c.type, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = subColor, modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp))
                                                 }
                                             }
-                                            Text(text = "${c.subjectName} (${c.subjectCode})", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                                            Text(
+                                                text = if (c.subjectCode.isNotBlank()) "${c.subjectName} (${c.subjectCode})" else c.subjectName,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = LernspaceDark
+                                            )
                                             if (c.room != null) {
                                                 Text(text = "Ruang: ${c.room}", fontSize = 10.sp, color = LernspaceTextSecondary)
                                             }
@@ -811,46 +997,44 @@ private fun TaskListView(
     val highPriorityPending = tasks.count { it.priority.uppercase() == "HIGH" && !it.isCompleted }
 
     // Filtered and sorted tasks
-    val filteredTasks = remember(tasks.size, tasks.map { it.isCompleted }, searchQuery, selectedStatusFilter, selectedPriorityFilter, selectedSubjectId, sortBy) {
-        tasks.filter { task ->
-            val matchQuery = searchQuery.isBlank() ||
-                    task.title.contains(searchQuery, ignoreCase = true) ||
-                    (task.subjectName?.contains(searchQuery, ignoreCase = true) == true) ||
-                    (task.topicName?.contains(searchQuery, ignoreCase = true) == true) ||
-                    task.notes.contains(searchQuery, ignoreCase = true)
+    val filteredTasks = tasks.filter { task ->
+        val matchQuery = searchQuery.isBlank() ||
+                task.title.contains(searchQuery, ignoreCase = true) ||
+                (task.subjectName?.contains(searchQuery, ignoreCase = true) == true) ||
+                (task.topicName?.contains(searchQuery, ignoreCase = true) == true) ||
+                task.notes.contains(searchQuery, ignoreCase = true)
 
-            val matchStatus = when (selectedStatusFilter) {
-                "PENDING" -> !task.isCompleted
-                "COMPLETED" -> task.isCompleted
-                else -> true
+        val matchStatus = when (selectedStatusFilter) {
+            "PENDING" -> !task.isCompleted
+            "COMPLETED" -> task.isCompleted
+            else -> true
+        }
+
+        val matchPriority = when (selectedPriorityFilter) {
+            "ALL" -> true
+            else -> task.priority.equals(selectedPriorityFilter, ignoreCase = true)
+        }
+
+        val matchSubject = when (selectedSubjectId) {
+            "ALL" -> true
+            else -> task.subjectId == selectedSubjectId
+        }
+
+        matchQuery && matchStatus && matchPriority && matchSubject
+    }.sortedWith { a, b ->
+        when (sortBy) {
+            "PRIORITY" -> {
+                val pA = if (a.priority.uppercase() == "HIGH") 0 else if (a.priority.uppercase() == "MEDIUM") 1 else 2
+                val pB = if (b.priority.uppercase() == "HIGH") 0 else if (b.priority.uppercase() == "MEDIUM") 1 else 2
+                if (pA != pB) pA.compareTo(pB) else a.dueDayNumber.compareTo(b.dueDayNumber)
             }
-
-            val matchPriority = when (selectedPriorityFilter) {
-                "ALL" -> true
-                else -> task.priority.equals(selectedPriorityFilter, ignoreCase = true)
-            }
-
-            val matchSubject = when (selectedSubjectId) {
-                "ALL" -> true
-                else -> task.subjectId == selectedSubjectId
-            }
-
-            matchQuery && matchStatus && matchPriority && matchSubject
-        }.sortedWith { a, b ->
-            when (sortBy) {
-                "PRIORITY" -> {
-                    val pA = if (a.priority.uppercase() == "HIGH") 0 else if (a.priority.uppercase() == "MEDIUM") 1 else 2
-                    val pB = if (b.priority.uppercase() == "HIGH") 0 else if (b.priority.uppercase() == "MEDIUM") 1 else 2
-                    if (pA != pB) pA.compareTo(pB) else a.dueDayNumber.compareTo(b.dueDayNumber)
-                }
-                "TITLE" -> a.title.compareTo(b.title, ignoreCase = true)
-                else -> {
-                    // DUE_DATE: pending first, then by dueDayNumber
-                    if (a.isCompleted != b.isCompleted) {
-                        a.isCompleted.compareTo(b.isCompleted)
-                    } else {
-                        a.dueDayNumber.compareTo(b.dueDayNumber)
-                    }
+            "TITLE" -> a.title.compareTo(b.title, ignoreCase = true)
+            else -> {
+                // DUE_DATE: pending first, then by dueDayNumber
+                if (a.isCompleted != b.isCompleted) {
+                    a.isCompleted.compareTo(b.isCompleted)
+                } else {
+                    a.dueDayNumber.compareTo(b.dueDayNumber)
                 }
             }
         }
@@ -1399,13 +1583,29 @@ private fun TaskListItemCard(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// VIEW 2: Jadwal Mapel Mingguan Builder (Weekly Class Schedule Mading Board)
+// VIEW 2: Jadwal Mapel Mingguan Timetable Grid
+// Lebar blok = kolom hari, Tinggi blok = durasi pelajaran (proporsional waktu)
 // ─────────────────────────────────────────────────────────────────────────────
+
+private fun parseTimeToMinutes(t: String): Int {
+    val parts = t.split(":")
+    val h = parts.getOrNull(0)?.trim()?.toIntOrNull() ?: 0
+    val m = parts.getOrNull(1)?.trim()?.toIntOrNull() ?: 0
+    return h * 60 + m
+}
+
+private fun formatMinutesToTime(mins: Int): String {
+    val h = (mins / 60) % 24
+    val m = mins % 60
+    return String.format(Locale.US, "%02d:%02d", h, m)
+}
+
 @Composable
 private fun WeeklyTimetableBuilderView(
     weeklyClasses: List<WeeklyClassUi>,
     subjects: List<com.lernspace.app.ui.learning.SubjectUi>,
     onAddClass: () -> Unit,
+    onOpenImportKrs: () -> Unit = {},
     onDeleteClass: (WeeklyClassUi) -> Unit
 ) {
     val weekDays = listOf(
@@ -1418,23 +1618,33 @@ private fun WeeklyTimetableBuilderView(
         Pair(7, "Minggu")
     )
 
-    // Dynamic hour interval calculation based on registered classes (default 07:00 to 18:00)
-    val minClassHour = weeklyClasses.mapNotNull { it.startTime.substringBefore(":").trim().toIntOrNull() }.minOrNull() ?: 7
-    val maxClassHour = weeklyClasses.mapNotNull { it.endTime.substringBefore(":").trim().toIntOrNull() }.maxOrNull() ?: 17
+    // Dynamic hour range: at least 07:00 to 20:00, or expands if classes fall outside
+    val minClassHour = weeklyClasses.mapNotNull { it.startTime.split(":").firstOrNull()?.trim()?.toIntOrNull() }.minOrNull() ?: 7
+    val maxClassHour = weeklyClasses.mapNotNull { it.endTime.split(":").firstOrNull()?.trim()?.toIntOrNull() }.maxOrNull() ?: 18
     val startHour = minOf(7, minClassHour)
-    val endHour = maxOf(18, maxClassHour)
-    val hourSlots = (startHour..endHour).toList()
+    val endHour = maxOf(20, maxClassHour + 1)
+    val totalHours = endHour - startHour
+    val hourSlots = (startHour until endHour).toList()
 
-    val timeColWidth = 72.dp
-    val dayColWidth = 142.dp
+    val hourHeight = 60.dp // 1 hour = 60dp => 1 minute = 1dp!
+    val totalGridHeight = (totalHours * 60).dp
+
+    val timeColWidth = 64.dp
+    val dayColWidth = 148.dp
+
     val horizontalScrollState = rememberScrollState()
+    val verticalScrollState = rememberScrollState()
+
+    val todayDayOfWeek = remember { LocalDate.now().dayOfWeek.value } // 1=Mon .. 7=Sun
+    val now = LocalTime.now()
+    val currentMinsNow = now.hour * 60 + now.minute
 
     Surface(
         modifier = Modifier.fillMaxSize(),
         shape = RoundedCornerShape(16.dp),
         color = LernspaceSurfaceCard,
         border = BorderStroke(1.dp, LernspaceBorder),
-        shadowElevation = 1.dp
+        shadowElevation = 0.5.dp
     ) {
         Column(
             modifier = Modifier
@@ -1442,21 +1652,36 @@ private fun WeeklyTimetableBuilderView(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // Header
+            // Header Bar
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "Jadwal Mata Pelajaran / Kuliah Mingguan",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = LernspaceDark
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = LernspaceSurfaceLow,
+                            border = BorderStroke(1.dp, LernspaceBorder)
+                        ) {
+                            Text(
+                                text = "${weeklyClasses.size} Kelas Terdaftar",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = LernspaceDark,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
                     Text(
-                        text = "Jadwal Mata Pelajaran / Kuliah Mingguan",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = LernspaceDark
-                    )
-                    Text(
-                        text = "Papan mading jadwal mingguan: baris horizontal hari dan kolom vertikal jam interval.",
+                        text = "Visualisasi jadwal akurat: lebar blok sesuai hari dan tinggi blok proporsional durasi kelas.",
                         style = MaterialTheme.typography.bodySmall,
                         color = LernspaceTextSecondary
                     )
@@ -1465,36 +1690,33 @@ private fun WeeklyTimetableBuilderView(
                 Button(
                     onClick = onAddClass,
                     shape = RoundedCornerShape(8.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark),
+                    colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark, contentColor = Color.White),
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
                 ) {
-                    Icon(Icons.Filled.Add, null, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Filled.Add, null, modifier = Modifier.size(15.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Tambah Jadwal Mapel")
+                    Text("Tambah Jadwal Mapel", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
 
-            // Mading Timetable Matrix Table
-            Box(
+            // Continuous Schedule Grid Container
+            Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f)
-                    .clip(RoundedCornerShape(12.dp))
-                    .border(BorderStroke(1.dp, LernspaceBorder), RoundedCornerShape(12.dp))
-                    .background(Color.White)
+                    .weight(1f),
+                shape = RoundedCornerShape(12.dp),
+                color = LernspaceSurfaceCard,
+                border = BorderStroke(1.dp, LernspaceBorder)
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .horizontalScroll(horizontalScrollState)
-                ) {
-                    // Header Row: [ JAM ] + [ SENIN .. MINGGU ]
+                Column(modifier = Modifier.fillMaxSize()) {
+                    // ── 1. Top Pinned Row: [ JAM ] + Day Headers (scrolls horizontally in sync) ──
                     Row(
                         modifier = Modifier
+                            .fillMaxWidth()
                             .background(LernspaceSurfaceLow)
                             .border(BorderStroke(0.5.dp, LernspaceBorder))
                     ) {
-                        // Leftmost top corner: JAM
+                        // Top-left corner box (Pinned above Time Column)
                         Box(
                             modifier = Modifier
                                 .width(timeColWidth)
@@ -1503,47 +1725,74 @@ private fun WeeklyTimetableBuilderView(
                                 .border(BorderStroke(0.5.dp, LernspaceBorder)),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                text = "JAM",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = LernspaceDark
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(Icons.Filled.AccessTime, null, tint = LernspaceTextSecondary, modifier = Modifier.size(13.dp))
+                                Text(
+                                    text = "JAM",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = LernspaceDark
+                                )
+                            }
                         }
 
-                        // Day headers
-                        weekDays.forEach { (dayIndex, dayName) ->
-                            val dayClassesCount = weeklyClasses.count { it.dayOfWeek == dayIndex }
-                            Box(
-                                modifier = Modifier
-                                    .width(dayColWidth)
-                                    .height(44.dp)
-                                    .background(LernspaceSurfaceLow)
-                                    .border(BorderStroke(0.5.dp, LernspaceBorder)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        // Day Headers Row (horizontal scroll synchronized)
+                        Row(
+                            modifier = Modifier
+                                .weight(1f)
+                                .horizontalScroll(horizontalScrollState)
+                        ) {
+                            weekDays.forEach { (dayIndex, dayName) ->
+                                val dayClassesCount = weeklyClasses.count { it.dayOfWeek == dayIndex }
+                                val isToday = dayIndex == todayDayOfWeek
+
+                                Box(
+                                    modifier = Modifier
+                                        .width(dayColWidth)
+                                        .height(44.dp)
+                                        .background(if (isToday) LernspaceDark else LernspaceSurfaceLow)
+                                        .border(BorderStroke(0.5.dp, LernspaceBorder)),
+                                    contentAlignment = Alignment.Center
                                 ) {
-                                    Text(
-                                        text = dayName.uppercase(),
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = LernspaceDark
-                                    )
-                                    if (dayClassesCount > 0) {
-                                        Surface(
-                                            shape = RoundedCornerShape(10.dp),
-                                            color = Color(0xFF2563EB).copy(alpha = 0.12f)
-                                        ) {
-                                            Text(
-                                                text = "$dayClassesCount",
-                                                fontSize = 9.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = Color(0xFF2563EB),
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                            )
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text(
+                                            text = dayName.uppercase(),
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isToday) Color.White else LernspaceDark
+                                        )
+                                        if (isToday) {
+                                            Surface(
+                                                shape = RoundedCornerShape(4.dp),
+                                                color = Color.White.copy(alpha = 0.2f)
+                                            ) {
+                                                Text(
+                                                    text = "HARI INI",
+                                                    fontSize = 8.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color.White,
+                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        } else if (dayClassesCount > 0) {
+                                            Surface(
+                                                shape = RoundedCornerShape(10.dp),
+                                                color = LernspaceDark.copy(alpha = 0.08f)
+                                            ) {
+                                                Text(
+                                                    text = "$dayClassesCount",
+                                                    fontSize = 9.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = LernspaceDark,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -1551,150 +1800,152 @@ private fun WeeklyTimetableBuilderView(
                         }
                     }
 
-                    // Hourly Interval Rows (Vertical Column of hours at the leftmost side)
-                    LazyColumn(
+                    // ── 2. Grid Body: Time Column + Days Matrix (scrolls vertically in sync) ──
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f)
+                            .verticalScroll(verticalScrollState)
                     ) {
-                        items(hourSlots, key = { it }) { hour ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(IntrinsicSize.Min)
-                                    .border(BorderStroke(0.5.dp, LernspaceBorder.copy(alpha = 0.4f)))
-                            ) {
-                                // Leftmost column: Hour label (Interval)
-                                Column(
-                                    modifier = Modifier
-                                        .width(timeColWidth)
-                                        .fillMaxHeight()
-                                        .background(LernspaceSurfaceLow)
-                                        .border(BorderStroke(0.5.dp, LernspaceBorder.copy(alpha = 0.4f)))
-                                        .padding(vertical = 8.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.Center
-                                ) {
-                                    Text(
-                                        text = String.format(java.util.Locale.US, "%02d:00", hour),
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = LernspaceDark
-                                    )
-                                    Text(
-                                        text = String.format(java.util.Locale.US, "%02d:00", hour + 1),
-                                        fontSize = 9.sp,
-                                        color = LernspaceTextSecondary
-                                    )
-                                }
-
-                                // 7 Day cells for this hour interval
-                                weekDays.forEach { (dayIndex, _) ->
-                                    val slotClasses = weeklyClasses.filter {
-                                        it.dayOfWeek == dayIndex &&
-                                            (it.startTime.substringBefore(":").trim().toIntOrNull() ?: -1) == hour
-                                    }
-
+                        // Leftmost Column: Hourly Time Labels (Pinned horizontally, scrolls vertically)
+                        Box(
+                            modifier = Modifier
+                                .width(timeColWidth)
+                                .height(totalGridHeight)
+                                .background(LernspaceSurfaceLow)
+                                .border(BorderStroke(0.5.dp, LernspaceBorder))
+                        ) {
+                            Column(modifier = Modifier.fillMaxSize()) {
+                                hourSlots.forEach { hour ->
                                     Box(
                                         modifier = Modifier
-                                            .width(dayColWidth)
-                                            .defaultMinSize(minHeight = 78.dp)
-                                            .fillMaxHeight()
-                                            .border(BorderStroke(0.5.dp, LernspaceBorder.copy(alpha = 0.3f)))
-                                            .background(if (slotClasses.isEmpty()) Color.White else Color(0xFFFAFAFA))
-                                            .padding(4.dp),
-                                        contentAlignment = Alignment.TopStart
+                                            .fillMaxWidth()
+                                            .height(hourHeight)
+                                            .border(BorderStroke(0.5.dp, LernspaceBorder.copy(alpha = 0.35f)))
+                                            .padding(top = 4.dp, end = 6.dp),
+                                        contentAlignment = Alignment.TopEnd
                                     ) {
-                                        if (slotClasses.isNotEmpty()) {
-                                            Column(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                verticalArrangement = Arrangement.spacedBy(4.dp)
-                                            ) {
-                                                slotClasses.forEach { c ->
-                                                    val subj = subjects.find { it.id == c.subjectId }
-                                                    val subColor = subj?.color ?: Color(0xFF2563EB)
+                                        Text(
+                                            text = String.format(Locale.US, "%02d:00", hour),
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = LernspaceTextSecondary
+                                        )
+                                    }
+                                }
+                            }
 
-                                                    Surface(
-                                                        shape = RoundedCornerShape(6.dp),
-                                                        color = Color.White,
-                                                        border = BorderStroke(1.dp, subColor.copy(alpha = 0.5f)),
-                                                        shadowElevation = 1.dp,
-                                                        modifier = Modifier.fillMaxWidth()
-                                                    ) {
-                                                        Row(
-                                                            modifier = Modifier
-                                                                .fillMaxWidth()
-                                                                .height(IntrinsicSize.Min)
-                                                        ) {
-                                                            Box(
-                                                                modifier = Modifier
-                                                                    .width(4.dp)
-                                                                    .fillMaxHeight()
-                                                                    .background(subColor)
-                                                            )
-                                                            Column(
-                                                                modifier = Modifier
-                                                                    .weight(1f)
-                                                                    .background(subColor.copy(alpha = 0.08f))
-                                                                    .padding(6.dp),
-                                                                verticalArrangement = Arrangement.spacedBy(3.dp)
-                                                            ) {
-                                                                Row(
-                                                                    modifier = Modifier.fillMaxWidth(),
-                                                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                                                    verticalAlignment = Alignment.CenterVertically
-                                                                ) {
-                                                                    Surface(
-                                                                        shape = RoundedCornerShape(3.dp),
-                                                                        color = subColor.copy(alpha = 0.16f)
-                                                                    ) {
-                                                                        Text(
-                                                                            text = "${c.startTime} - ${c.endTime}",
-                                                                            fontSize = 8.sp,
-                                                                            fontWeight = FontWeight.Bold,
-                                                                            color = LernspaceDark,
-                                                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                                                        )
-                                                                    }
-                                                                    IconButton(
-                                                                        onClick = { onDeleteClass(c) },
-                                                                        modifier = Modifier.size(16.dp)
-                                                                    ) {
-                                                                        Icon(
-                                                                            Icons.Filled.Close,
-                                                                            contentDescription = "Hapus",
-                                                                            tint = LernspaceTextSecondary,
-                                                                            modifier = Modifier.size(10.dp)
-                                                                        )
-                                                                    }
-                                                                }
-                                                                Text(
-                                                                    text = c.subjectName,
-                                                                    fontSize = 10.sp,
-                                                                    fontWeight = FontWeight.Bold,
-                                                                    color = LernspaceDark,
-                                                                    maxLines = 2,
-                                                                    overflow = TextOverflow.Ellipsis
-                                                                )
-                                                                Text(
-                                                                    text = c.subjectCode,
-                                                                    fontSize = 8.sp,
-                                                                    fontWeight = FontWeight.SemiBold,
-                                                                    color = subColor
-                                                                )
-                                                                if (!c.room.isNullOrBlank()) {
-                                                                    Text(
-                                                                        text = c.room,
-                                                                        fontSize = 8.sp,
-                                                                        color = LernspaceTextSecondary,
-                                                                        maxLines = 1,
-                                                                        overflow = TextOverflow.Ellipsis
-                                                                    )
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
+                            // Current time badge floating on the Time Column ruler
+                            if (now.hour in startHour until endHour) {
+                                val currentTopMins = currentMinsNow - (startHour * 60)
+                                if (currentTopMins in 0..(totalHours * 60)) {
+                                    Surface(
+                                        modifier = Modifier
+                                            .offset(y = (currentTopMins - 10).dp, x = 6.dp)
+                                            .zIndex(30f),
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = AccentRed,
+                                        shadowElevation = 2.dp
+                                    ) {
+                                        Text(
+                                            text = String.format(Locale.US, "%02d:%02d", now.hour, now.minute),
+                                            color = Color.White,
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // Days Columns Container (scrolls horizontally with horizontalScrollState)
+                        Row(
+                            modifier = Modifier
+                                .weight(1f)
+                                .horizontalScroll(horizontalScrollState)
+                        ) {
+                            weekDays.forEach { (dayIndex, _) ->
+                                val isToday = dayIndex == todayDayOfWeek
+                                val classesThisDay = weeklyClasses.filter { it.dayOfWeek == dayIndex }.sortedBy { it.startTime }
+
+                                Box(
+                                    modifier = Modifier
+                                        .width(dayColWidth)
+                                        .height(totalGridHeight)
+                                        .background(if (isToday) LernspaceSurfaceLow.copy(alpha = 0.3f) else Color.Transparent)
+                                        .border(BorderStroke(0.5.dp, LernspaceBorder.copy(alpha = 0.35f)))
+                                ) {
+                                    // 1. Horizontal hour slot guidelines
+                                    Column(modifier = Modifier.fillMaxSize()) {
+                                        hourSlots.forEach { _ ->
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(hourHeight)
+                                                    .border(BorderStroke(0.5.dp, LernspaceBorder.copy(alpha = 0.25f)))
+                                            )
+                                        }
+                                    }
+
+                                    // 2. Class Duration Blocks
+                                    classesThisDay.forEach { c ->
+                                        val sMins = parseTimeToMinutes(c.startTime)
+                                        val eMins = parseTimeToMinutes(c.endTime)
+                                        val duration = (eMins - sMins).coerceAtLeast(30)
+                                        val topMins = (sMins - (startHour * 60)).coerceAtLeast(0)
+
+                                        val topOffsetDp = topMins.dp
+                                        val blockHeightDp = duration.dp
+
+                                        // Overlap detection for side-by-side positioning
+                                        val overlaps = classesThisDay.filter { other ->
+                                            val os = parseTimeToMinutes(other.startTime)
+                                            val oe = parseTimeToMinutes(other.endTime)
+                                            maxOf(sMins, os) < minOf(eMins, oe)
+                                        }
+                                        val colIndex = overlaps.indexOf(c).coerceAtLeast(0)
+                                        val colCount = overlaps.size.coerceAtLeast(1)
+
+                                        val subj = subjects.find { it.id == c.subjectId }
+                                        val subColor = subj?.color ?: Color(0xFF2563EB)
+
+                                        WeeklyClassDurationCard(
+                                            wClass = c,
+                                            subjectColor = subColor,
+                                            topOffsetDp = topOffsetDp,
+                                            blockHeightDp = blockHeightDp,
+                                            colIndex = colIndex,
+                                            colCount = colCount,
+                                            dayWidth = dayColWidth,
+                                            onDelete = { onDeleteClass(c) }
+                                        )
+                                    }
+
+                                    // 3. Current time red indicator line (Drawn ON TOP of all class blocks!)
+                                    if (isToday && now.hour in startHour until endHour) {
+                                        val currentTopMins = currentMinsNow - (startHour * 60)
+                                        if (currentTopMins in 0..(totalHours * 60)) {
+                                            val currentLineTop = (currentTopMins - 1).dp
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .offset(y = currentLineTop)
+                                                    .zIndex(30f),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(8.dp)
+                                                        .clip(CircleShape)
+                                                        .background(AccentRed)
+                                                )
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .height(2.5.dp)
+                                                        .background(AccentRed)
+                                                )
                                             }
                                         }
                                     }
@@ -1709,94 +1960,134 @@ private fun WeeklyTimetableBuilderView(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// VIEW 3: Day Agenda & Auto-Schedule (Timeline Harian & Mesin Jadwal Otomatis)
+// COMPONENT: Weekly Class Duration Block (Tinggi = Durasi, Lebar = Kolom Hari)
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
-private fun DayAgendaView(
-    scheduleItems: List<PlannerItemUi>,
-    weeklyClasses: List<WeeklyClassUi>,
-    tasks: List<TaskUiModel>,
-    subjects: List<com.lernspace.app.ui.learning.SubjectUi>,
-    onAcceptSuggestion: (String) -> Unit,
-    onToggleComplete: (PlannerItemUi) -> Unit,
-    onOpenNoteForTopic: (topicId: String, topicTitle: String, subjectId: String?, subjectName: String?) -> Unit,
-    onViewInSyllabus: (String?) -> Unit,
-    onAutoSchedule: () -> Unit,
-    onDeleteItem: (PlannerItemUi) -> Unit
+private fun WeeklyClassDurationCard(
+    wClass: WeeklyClassUi,
+    subjectColor: Color,
+    topOffsetDp: androidx.compose.ui.unit.Dp,
+    blockHeightDp: androidx.compose.ui.unit.Dp,
+    colIndex: Int,
+    colCount: Int,
+    dayWidth: androidx.compose.ui.unit.Dp,
+    onDelete: () -> Unit
 ) {
-    var selectedDayOffset by remember { mutableIntStateOf(0) } // 0 = Today
-    val dayNames = listOf("Hari Ini (Senin, 8 Nov)", "Besok (Selasa, 9 Nov)", "Rabu, 10 Nov", "Kamis, 11 Nov", "Jumat, 12 Nov")
-
-    val dayItems = remember(scheduleItems.size, selectedDayOffset) {
-        scheduleItems.filter { it.dayOffset == selectedDayOffset }.sortedBy { it.startTime }
-    }
+    val usableDayWidth = dayWidth - 4.dp
+    val blockWidth = if (colCount > 1) usableDayWidth / colCount else usableDayWidth
+    val xOffset = if (colCount > 1) (blockWidth * colIndex) + 2.dp else 2.dp
 
     Surface(
-        modifier = Modifier.fillMaxSize(),
-        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier
+            .offset(x = xOffset, y = topOffsetDp)
+            .width(blockWidth)
+            .height(blockHeightDp)
+            .padding(1.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .border(
+                width = 1.dp,
+                color = subjectColor.copy(alpha = 0.5f),
+                shape = RoundedCornerShape(8.dp)
+            ),
         color = LernspaceSurfaceCard,
-        border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder),
-        shadowElevation = 1.dp
+        shadowElevation = 0.5.dp
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            // Header Bar
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+        Row(modifier = Modifier.fillMaxSize()) {
+            // Left color ribbon
+            Box(
+                modifier = Modifier
+                    .width(4.dp)
+                    .fillMaxHeight()
+                    .background(subjectColor)
+            )
+
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(subjectColor.copy(alpha = 0.08f))
+                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                verticalArrangement = Arrangement.SpaceBetween
             ) {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(dayNames.indices.toList()) { offset ->
-                        FilterChip(
-                            selected = selectedDayOffset == offset,
-                            onClick = { selectedDayOffset = offset },
-                            label = { Text(dayNames[offset], fontSize = 12.sp, fontWeight = if (selectedDayOffset == offset) FontWeight.Bold else FontWeight.Normal) },
-                            shape = RoundedCornerShape(8.dp)
+                // Top: Time Range & Delete Button
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = subjectColor.copy(alpha = 0.18f)
+                    ) {
+                        Text(
+                            text = "${wClass.startTime} - ${wClass.endTime}",
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = LernspaceDark,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                        )
+                    }
+
+                    IconButton(
+                        onClick = onDelete,
+                        modifier = Modifier.size(16.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Hapus",
+                            tint = LernspaceTextSecondary,
+                            modifier = Modifier.size(10.dp)
                         )
                     }
                 }
 
-                Button(
-                    onClick = onAutoSchedule,
-                    shape = RoundedCornerShape(8.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark, contentColor = Color.White),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                ) {
-                    Icon(Icons.Filled.AutoAwesome, null, modifier = Modifier.size(15.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Auto-Schedule Jam Belajar", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                }
-            }
-
-            // Timeline Items List
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                items(dayItems, key = { it.id }) { item ->
-                    val matchingSubject = subjects.find { it.id == item.subjectId }
-                    val subjectColor = matchingSubject?.color ?: AccentBlue
-
-                    AgendaTimelineCard(
-                        item = item,
-                        subjectColor = subjectColor,
-                        onAcceptSuggestion = { onAcceptSuggestion(item.id) },
-                        onToggleComplete = { onToggleComplete(item) },
-                        onOpenNote = {
-                            if (item.topicId != null) {
-                                onOpenNoteForTopic(item.topicId, item.topicName ?: item.title, item.subjectId, item.subjectName)
-                            }
-                        },
-                        onViewSyllabus = { onViewInSyllabus(item.subjectId) },
-                        onDelete = { onDeleteItem(item) }
+                // Middle: Subject Name & Code
+                Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                    Text(
+                        text = wClass.subjectName,
+                        fontSize = if (blockHeightDp >= 60.dp) 11.sp else 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = LernspaceDark,
+                        maxLines = if (blockHeightDp >= 80.dp) 2 else 1,
+                        overflow = TextOverflow.Ellipsis,
+                        lineHeight = 13.sp
                     )
+                    Text(
+                        text = wClass.subjectCode,
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = subjectColor,
+                        maxLines = 1
+                    )
+                }
+
+                // Bottom: Room / Lecturer / Type (only if height allows >= 65dp)
+                if (blockHeightDp >= 65.dp) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (!wClass.room.isNullOrBlank()) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Icon(Icons.Filled.LocationOn, null, tint = LernspaceTextSecondary, modifier = Modifier.size(9.dp))
+                                Text(
+                                    text = wClass.room,
+                                    fontSize = 8.sp,
+                                    color = LernspaceTextSecondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                        if (blockHeightDp >= 90.dp && !wClass.type.isNullOrBlank()) {
+                            Text(
+                                text = wClass.type,
+                                fontSize = 8.sp,
+                                color = LernspaceTextSecondary,
+                                maxLines = 1
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -1804,10 +2095,562 @@ private fun DayAgendaView(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// COMPONENT: Agenda Timeline Card (Day View Item)
+// VIEW 3: Day Agenda & Auto-Schedule (Timeline Harian & Mesin Jadwal Otomatis)
+// ─────────────────────────────────────────────────────────────────────────────
+
+private sealed class AgendaEntry {
+    abstract val sortTime: String
+    abstract val entryId: String
+
+    data class ClassEntry(val wClass: WeeklyClassUi) : AgendaEntry() {
+        override val sortTime: String get() = wClass.startTime
+        override val entryId: String get() = "class_${wClass.id}"
+    }
+
+    data class PlannerEntry(val item: PlannerItemUi) : AgendaEntry() {
+        override val sortTime: String get() = item.startTime
+        override val entryId: String get() = "planner_${item.id}"
+    }
+
+    data class TaskEntry(val task: TaskUiModel) : AgendaEntry() {
+        override val sortTime: String get() = task.dueTime.ifBlank { "23:59" }
+        override val entryId: String get() = "task_${task.id}"
+    }
+}
+
+private data class RecommendedSlot(
+    val startTime: String,
+    val endTime: String,
+    val reason: String
+)
+
+
+private fun calculateRecommendedSlot(
+    dayClasses: List<WeeklyClassUi>,
+    dayPlannerItems: List<PlannerItemUi>,
+    durationMinutes: Int
+): RecommendedSlot {
+    val studyWindowStart = 8 * 60
+    val studyWindowEnd = 22 * 60
+    val buffer = 15
+
+    val occupied = mutableListOf<Pair<Int, Int>>()
+    dayClasses.forEach { c ->
+        val s = parseTimeToMinutes(c.startTime)
+        val e = parseTimeToMinutes(c.endTime)
+        if (e > s) occupied.add(Pair(s, e))
+    }
+    dayPlannerItems.forEach { p ->
+        val s = parseTimeToMinutes(p.startTime)
+        val e = parseTimeToMinutes(p.endTime)
+        if (e > s) occupied.add(Pair(s, e))
+    }
+    occupied.sortBy { it.first }
+
+    if (occupied.isEmpty()) {
+        val startMins = 9 * 60
+        val endMins = startMins + durationMinutes
+        return RecommendedSlot(
+            startTime = formatMinutesToTime(startMins),
+            endTime = formatMinutesToTime(endMins),
+            reason = "Hari bebas kelas kuliah. Slot fokus optimal di pagi hari dengan buffer istirahat teratur."
+        )
+    }
+
+    // Try before first block
+    val first = occupied.first()
+    if (first.first - studyWindowStart >= durationMinutes + buffer) {
+        val startMins = studyWindowStart
+        val endMins = startMins + durationMinutes
+        return RecommendedSlot(
+            startTime = formatMinutesToTime(startMins),
+            endTime = formatMinutesToTime(endMins),
+            reason = "Slot fokus pagi sebelum jadwal kelas pertama dimulai (buffer ${first.first - endMins}m)."
+        )
+    }
+
+    // Between blocks
+    for (i in 0 until occupied.size - 1) {
+        val currentEnd = occupied[i].second
+        val nextStart = occupied[i + 1].first
+        val gap = nextStart - currentEnd
+        if (gap >= durationMinutes + (2 * buffer)) {
+            val startMins = currentEnd + buffer
+            val endMins = startMins + durationMinutes
+            val prevClass = dayClasses.find { parseTimeToMinutes(it.endTime) == currentEnd }
+            val classNote = if (prevClass != null) "setelah kelas ${prevClass.subjectName}" else "di antara jadwal kuliah"
+            return RecommendedSlot(
+                startTime = formatMinutesToTime(startMins),
+                endTime = formatMinutesToTime(endMins),
+                reason = "Terdeteksi jeda luang ${gap}m $classNote. Waktu bebas bentrok ideal untuk belajar mandiri."
+            )
+        }
+    }
+
+    // After last block
+    val last = occupied.last()
+    if (studyWindowEnd - last.second >= durationMinutes + buffer) {
+        val startMins = last.second + buffer
+        val endMins = startMins + durationMinutes
+        val prevClass = dayClasses.find { parseTimeToMinutes(it.endTime) == last.second }
+        val classNote = if (prevClass != null) "setelah kelas ${prevClass.subjectName} usai" else "setelah seluruh kegiatan hari ini"
+        return RecommendedSlot(
+            startTime = formatMinutesToTime(startMins),
+            endTime = formatMinutesToTime(endMins),
+            reason = "Slot review sore/malam $classNote. Cocok untuk penguatan materi yang baru dipelajari."
+        )
+    }
+
+    // Fallback slot
+    return RecommendedSlot(
+        startTime = "19:30",
+        endTime = formatMinutesToTime(19 * 60 + 30 + durationMinutes),
+        reason = "Slot sesi malam bebas bentrok setelah seluruh jadwal perkuliahan hari ini."
+    )
+}
+
+@Composable
+private fun DayAgendaView(
+    scheduleItems: List<PlannerItemUi>,
+    weeklyClasses: List<WeeklyClassUi>,
+    tasks: List<TaskUiModel>,
+    subjects: List<com.lernspace.app.ui.learning.SubjectUi>,
+    selectedDayOffset: Int,
+    onSelectDayOffset: (Int) -> Unit,
+    onAcceptSuggestion: (String) -> Unit,
+    onTogglePlannerComplete: (PlannerItemUi) -> Unit,
+    onToggleTaskComplete: (String) -> Unit,
+    onOpenNoteForSubject: (subjectId: String?, subjectName: String?) -> Unit,
+    onOpenNoteForTopic: (topicId: String, topicTitle: String, subjectId: String?, subjectName: String?) -> Unit,
+    onViewInSyllabus: (String?) -> Unit,
+    onAutoSchedule: () -> Unit,
+    onAddManualAgenda: () -> Unit,
+    onDeleteItem: (PlannerItemUi) -> Unit
+) {
+    val today = remember { LocalDate.now() }
+    val dayOffsets = remember { (0..6).toList() }
+
+    val selectedDate = remember(selectedDayOffset) { today.plusDays(selectedDayOffset.toLong()) }
+    val selectedDayOfWeek = selectedDate.dayOfWeek.value // 1 = Monday, 7 = Sunday
+    val selectedDayOfMonth = selectedDate.dayOfMonth
+
+    // 1. Weekly classes for this weekday
+    val dayClasses = weeklyClasses.filter { it.dayOfWeek == selectedDayOfWeek }.sortedBy { it.startTime }
+
+    // 2. Specific planner items / auto-study sessions scheduled for this day
+    val dayPlannerItems = scheduleItems.filter {
+        it.dayOffset == selectedDayOffset || (it.dayOfWeek == selectedDayOfWeek && it.dayOffset == -1)
+    }.sortedBy { it.startTime }
+
+    // 3. Tasks due on this day
+    val dayTasks = tasks.filter { task ->
+        task.dueDayNumber == selectedDayOfMonth ||
+        (task.dueDate.isNotBlank() && (task.dueDate.contains("$selectedDayOfMonth ") || task.dueDate.contains(" $selectedDayOfMonth,")))
+    }.sortedBy { it.dueTime }
+
+    // Combined unified chronological timeline
+    val allDayEntries = (dayClasses.map { AgendaEntry.ClassEntry(it) } +
+        dayPlannerItems.map { AgendaEntry.PlannerEntry(it) } +
+        dayTasks.map { AgendaEntry.TaskEntry(it) }).sortedBy { it.sortTime }
+
+    var selectedFilter by remember { mutableStateOf("ALL") } // "ALL", "CLASSES", "STUDY", "TASKS"
+
+    val filteredEntries = when (selectedFilter) {
+        "CLASSES" -> allDayEntries.filterIsInstance<AgendaEntry.ClassEntry>()
+        "STUDY" -> allDayEntries.filterIsInstance<AgendaEntry.PlannerEntry>()
+        "TASKS" -> allDayEntries.filterIsInstance<AgendaEntry.TaskEntry>()
+        else -> allDayEntries
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        shape = RoundedCornerShape(16.dp),
+        color = LernspaceSurfaceCard,
+        border = BorderStroke(1.dp, LernspaceBorder),
+        shadowElevation = 0.5.dp
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            // ── Top Bar: Day Selector & Quick Actions ─────────────────────────
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Day Selector Chips (Hari Ini, Besok, ...)
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f, fill = false)
+                ) {
+                    items(dayOffsets) { offset ->
+                        val targetDate = today.plusDays(offset.toLong())
+                        val fullDayName = when (targetDate.dayOfWeek) {
+                            DayOfWeek.MONDAY -> "Senin"
+                            DayOfWeek.TUESDAY -> "Selasa"
+                            DayOfWeek.WEDNESDAY -> "Rabu"
+                            DayOfWeek.THURSDAY -> "Kamis"
+                            DayOfWeek.FRIDAY -> "Jumat"
+                            DayOfWeek.SATURDAY -> "Sabtu"
+                            DayOfWeek.SUNDAY -> "Minggu"
+                        }
+                        val monthName = when (targetDate.monthValue) {
+                            1 -> "Jan"; 2 -> "Feb"; 3 -> "Mar"; 4 -> "Apr"; 5 -> "Mei"; 6 -> "Jun"
+                            7 -> "Jul"; 8 -> "Agu"; 9 -> "Sep"; 10 -> "Okt"; 11 -> "Nov"; 12 -> "Des"
+                            else -> ""
+                        }
+                        val chipText = when (offset) {
+                            0 -> "Hari Ini ($fullDayName, ${targetDate.dayOfMonth} $monthName)"
+                            1 -> "Besok ($fullDayName, ${targetDate.dayOfMonth} $monthName)"
+                            else -> "$fullDayName, ${targetDate.dayOfMonth} $monthName"
+                        }
+                        val isSelected = selectedDayOffset == offset
+
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isSelected) LernspaceDark else LernspaceSurfaceLow,
+                            border = BorderStroke(1.dp, if (isSelected) LernspaceDark else LernspaceBorder),
+                            modifier = Modifier.clickable { onSelectDayOffset(offset) }
+                        ) {
+                            Text(
+                                text = chipText,
+                                fontSize = 12.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isSelected) Color.White else LernspaceDark,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(12.dp))
+
+                // Action Buttons
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Button(
+                        onClick = onAutoSchedule,
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark, contentColor = Color.White),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp)
+                    ) {
+                        Icon(Icons.Filled.AutoAwesome, null, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text("Auto-Study", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    OutlinedButton(
+                        onClick = onAddManualAgenda,
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(1.dp, LernspaceBorder),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp)
+                    ) {
+                        Icon(Icons.Filled.Add, null, tint = LernspaceDark, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text("Tambah Agenda", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = LernspaceDark)
+                    }
+                }
+            }
+
+            // ── Sub-bar: Category Filter Chips & Counter ──────────────────────
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    val filterOptions = listOf(
+                        Triple("ALL", "Semua", allDayEntries.size),
+                        Triple("CLASSES", "Kuliah", dayClasses.size),
+                        Triple("STUDY", "Auto-Study & Belajar", dayPlannerItems.size),
+                        Triple("TASKS", "Tugas", dayTasks.size)
+                    )
+                    filterOptions.forEach { (key, label, count) ->
+                        val isSelected = selectedFilter == key
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = if (isSelected) LernspaceSurfaceLow else Color.Transparent,
+                            border = BorderStroke(1.dp, if (isSelected) LernspaceBorder else Color.Transparent),
+                            modifier = Modifier.clickable { selectedFilter = key }
+                        ) {
+                            Text(
+                                text = "$label ($count)",
+                                fontSize = 11.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isSelected) LernspaceDark else LernspaceTextSecondary,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                            )
+                        }
+                    }
+                }
+
+                Text(
+                    text = "${allDayEntries.size} Agenda Terjadwal",
+                    fontSize = 11.sp,
+                    color = LernspaceTextSecondary,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+
+            // ── Main Timeline Viewport ────────────────────────────────────────
+            if (filteredEntries.isEmpty()) {
+                // Minimalist Clean Empty State
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    shape = RoundedCornerShape(12.dp),
+                    color = LernspaceSurfaceLow,
+                    border = BorderStroke(1.dp, LernspaceBorder)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.CalendarToday,
+                            contentDescription = null,
+                            tint = LernspaceTextSecondary,
+                            modifier = Modifier.size(36.dp)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "Tidak Ada Agenda untuk Hari Ini",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = LernspaceDark
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Jadwal kuliah mingguan, tenggat waktu tugas, dan sesi belajar terjadwal akan muncul otomatis di sini.",
+                            fontSize = 12.sp,
+                            color = LernspaceTextSecondary,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.widthIn(max = 420.dp)
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = onAutoSchedule,
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark, contentColor = Color.White),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                            ) {
+                                Icon(Icons.Filled.AutoAwesome, null, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("⚡ Auto-Schedule Jam Belajar", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                            OutlinedButton(
+                                onClick = onAddManualAgenda,
+                                shape = RoundedCornerShape(8.dp),
+                                border = BorderStroke(1.dp, LernspaceBorder),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                            ) {
+                                Icon(Icons.Filled.Add, null, tint = LernspaceDark, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Tambah Agenda Manual", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = LernspaceDark)
+                            }
+                        }
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(filteredEntries, key = { it.entryId }) { entry ->
+                        when (entry) {
+                            is AgendaEntry.ClassEntry -> {
+                                val matchingSubject = subjects.find { it.id == entry.wClass.subjectId }
+                                val subColor = matchingSubject?.color ?: AccentBlue
+                                AgendaClassCard(
+                                    wClass = entry.wClass,
+                                    subjectColor = subColor,
+                                    onOpenNote = { onOpenNoteForSubject(entry.wClass.subjectId, entry.wClass.subjectName) },
+                                    onViewSyllabus = { onViewInSyllabus(entry.wClass.subjectId) }
+                                )
+                            }
+                            is AgendaEntry.PlannerEntry -> {
+                                val matchingSubject = subjects.find { it.id == entry.item.subjectId }
+                                val subColor = matchingSubject?.color ?: AccentBlue
+                                AgendaPlannerCard(
+                                    item = entry.item,
+                                    subjectColor = subColor,
+                                    onAcceptSuggestion = { onAcceptSuggestion(entry.item.id) },
+                                    onToggleComplete = { onTogglePlannerComplete(entry.item) },
+                                    onOpenNote = {
+                                        if (entry.item.topicId != null) {
+                                            onOpenNoteForTopic(entry.item.topicId, entry.item.topicName ?: entry.item.title, entry.item.subjectId, entry.item.subjectName)
+                                        } else {
+                                            onOpenNoteForSubject(entry.item.subjectId, entry.item.subjectName)
+                                        }
+                                    },
+                                    onViewSyllabus = { onViewInSyllabus(entry.item.subjectId) },
+                                    onDelete = { onDeleteItem(entry.item) }
+                                )
+                            }
+                            is AgendaEntry.TaskEntry -> {
+                                val matchingSubject = subjects.find { it.id == entry.task.subjectId }
+                                val subColor = matchingSubject?.color ?: AccentBlue
+                                AgendaTaskCard(
+                                    task = entry.task,
+                                    subjectColor = subColor,
+                                    onToggleComplete = { onToggleTaskComplete(entry.task.id) },
+                                    onOpenNote = {
+                                        if (entry.task.topicId != null) {
+                                            onOpenNoteForTopic(entry.task.topicId, entry.task.topicName ?: entry.task.title, entry.task.subjectId, entry.task.subjectName)
+                                        } else {
+                                            onOpenNoteForSubject(entry.task.subjectId, entry.task.subjectName)
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPONENT: Agenda Class Card (Jadwal Kuliah Hari Ini)
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
-private fun AgendaTimelineCard(
+private fun AgendaClassCard(
+    wClass: WeeklyClassUi,
+    subjectColor: Color,
+    onOpenNote: () -> Unit,
+    onViewSyllabus: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .border(width = 1.dp, color = LernspaceBorder, shape = RoundedCornerShape(12.dp)),
+        color = LernspaceSurfaceCard,
+        shadowElevation = 0.5.dp
+    ) {
+        Row(modifier = Modifier.fillMaxWidth()) {
+            Box(
+                modifier = Modifier
+                    .width(5.dp)
+                    .fillMaxHeight()
+                    .background(subjectColor)
+            )
+
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Surface(shape = RoundedCornerShape(6.dp), color = LernspaceDark) {
+                            Text(
+                                text = "${wClass.startTime} - ${wClass.endTime}",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = LernspaceSurfaceLow,
+                            border = BorderStroke(1.dp, LernspaceBorder)
+                        ) {
+                            Text(
+                                text = wClass.type,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = LernspaceDark,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+
+                        Text(
+                            text = if (wClass.subjectCode.isNotBlank()) "•  ${wClass.subjectCode} - ${wClass.subjectName}" else "•  ${wClass.subjectName}",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = LernspaceDark
+                        )
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        TextButton(
+                            onClick = onViewSyllabus,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.MenuBook, null, modifier = Modifier.size(13.dp), tint = LernspaceDark)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Silabus", fontSize = 11.sp, color = LernspaceDark)
+                        }
+
+                        Button(
+                            onClick = onOpenNote,
+                            shape = RoundedCornerShape(6.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark, contentColor = Color.White),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp)
+                        ) {
+                            Icon(Icons.Filled.Create, null, modifier = Modifier.size(12.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Buka Catatan", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+
+                if (!wClass.room.isNullOrBlank() || !wClass.lecturer.isNullOrBlank()) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (!wClass.room.isNullOrBlank()) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Icon(Icons.Filled.LocationOn, null, tint = LernspaceTextSecondary, modifier = Modifier.size(13.dp))
+                                Text(wClass.room, fontSize = 11.sp, color = LernspaceTextSecondary)
+                            }
+                        }
+                        if (!wClass.lecturer.isNullOrBlank()) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Icon(Icons.Filled.Person, null, tint = LernspaceTextSecondary, modifier = Modifier.size(13.dp))
+                                Text(wClass.lecturer, fontSize = 11.sp, color = LernspaceTextSecondary)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPONENT: Agenda Planner Card (Auto-Study & Sesi Belajar Mandiri)
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun AgendaPlannerCard(
     item: PlannerItemUi,
     subjectColor: Color,
     onAcceptSuggestion: () -> Unit,
@@ -1823,28 +2666,25 @@ private fun AgendaTimelineCard(
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .border(
-                width = if (isHybrid) 1.5.dp else 1.dp,
-                color = if (isHybrid) AccentBlue else LernspaceBorder,
+                width = 1.dp,
+                color = if (isHybrid) LernspaceDark else LernspaceBorder,
                 shape = RoundedCornerShape(12.dp)
             ),
-        color = if (isHybrid) Color(0xFFEFF6FF) else if (item.isCompleted) LernspaceSurfaceLow else LernspaceSurfaceCard,
-        shadowElevation = if (isHybrid) 2.dp else 0.5.dp
+        color = if (item.isCompleted) LernspaceSurfaceLow else LernspaceSurfaceCard,
+        shadowElevation = 0.5.dp
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            // Left Ribbon
+        Row(modifier = Modifier.fillMaxWidth()) {
             Box(
                 modifier = Modifier
-                    .width(6.dp)
+                    .width(5.dp)
                     .fillMaxHeight()
-                    .background(if (isHybrid) AccentBlue else subjectColor)
+                    .background(if (isHybrid) LernspaceDark else subjectColor)
             )
 
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .padding(16.dp),
+                    .padding(14.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Row(
@@ -1856,10 +2696,7 @@ private fun AgendaTimelineCard(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = LernspaceDark
-                        ) {
+                        Surface(shape = RoundedCornerShape(6.dp), color = LernspaceDark) {
                             Text(
                                 text = "${item.startTime} - ${item.endTime}",
                                 fontSize = 11.sp,
@@ -1871,7 +2708,8 @@ private fun AgendaTimelineCard(
 
                         Surface(
                             shape = RoundedCornerShape(6.dp),
-                            color = item.type.chipBg
+                            color = LernspaceSurfaceLow,
+                            border = BorderStroke(1.dp, LernspaceBorder)
                         ) {
                             Row(
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -1879,34 +2717,21 @@ private fun AgendaTimelineCard(
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 if (isHybrid) {
-                                    Icon(Icons.Filled.AutoAwesome, null, tint = item.type.chipFg, modifier = Modifier.size(12.dp))
+                                    Icon(Icons.Filled.AutoAwesome, null, tint = LernspaceDark, modifier = Modifier.size(11.dp))
+                                    Text("Auto-Study AI", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                                } else {
+                                    Text(item.type.label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = LernspaceDark)
                                 }
-                                Text(
-                                    text = item.type.label,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = item.type.chipFg
-                                )
                             }
                         }
 
-                        if (item.subjectName != null) {
+                        if (!item.subjectName.isNullOrBlank()) {
                             Text(
                                 text = "•  ${item.subjectName}",
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                color = subjectColor
+                                color = LernspaceDark
                             )
-                        }
-
-                        if (item.locationOrRoom != null) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(3.dp)
-                            ) {
-                                Icon(Icons.Filled.LocationOn, null, tint = LernspaceTextSecondary, modifier = Modifier.size(13.dp))
-                                Text(text = item.locationOrRoom, fontSize = 11.sp, color = LernspaceTextSecondary)
-                            }
                         }
                     }
 
@@ -1919,8 +2744,8 @@ private fun AgendaTimelineCard(
                                 Icon(
                                     imageVector = if (item.isCompleted) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
                                     contentDescription = "Complete",
-                                    tint = if (item.isCompleted) Color(0xFF059669) else LernspaceTextSecondary,
-                                    modifier = Modifier.size(20.dp)
+                                    tint = if (item.isCompleted) AccentTeal else LernspaceTextSecondary,
+                                    modifier = Modifier.size(18.dp)
                                 )
                             }
                         }
@@ -1939,11 +2764,12 @@ private fun AgendaTimelineCard(
                     textDecoration = if (item.isCompleted) TextDecoration.LineThrough else TextDecoration.None
                 )
 
-                if (isHybrid && item.aiReason != null) {
+                // Minimalist AI Reason container
+                if (isHybrid && !item.aiReason.isNullOrBlank()) {
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = Color(0xFFEFF6FF),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFBFDBFE))
+                        color = LernspaceSurfaceLow,
+                        border = BorderStroke(1.dp, LernspaceBorder)
                     ) {
                         Row(
                             modifier = Modifier
@@ -1954,70 +2780,208 @@ private fun AgendaTimelineCard(
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Icon(Icons.Filled.Lightbulb, null, tint = AccentBlue, modifier = Modifier.size(16.dp))
+                                Icon(Icons.Filled.Lightbulb, null, tint = LernspaceDark, modifier = Modifier.size(15.dp))
                                 Text(
                                     text = item.aiReason,
-                                    fontSize = 12.sp,
-                                    color = Color(0xFF1E40AF),
-                                    lineHeight = 16.sp
+                                    fontSize = 11.sp,
+                                    color = LernspaceDark,
+                                    lineHeight = 15.sp
                                 )
                             }
-                            Spacer(modifier = Modifier.width(8.dp))
+                            Spacer(modifier = Modifier.width(10.dp))
                             Button(
                                 onClick = onAcceptSuggestion,
                                 shape = RoundedCornerShape(6.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark, contentColor = Color.White),
                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                             ) {
-                                Text("Accept & Jadwalkan", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text("Accept & Jadwalkan", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
                 }
 
-                if (item.topicName != null) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Icon(Icons.Filled.Bookmark, null, tint = subjectColor, modifier = Modifier.size(13.dp))
-                            Text(
-                                text = "Sub-bab: ${item.topicName}",
-                                fontSize = 12.sp,
-                                color = LernspaceDark,
-                                fontWeight = FontWeight.Medium
-                            )
+                // Actions row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (!item.topicName.isNullOrBlank()) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Icon(Icons.Filled.Bookmark, null, tint = LernspaceTextSecondary, modifier = Modifier.size(13.dp))
+                            Text(text = "Topik: ${item.topicName}", fontSize = 11.sp, color = LernspaceTextSecondary)
                         }
+                    } else {
+                        Spacer(modifier = Modifier.width(1.dp))
+                    }
 
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (!item.subjectId.isNullOrBlank()) {
                             TextButton(
                                 onClick = onViewSyllabus,
                                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
                             ) {
-                                Icon(Icons.AutoMirrored.Filled.MenuBook, null, modifier = Modifier.size(14.dp))
+                                Icon(Icons.AutoMirrored.Filled.MenuBook, null, modifier = Modifier.size(13.dp), tint = LernspaceDark)
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("Cek Silabus", fontSize = 11.sp)
-                            }
-
-                            Button(
-                                onClick = onOpenNote,
-                                shape = RoundedCornerShape(6.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = subjectColor),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                            ) {
-                                Icon(Icons.Filled.Create, null, modifier = Modifier.size(13.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Buka Catatan Canvas", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                Text("Silabus", fontSize = 11.sp, color = LernspaceDark)
                             }
                         }
+
+                        Button(
+                            onClick = onOpenNote,
+                            shape = RoundedCornerShape(6.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark, contentColor = Color.White),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp)
+                        ) {
+                            Icon(Icons.Filled.Create, null, modifier = Modifier.size(12.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Buka Catatan", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPONENT: Agenda Task Card (Tenggat Tugas Hari Ini)
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun AgendaTaskCard(
+    task: TaskUiModel,
+    subjectColor: Color,
+    onToggleComplete: () -> Unit,
+    onOpenNote: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .border(width = 1.dp, color = LernspaceBorder, shape = RoundedCornerShape(12.dp)),
+        color = if (task.isCompleted) LernspaceSurfaceLow else LernspaceSurfaceCard,
+        shadowElevation = 0.5.dp
+    ) {
+        Row(modifier = Modifier.fillMaxWidth()) {
+            Box(
+                modifier = Modifier
+                    .width(5.dp)
+                    .fillMaxHeight()
+                    .background(if (task.priority == "HIGH") AccentRed else subjectColor)
+            )
+
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        IconButton(onClick = onToggleComplete, modifier = Modifier.size(24.dp)) {
+                            Icon(
+                                imageVector = if (task.isCompleted) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
+                                contentDescription = "Tandai Selesai",
+                                tint = if (task.isCompleted) AccentTeal else LernspaceTextSecondary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+
+                        Surface(shape = RoundedCornerShape(6.dp), color = LernspaceDark) {
+                            Text(
+                                text = "Due ${task.dueTime}",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = LernspaceSurfaceLow,
+                            border = BorderStroke(1.dp, LernspaceBorder)
+                        ) {
+                            Text(
+                                text = "Tenggat Tugas",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = LernspaceDark,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+
+                        if (!task.subjectName.isNullOrBlank()) {
+                            Text(
+                                text = "•  ${task.subjectName}",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = LernspaceDark
+                            )
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = LernspaceSurfaceLow,
+                        border = BorderStroke(1.dp, LernspaceBorder)
+                    ) {
+                        Text(
+                            text = when (task.priority) {
+                                "HIGH" -> "Prioritas Tinggi"
+                                "LOW" -> "Prioritas Rendah"
+                                else -> "Prioritas Sedang"
+                            },
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (task.priority == "HIGH") AccentRed else LernspaceTextSecondary,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+
+                Text(
+                    text = task.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = if (task.isCompleted) LernspaceTextSecondary else LernspaceDark,
+                    textDecoration = if (task.isCompleted) TextDecoration.LineThrough else TextDecoration.None
+                )
+
+                if (!task.notes.isNullOrBlank()) {
+                    Text(
+                        text = task.notes,
+                        fontSize = 11.sp,
+                        color = LernspaceTextSecondary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    Button(
+                        onClick = onOpenNote,
+                        shape = RoundedCornerShape(6.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark, contentColor = Color.White),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Icon(Icons.Filled.Create, null, modifier = Modifier.size(12.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Catatan Tugas", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -2436,10 +3400,12 @@ private fun SetWeeklyClassDialog(
     var endTime by remember { mutableStateOf("09:40") }
     var activeTimeTarget by remember { mutableStateOf("START") } // "START" or "END"
     var showManualTimeInput by remember { mutableStateOf(false) }
+    var minuteIntervalStep by remember { mutableIntStateOf(5) } // 5 or 1
+    var savedFeedback by remember { mutableStateOf<String?>(null) }
 
     var room by remember { mutableStateOf("") }
     var lecturer by remember { mutableStateOf("") }
-    var classType by remember { mutableStateOf("Kuliah (Teori)") }
+    var classType by remember { mutableStateOf("Reguler / Teori") }
 
     // Helper functions for time calculation
     fun parseH(t: String) = t.split(":").getOrNull(0)?.toIntOrNull() ?: 8
@@ -2473,105 +3439,133 @@ private fun SetWeeklyClassDialog(
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             color = Color.White,
-            shadowElevation = 6.dp,
+            shadowElevation = 8.dp,
             modifier = Modifier
-                .width(520.dp)
-                .wrapContentHeight()
+                .width(550.dp)
+                .fillMaxHeight(0.92f)
         ) {
             Column(
                 modifier = Modifier
-                    .padding(22.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                    .fillMaxSize()
+                    .padding(horizontal = 22.dp, vertical = 18.dp)
             ) {
-                // Header
+                // ── Fixed Top Header ──────────────────────────────────────────
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        "Set Jadwal Mapel Mingguan",
+                        "Set Jadwal Mapel / Kuliah",
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                         color = LernspaceDark
                     )
-                    IconButton(onClick = onDismiss, modifier = Modifier.size(24.dp)) {
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(26.dp)) {
                         Icon(Icons.Filled.Close, null)
                     }
                 }
 
-                // ── 1. Input Nama & Kode Mata Kuliah ─────────────────────────────
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        "Mata Kuliah / Pelajaran *",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = LernspaceTextSecondary,
-                        fontWeight = FontWeight.SemiBold
-                    )
-
-                    // Quick select chips from existing subjects
-                    if (subjects.isNotEmpty()) {
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            items(subjects) { s ->
-                                val isSelected = selectedSubject == s || subjectNameInput.equals(s.name, ignoreCase = true)
-                                FilterChip(
-                                    selected = isSelected,
-                                    onClick = {
-                                        selectedSubject = s
-                                        subjectNameInput = s.name
-                                        subjectCodeInput = s.code
-                                    },
-                                    label = { Text("${s.name} (${s.code})", fontSize = 11.sp) },
-                                    shape = RoundedCornerShape(8.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    // Explicit text input fields for Subject Name & Code
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                // Feedback Banner setelah "Simpan & Lanjut Tambah"
+                if (savedFeedback != null) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xFFECFDF5),
+                        border = BorderStroke(1.dp, Color(0xFF10B981)),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        OutlinedTextField(
-                            value = subjectNameInput,
-                            onValueChange = {
-                                subjectNameInput = it
-                                val match = subjects.find { s -> s.name.equals(it.trim(), ignoreCase = true) }
-                                selectedSubject = match
-                                if (match != null && subjectCodeInput.isBlank()) {
-                                    subjectCodeInput = match.code
-                                }
-                            },
-                            label = { Text("Nama Mata Kuliah / Mapel *") },
-                            placeholder = { Text("misal: Kalkulus, Biologi Sel, Kimia") },
-                            singleLine = true,
-                            modifier = Modifier.weight(1.3f),
-                            shape = RoundedCornerShape(8.dp)
-                        )
-                        OutlinedTextField(
-                            value = subjectCodeInput,
-                            onValueChange = { subjectCodeInput = it },
-                            label = { Text("Kode (Opsional)") },
-                            placeholder = { Text("misal: KAL101") },
-                            singleLine = true,
-                            modifier = Modifier.weight(0.7f),
-                            shape = RoundedCornerShape(8.dp)
-                        )
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(Icons.Filled.CheckCircle, null, tint = Color(0xFF10B981), modifier = Modifier.size(16.dp))
+                            Text(savedFeedback ?: "", fontSize = 12.sp, color = Color(0xFF065F46), fontWeight = FontWeight.Medium)
+                        }
                     }
                 }
 
-                // ── 2. Hari Perkuliahan Rutin ────────────────────────────────────
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        "Hari Perkuliahan Rutin",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = LernspaceTextSecondary,
-                        fontWeight = FontWeight.SemiBold
-                    )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // ── Scrollable Form Body ──────────────────────────────────────
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    // ── 1. Input Nama & Kode Mata Pelajaran / Kuliah ─────────────────
+                    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text(
+                            "Mata Pelajaran / Kuliah *",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = LernspaceTextSecondary,
+                            fontWeight = FontWeight.SemiBold
+                        )
+
+                        // Quick select chips from existing subjects (clean, no parenthesis)
+                        if (subjects.isNotEmpty()) {
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                items(subjects) { s ->
+                                    val isSelected = selectedSubject == s || subjectNameInput.equals(s.name, ignoreCase = true)
+                                    FilterChip(
+                                        selected = isSelected,
+                                        onClick = {
+                                            selectedSubject = s
+                                            subjectNameInput = s.name
+                                            subjectCodeInput = s.code
+                                        },
+                                        label = { Text(s.name, fontSize = 11.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
+                                        shape = RoundedCornerShape(8.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        // Explicit text input fields for Subject Name & Code
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = subjectNameInput,
+                                onValueChange = {
+                                    subjectNameInput = it
+                                    val match = subjects.find { s -> s.name.equals(it.trim(), ignoreCase = true) }
+                                    selectedSubject = match
+                                    if (match != null && subjectCodeInput.isBlank()) {
+                                        subjectCodeInput = match.code
+                                    }
+                                },
+                                label = { Text("Nama Mapel / Pelajaran *") },
+                                placeholder = { Text("misal: Matematika, Biologi, Kimia") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1.3f),
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                            OutlinedTextField(
+                                value = subjectCodeInput,
+                                onValueChange = { subjectCodeInput = it },
+                                label = { Text("Kode (Opsional)") },
+                                placeholder = { Text("misal: MTK") },
+                                singleLine = true,
+                                modifier = Modifier.weight(0.7f),
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                        }
+                    }
+
+                    // ── 2. Pilihan Hari ──────────────────────────────────────────────
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            "Pilihan Hari",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = LernspaceTextSecondary,
+                            fontWeight = FontWeight.SemiBold
+                        )
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         items(weekDays) { (dIdx, dName) ->
                             val isSelected = dayOfWeek == dIdx
@@ -2585,7 +3579,7 @@ private fun SetWeeklyClassDialog(
                     }
                 }
 
-                // ── 3. Redesigned Practical Time Picker (Tanpa Perlu Ngetik) ────
+                // ── 3. Redesigned Universal Wheel Time Picker (Ultra Cepat & Tanpa Keyboard) ────
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -2593,44 +3587,36 @@ private fun SetWeeklyClassDialog(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            "Jam Perkuliahan",
+                            "Waktu Pelajaran / Kuliah",
                             style = MaterialTheme.typography.labelSmall,
                             color = LernspaceTextSecondary,
                             fontWeight = FontWeight.SemiBold
                         )
-                        TextButton(
-                            onClick = { showManualTimeInput = !showManualTimeInput },
-                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Icon(
-                                imageVector = if (showManualTimeInput) Icons.Filled.Schedule else Icons.Filled.Edit,
-                                contentDescription = null,
-                                modifier = Modifier.size(14.dp),
-                                tint = AccentBlue
+                            // Step Interval Toggle (5 Menit vs 1 Menit)
+                            FilterChip(
+                                selected = minuteIntervalStep == 5,
+                                onClick = { minuteIntervalStep = 5 },
+                                label = { Text("5 Menit", fontSize = 10.sp, fontWeight = if (minuteIntervalStep == 5) FontWeight.Bold else FontWeight.Normal) },
+                                shape = RoundedCornerShape(6.dp)
                             )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = if (showManualTimeInput) "Mode Sentuh Praktis" else "Ketik Manual",
-                                fontSize = 11.sp,
-                                color = AccentBlue
+                            FilterChip(
+                                selected = minuteIntervalStep == 1,
+                                onClick = { minuteIntervalStep = 1 },
+                                label = { Text("1 Menit", fontSize = 10.sp, fontWeight = if (minuteIntervalStep == 1) FontWeight.Bold else FontWeight.Normal) },
+                                shape = RoundedCornerShape(6.dp)
                             )
-                        }
-                    }
-
-                    // A. Slot Waktu Cepat (1-Tap Academic Slots)
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Slot Waktu Cepat:", fontSize = 10.sp, color = LernspaceTextSecondary)
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            items(commonClassSlots) { (slot, label) ->
-                                val isSelected = startTime == slot.first && endTime == slot.second
-                                FilterChip(
-                                    selected = isSelected,
-                                    onClick = {
-                                        startTime = slot.first
-                                        endTime = slot.second
-                                    },
-                                    label = { Text(label, fontSize = 10.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
-                                    shape = RoundedCornerShape(8.dp)
+                            TextButton(
+                                onClick = { showManualTimeInput = !showManualTimeInput },
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = if (showManualTimeInput) "Scroll Wheel" else "Ketik",
+                                    fontSize = 11.sp,
+                                    color = AccentBlue
                                 )
                             }
                         }
@@ -2657,7 +3643,7 @@ private fun SetWeeklyClassDialog(
                             )
                         }
                     } else {
-                        // B. Interactive Time Cards (Jam Mulai & Jam Selesai)
+                        // Dual Interactive Cards (Jam Mulai & Jam Selesai)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -2670,13 +3656,13 @@ private fun SetWeeklyClassDialog(
                                     .clickable { activeTimeTarget = "START" },
                                 shape = RoundedCornerShape(10.dp),
                                 color = if (activeTimeTarget == "START") Color(0xFFEFF6FF) else LernspaceSurfaceLow,
-                                border = androidx.compose.foundation.BorderStroke(
+                                border = BorderStroke(
                                     width = if (activeTimeTarget == "START") 1.5.dp else 1.dp,
                                     color = if (activeTimeTarget == "START") AccentBlue else LernspaceBorder
                                 )
                             ) {
                                 Row(
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
@@ -2698,7 +3684,7 @@ private fun SetWeeklyClassDialog(
                                 }
                             }
 
-                            Icon(Icons.Filled.ArrowForward, null, tint = LernspaceTextSecondary, modifier = Modifier.size(16.dp))
+                            Icon(Icons.AutoMirrored.Filled.ArrowForward, null, tint = LernspaceTextSecondary, modifier = Modifier.size(16.dp))
 
                             // Card Jam Selesai
                             Surface(
@@ -2707,13 +3693,13 @@ private fun SetWeeklyClassDialog(
                                     .clickable { activeTimeTarget = "END" },
                                 shape = RoundedCornerShape(10.dp),
                                 color = if (activeTimeTarget == "END") Color(0xFFEFF6FF) else LernspaceSurfaceLow,
-                                border = androidx.compose.foundation.BorderStroke(
+                                border = BorderStroke(
                                     width = if (activeTimeTarget == "END") 1.5.dp else 1.dp,
                                     color = if (activeTimeTarget == "END") AccentBlue else LernspaceBorder
                                 )
                             ) {
                                 Row(
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
@@ -2736,39 +3722,44 @@ private fun SetWeeklyClassDialog(
                             }
                         }
 
-                        // C. Duration Quick Helper (Hitung Jam Selesai Otomatis dari Jam Mulai)
+                        // Duration Quick Helpers
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text("Durasi:", fontSize = 10.sp, color = LernspaceTextSecondary, fontWeight = FontWeight.Medium)
-                            listOf(
-                                Pair(50, "+50m (1 SKS)"),
-                                Pair(100, "+100m (2 SKS)"),
-                                Pair(150, "+150m (3 SKS)"),
-                                Pair(120, "+2 Jam")
-                            ).forEach { (m, label) ->
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = LernspaceSurfaceLow,
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder),
-                                    modifier = Modifier.clickable {
-                                        endTime = addMinutes(startTime, m)
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                                items(listOf(
+                                    Pair(40, "+40m"),
+                                    Pair(45, "+45m"),
+                                    Pair(50, "+50m"),
+                                    Pair(80, "+80m"),
+                                    Pair(90, "+90m"),
+                                    Pair(100, "+100m"),
+                                    Pair(120, "+120m")
+                                )) { (dur, label) ->
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = LernspaceSurfaceLow,
+                                        border = BorderStroke(1.dp, LernspaceBorder),
+                                        modifier = Modifier.clickable {
+                                            endTime = addMinutes(startTime, dur)
+                                        }
+                                    ) {
+                                        Text(
+                                            text = label,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = LernspaceDark,
+                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                                        )
                                     }
-                                ) {
-                                    Text(
-                                        text = label,
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = LernspaceDark,
-                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
-                                    )
                                 }
                             }
                         }
 
-                        // D. Touch-Friendly Hour & Minute Grid
+                        // Wheel Time Picker Surface
                         val currentTargetTime = if (activeTimeTarget == "START") startTime else endTime
                         val currentH = parseH(currentTargetTime)
                         val currentM = parseM(currentTargetTime)
@@ -2776,17 +3767,21 @@ private fun SetWeeklyClassDialog(
                         Surface(
                             shape = RoundedCornerShape(10.dp),
                             color = Color(0xFFF8FAFC),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder),
+                            border = BorderStroke(1.dp, LernspaceBorder),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Column(
+                                modifier = Modifier.padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = "Pilih ${if (activeTimeTarget == "START") "Jam Mulai" else "Jam Selesai"} (Sentuh Jam & Menit):",
+                                        text = "Putar Roda: ${if (activeTimeTarget == "START") "Jam Mulai" else "Jam Selesai"}",
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = LernspaceDark
@@ -2795,203 +3790,181 @@ private fun SetWeeklyClassDialog(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
-                                        Surface(
-                                            shape = RoundedCornerShape(6.dp),
-                                            color = Color.White,
-                                            border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder),
-                                            modifier = Modifier.clickable {
-                                                val adjusted = addMinutes(currentTargetTime, -5)
-                                                if (activeTimeTarget == "START") startTime = adjusted else endTime = adjusted
-                                            }
-                                        ) {
-                                            Text("-5m", fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp), color = LernspaceDark)
-                                        }
-                                        Surface(
-                                            shape = RoundedCornerShape(6.dp),
-                                            color = Color.White,
-                                            border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder),
-                                            modifier = Modifier.clickable {
-                                                val adjusted = addMinutes(currentTargetTime, 5)
-                                                if (activeTimeTarget == "START") startTime = adjusted else endTime = adjusted
-                                            }
-                                        ) {
-                                            Text("+5m", fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp), color = LernspaceDark)
-                                        }
-                                    }
-                                }
-
-                                // Hour Row (07..21)
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Text("Jam:", fontSize = 10.sp, color = LernspaceTextSecondary, modifier = Modifier.width(34.dp))
-                                    LazyRow(
-                                        modifier = Modifier.weight(1f),
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                    ) {
-                                        items((7..21).toList()) { h ->
-                                            val isSelected = currentH == h
+                                        listOf(-15, -5, 5, 15).forEach { delta ->
                                             Surface(
                                                 shape = RoundedCornerShape(6.dp),
-                                                color = if (isSelected) AccentBlue else Color.White,
-                                                border = androidx.compose.foundation.BorderStroke(1.dp, if (isSelected) AccentBlue else LernspaceBorder),
+                                                color = Color.White,
+                                                border = BorderStroke(1.dp, LernspaceBorder),
                                                 modifier = Modifier.clickable {
-                                                    val newT = fmtTime(h, currentM)
-                                                    if (activeTimeTarget == "START") {
-                                                        startTime = newT
-                                                        if (parseH(endTime) < h || (parseH(endTime) == h && parseM(endTime) <= currentM)) {
-                                                            endTime = addMinutes(newT, 100)
-                                                        }
-                                                    } else {
-                                                        endTime = newT
-                                                    }
+                                                    val adjusted = addMinutes(currentTargetTime, delta)
+                                                    if (activeTimeTarget == "START") startTime = adjusted else endTime = adjusted
                                                 }
                                             ) {
                                                 Text(
-                                                    text = String.format(java.util.Locale.US, "%02d", h),
-                                                    fontSize = 11.sp,
-                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                                    color = if (isSelected) Color.White else LernspaceDark,
-                                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp)
+                                                    text = if (delta > 0) "+${delta}m" else "${delta}m",
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+                                                    color = LernspaceDark
                                                 )
                                             }
                                         }
                                     }
                                 }
 
-                                // Minute Row (00, 10, 15, 30, 40, 45, 50)
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Text("Menit:", fontSize = 10.sp, color = LernspaceTextSecondary, modifier = Modifier.width(34.dp))
-                                    LazyRow(
-                                        modifier = Modifier.weight(1f),
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                    ) {
-                                        items(listOf(0, 10, 15, 30, 40, 45, 50)) { m ->
-                                            val isSelected = currentM == m
-                                            Surface(
-                                                shape = RoundedCornerShape(6.dp),
-                                                color = if (isSelected) AccentBlue else Color.White,
-                                                border = androidx.compose.foundation.BorderStroke(1.dp, if (isSelected) AccentBlue else LernspaceBorder),
-                                                modifier = Modifier.clickable {
-                                                    val newT = fmtTime(currentH, m)
-                                                    if (activeTimeTarget == "START") {
-                                                        startTime = newT
-                                                    } else {
-                                                        endTime = newT
-                                                    }
-                                                }
-                                            ) {
-                                                Text(
-                                                    text = String.format(java.util.Locale.US, ":%02d", m),
-                                                    fontSize = 11.sp,
-                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                                    color = if (isSelected) Color.White else LernspaceDark,
-                                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp)
-                                                )
+                                key(activeTimeTarget, minuteIntervalStep) {
+                                    WheelTimePicker(
+                                        initialHour = currentH,
+                                        initialMinute = currentM,
+                                        minuteInterval = minuteIntervalStep,
+                                        onTimeChanged = { h, m ->
+                                            val newT = fmtTime(h, m)
+                                            if (activeTimeTarget == "START") {
+                                                startTime = newT
+                                            } else {
+                                                endTime = newT
                                             }
-                                        }
-                                    }
+                                        },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
                                 }
                             }
                         }
                     }
                 }
 
-                // ── 4. Tipe Kuliah ──────────────────────────────────────────────
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Tipe Pertemuan", style = MaterialTheme.typography.labelSmall, color = LernspaceTextSecondary)
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf("Kuliah (Teori)", "Praktikum / Lab", "Diskusi / Tutorial").forEach { t ->
-                            val isSelected = classType == t
-                            FilterChip(
-                                selected = isSelected,
-                                onClick = { classType = t },
-                                label = { Text(t, fontSize = 11.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
-                                shape = RoundedCornerShape(8.dp)
-                            )
-                        }
-                    }
-                }
-
-                // ── 5. Ruangan & Dosen (Opsional) ───────────────────────────────
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(
-                        value = room,
-                        onValueChange = { room = it },
-                        label = { Text("Ruangan / Lab (Opsional)") },
-                        placeholder = { Text("misal: Gedung A 203") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(8.dp)
-                    )
-                    OutlinedTextField(
-                        value = lecturer,
-                        onValueChange = { lecturer = it },
-                        label = { Text("Dosen / Pengajar (Opsional)") },
-                        placeholder = { Text("misal: Dr. Ir. Budi") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(8.dp)
-                    )
-                }
-
-                // ── 6. Tombol Aksi ───────────────────────────────────────────────
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    TextButton(onClick = onDismiss) { Text("Batal") }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Button(
-                        onClick = {
-                            if (subjectNameInput.isNotBlank()) {
-                                val finalSubject = selectedSubject ?: run {
-                                    val existing = subjects.find { it.name.equals(subjectNameInput.trim(), ignoreCase = true) }
-                                    if (existing != null) {
-                                        existing
-                                    } else {
-                                        val code = if (subjectCodeInput.isNotBlank()) {
-                                            subjectCodeInput.trim()
-                                        } else {
-                                            subjectNameInput.trim().split(" ")
-                                                .mapNotNull { it.firstOrNull()?.uppercaseChar() }
-                                                .joinToString("")
-                                                .take(4)
-                                                .ifBlank { "SUB" }
-                                        }
-                                        val newSub = com.lernspace.app.ui.learning.SubjectUi(
-                                            id = java.util.UUID.randomUUID().toString(),
-                                            name = subjectNameInput.trim(),
-                                            code = code,
-                                            color = AccentBlue
-                                        )
-                                        AcademicWorkspaceState.subjects.add(newSub)
-                                        newSub
-                                    }
-                                }
-                                onConfirm(
-                                    finalSubject,
-                                    dayOfWeek,
-                                    startTime.trim(),
-                                    endTime.trim(),
-                                    room.trim(),
-                                    lecturer.trim(),
-                                    classType
+                    // ── 4. Tipe Pertemuan ────────────────────────────────────────────
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Tipe Pertemuan", style = MaterialTheme.typography.labelSmall, color = LernspaceTextSecondary)
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf("Reguler / Teori", "Praktikum / Lab", "Tambahan / Les").forEach { t ->
+                                val isSelected = classType == t
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = { classType = t },
+                                    label = { Text(t, fontSize = 11.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
+                                    shape = RoundedCornerShape(8.dp)
                                 )
                             }
-                        },
-                        enabled = subjectNameInput.isNotBlank(),
-                        shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark, contentColor = Color.White)
+                        }
+                    }
+
+                    // ── 5. Ruangan & Pengajar (Opsional) ─────────────────────────────
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedTextField(
+                            value = room,
+                            onValueChange = { room = it },
+                            label = { Text("Ruangan (Opsional)") },
+                            placeholder = { Text("misal: Ruang 04, Lab 2") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                        OutlinedTextField(
+                            value = lecturer,
+                            onValueChange = { lecturer = it },
+                            label = { Text("Guru / Dosen (Opsional)") },
+                            placeholder = { Text("misal: Bu Ismi, Dr. Budi") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                    }
+                } // End of Scrollable Form Body
+
+                // Helper to resolve or create subject
+                fun resolveSubject(): com.lernspace.app.ui.learning.SubjectUi {
+                    return selectedSubject ?: run {
+                        val existing = subjects.find { it.name.equals(subjectNameInput.trim(), ignoreCase = true) }
+                        if (existing != null) {
+                            existing
+                        } else {
+                            val code = subjectCodeInput.trim()
+                            val newSub = com.lernspace.app.ui.learning.SubjectUi(
+                                id = java.util.UUID.randomUUID().toString(),
+                                name = subjectNameInput.trim(),
+                                code = code,
+                                color = AccentBlue
+                            )
+                            AcademicWorkspaceState.subjects.add(newSub)
+                            newSub
+                        }
+                    }
+                }
+
+                // ── 6. Sticky Bottom Action Bar (Selalu Tampil) ──────────────────
+                HorizontalDivider(color = LernspaceBorder.copy(alpha = 0.5f), modifier = Modifier.padding(top = 8.dp, bottom = 10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss) { Text("Batal", color = LernspaceTextSecondary) }
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Simpan Jadwal Mapel", fontWeight = FontWeight.Bold)
+                        // Quick Rapid Entry: "Simpan & Lanjut Tambah"
+                        OutlinedButton(
+                            onClick = {
+                                if (subjectNameInput.isNotBlank()) {
+                                    val finalSubject = resolveSubject()
+                                    val currentStart = startTime.trim()
+                                    val currentEnd = endTime.trim()
+                                    val dur = (parseH(currentEnd) * 60 + parseM(currentEnd)) - (parseH(currentStart) * 60 + parseM(currentStart))
+                                    val safeDur = if (dur > 0) dur else 45
+
+                                    onConfirm(
+                                        finalSubject,
+                                        dayOfWeek,
+                                        currentStart,
+                                        currentEnd,
+                                        room.trim(),
+                                        lecturer.trim(),
+                                        classType
+                                    )
+
+                                    // Auto chain: next class start time = current class end time!
+                                    startTime = currentEnd
+                                    endTime = addMinutes(currentEnd, safeDur)
+                                    subjectNameInput = ""
+                                    subjectCodeInput = ""
+                                    selectedSubject = null
+                                    savedFeedback = "'${finalSubject.name}' tersimpan! Jam mulai berikutnya diatur ke $currentEnd."
+                                }
+                            },
+                            enabled = subjectNameInput.isNotBlank(),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Icon(Icons.Filled.Add, null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Simpan & Lanjut Tambah", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                        }
+
+                        // Normal Save: "Simpan & Tutup"
+                        Button(
+                            onClick = {
+                                if (subjectNameInput.isNotBlank()) {
+                                    val finalSubject = resolveSubject()
+                                    onConfirm(
+                                        finalSubject,
+                                        dayOfWeek,
+                                        startTime.trim(),
+                                        endTime.trim(),
+                                        room.trim(),
+                                        lecturer.trim(),
+                                        classType
+                                    )
+                                    onDismiss()
+                                }
+                            },
+                            enabled = subjectNameInput.isNotBlank(),
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark, contentColor = Color.White)
+                        ) {
+                            Text("Simpan & Tutup", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
                     }
                 }
             }
@@ -3007,32 +3980,63 @@ private fun SetWeeklyClassDialog(
 private fun HybridSuggestDialog(
     subjects: List<com.lernspace.app.ui.learning.SubjectUi>,
     topics: List<com.lernspace.app.ui.learning.TopicUi>,
+    weeklyClasses: List<WeeklyClassUi>,
+    tasks: List<TaskUiModel>,
+    scheduleItems: List<PlannerItemUi>,
+    initialDayOffset: Int,
     onDismiss: () -> Unit,
     onAccept: (
-        subject: com.lernspace.app.ui.learning.SubjectUi,
-        topic: com.lernspace.app.ui.learning.TopicUi,
+        subject: com.lernspace.app.ui.learning.SubjectUi?,
+        customSubjectName: String,
+        topic: com.lernspace.app.ui.learning.TopicUi?,
+        customTopicName: String,
         durationMinutes: Int,
+        dayOffset: Int,
+        dayOfWeek: Int,
         startStr: String,
         endStr: String,
         reason: String
     ) -> Unit
 ) {
+    val today = remember { LocalDate.now() }
+    var selectedDayOffset by remember { mutableIntStateOf(initialDayOffset.coerceIn(0, 6)) }
+    val selectedDate = remember(selectedDayOffset) { today.plusDays(selectedDayOffset.toLong()) }
+    val dayOfWeek = selectedDate.dayOfWeek.value // 1 = Monday .. 7 = Sunday
+
     var selectedSubject by remember { mutableStateOf(subjects.firstOrNull()) }
+    var customSubjectName by remember { mutableStateOf("") }
+
     val subjectTopics = remember(selectedSubject) {
         if (selectedSubject != null) topics.filter { it.subjectId == selectedSubject!!.id } else emptyList()
     }
-    var selectedTopic by remember { mutableStateOf(subjectTopics.firstOrNull()) }
+    var selectedTopic by remember(selectedSubject) { mutableStateOf(subjectTopics.firstOrNull()) }
+    var customTopicName by remember { mutableStateOf("") }
+
     var durationMinutes by remember { mutableIntStateOf(60) }
+
+    // Dynamic slot calculation based on selected day's classes & existing planner items
+    val dayClasses = weeklyClasses.filter { it.dayOfWeek == dayOfWeek }
+    val dayPlannerItems = scheduleItems.filter { it.dayOffset == selectedDayOffset || (it.dayOfWeek == dayOfWeek && it.dayOffset == -1) }
+
+    val recommendedSlot = calculateRecommendedSlot(dayClasses, dayPlannerItems, durationMinutes)
+
+    var manualStartTime by remember(recommendedSlot) { mutableStateOf(recommendedSlot.startTime) }
+    var manualEndTime by remember(recommendedSlot) { mutableStateOf(recommendedSlot.endTime) }
+
+    val dayOffsets = listOf(0, 1, 2, 3, 4, 5, 6)
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             shape = RoundedCornerShape(16.dp),
-            color = Color.White,
+            color = LernspaceSurfaceCard,
+            border = BorderStroke(1.dp, LernspaceBorder),
             shadowElevation = 6.dp,
-            modifier = Modifier.width(460.dp)
+            modifier = Modifier.width(480.dp)
         ) {
             Column(
-                modifier = Modifier.padding(24.dp),
+                modifier = Modifier
+                    .padding(24.dp)
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Row(
@@ -3041,79 +4045,172 @@ private fun HybridSuggestDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Icon(Icons.Filled.AutoAwesome, null, tint = AccentBlue, modifier = Modifier.size(22.dp))
-                        Text("Auto-Schedule Study Slot", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                        Icon(Icons.Filled.AutoAwesome, null, tint = LernspaceDark, modifier = Modifier.size(20.dp))
+                        Text(
+                            text = "Auto-Schedule Jam Belajar",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = LernspaceDark
+                        )
                     }
                     IconButton(onClick = onDismiss, modifier = Modifier.size(24.dp)) {
-                        Icon(Icons.Filled.Close, null)
+                        Icon(Icons.Filled.Close, null, tint = LernspaceTextSecondary)
                     }
                 }
 
                 Text(
-                    text = "Mesin Hybrid menganalisis jadwal kuliah mingguan dan tenggat waktu tugas Anda untuk menemukan celah belajar bebas bentrok.",
+                    text = "Mesin Hybrid menganalisis jadwal kuliah mingguan dan celah luang Anda untuk menjadwalkan sesi belajar fokus bebas bentrok.",
                     style = MaterialTheme.typography.bodySmall,
                     color = LernspaceTextSecondary
                 )
 
-                // Select Subject
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Pilih Mata Kuliah untuk Dipelajari", style = MaterialTheme.typography.labelSmall, color = LernspaceTextSecondary)
+                // 1. Target Day Selector
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Pilih Hari Target", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = LernspaceDark)
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        items(subjects) { s ->
-                            FilterChip(
-                                selected = selectedSubject == s,
-                                onClick = {
-                                    selectedSubject = s
-                                    selectedTopic = topics.filter { it.subjectId == s.id }.firstOrNull()
-                                },
-                                label = { Text(s.name, fontSize = 11.sp) },
-                                shape = RoundedCornerShape(8.dp)
-                            )
-                        }
-                    }
-                }
-
-                // Select Topic
-                if (subjectTopics.isNotEmpty()) {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Target Sub-bab / Materi", style = MaterialTheme.typography.labelSmall, color = LernspaceTextSecondary)
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            items(subjectTopics) { t ->
-                                FilterChip(
-                                    selected = selectedTopic == t,
-                                    onClick = { selectedTopic = t },
-                                    label = { Text(t.title, fontSize = 11.sp) },
-                                    shape = RoundedCornerShape(8.dp)
+                        items(dayOffsets) { offset ->
+                            val targetDate = today.plusDays(offset.toLong())
+                            val dayLabel = when (offset) {
+                                0 -> "Hari Ini"
+                                1 -> "Besok"
+                                else -> when (targetDate.dayOfWeek) {
+                                    DayOfWeek.MONDAY -> "Senin"
+                                    DayOfWeek.TUESDAY -> "Selasa"
+                                    DayOfWeek.WEDNESDAY -> "Rabu"
+                                    DayOfWeek.THURSDAY -> "Kamis"
+                                    DayOfWeek.FRIDAY -> "Jumat"
+                                    DayOfWeek.SATURDAY -> "Sabtu"
+                                    DayOfWeek.SUNDAY -> "Minggu"
+                                }
+                            }
+                            val isSelected = selectedDayOffset == offset
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isSelected) LernspaceDark else LernspaceSurfaceLow,
+                                border = BorderStroke(1.dp, if (isSelected) LernspaceDark else LernspaceBorder),
+                                modifier = Modifier.clickable { selectedDayOffset = offset }
+                            ) {
+                                Text(
+                                    text = "$dayLabel (${targetDate.dayOfMonth}/${targetDate.monthValue})",
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isSelected) Color.White else LernspaceDark,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                                 )
                             }
                         }
                     }
                 }
 
-                // Target Duration
+                // 2. Select Subject
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Pilih Mata Kuliah / Bidang Belajar", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                    if (subjects.isNotEmpty()) {
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            items(subjects) { s ->
+                                val isSelected = selectedSubject?.id == s.id
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isSelected) LernspaceDark else LernspaceSurfaceLow,
+                                    border = BorderStroke(1.dp, if (isSelected) LernspaceDark else LernspaceBorder),
+                                    modifier = Modifier.clickable {
+                                        selectedSubject = s
+                                        customSubjectName = s.name
+                                        selectedTopic = topics.filter { it.subjectId == s.id }.firstOrNull()
+                                    }
+                                ) {
+                                    Text(
+                                        text = s.name,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (isSelected) Color.White else LernspaceDark,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        OutlinedTextField(
+                            value = customSubjectName,
+                            onValueChange = { customSubjectName = it },
+                            placeholder = { Text("Nama mata kuliah (misal: Matematika, Fisika, Belajar Mandiri)", fontSize = 12.sp) },
+                            singleLine = true,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+
+                // 3. Select Topic / Focus Note
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Target Sub-bab / Fokus Belajar", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                    if (subjectTopics.isNotEmpty()) {
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            items(subjectTopics) { t ->
+                                val isSelected = selectedTopic?.id == t.id
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isSelected) LernspaceDark else LernspaceSurfaceLow,
+                                    border = BorderStroke(1.dp, if (isSelected) LernspaceDark else LernspaceBorder),
+                                    modifier = Modifier.clickable {
+                                        selectedTopic = t
+                                        customTopicName = t.title
+                                    }
+                                ) {
+                                    Text(
+                                        text = t.title,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (isSelected) Color.White else LernspaceDark,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    OutlinedTextField(
+                        value = customTopicName,
+                        onValueChange = { customTopicName = it },
+                        placeholder = { Text(if (selectedTopic != null) "Keterangan tambahan atau nama topik khusus..." else "Ketik topik belajar (misal: Review Bab 1, Latihan Soal)", fontSize = 12.sp) },
+                        singleLine = true,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                // 4. Target Duration
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Durasi Belajar", style = MaterialTheme.typography.labelMedium, color = LernspaceDark)
+                    Text("Durasi Belajar", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = LernspaceDark)
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf(45, 60, 90).forEach { mins ->
-                            FilterChip(
-                                selected = durationMinutes == mins,
-                                onClick = { durationMinutes = mins },
-                                label = { Text("${mins}m", fontSize = 12.sp) },
-                                shape = RoundedCornerShape(8.dp)
-                            )
+                        listOf(30, 45, 60, 90).forEach { mins ->
+                            val isSelected = durationMinutes == mins
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isSelected) LernspaceDark else LernspaceSurfaceLow,
+                                border = BorderStroke(1.dp, if (isSelected) LernspaceDark else LernspaceBorder),
+                                modifier = Modifier.clickable { durationMinutes = mins }
+                            ) {
+                                Text(
+                                    text = "${mins}m",
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isSelected) Color.White else LernspaceDark,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                )
+                            }
                         }
                     }
                 }
 
-                // Suggested Slot Result Box
+                // 5. Suggested Slot Result Box (Clean Minimalist Monochrome)
                 Surface(
                     shape = RoundedCornerShape(10.dp),
-                    color = Color(0xFFEFF6FF),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFBFDBFE))
+                    color = LernspaceSurfaceLow,
+                    border = BorderStroke(1.dp, LernspaceBorder)
                 ) {
                     Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Row(
@@ -3121,44 +4218,320 @@ private fun HybridSuggestDialog(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Slot Rekomendasi Bebas Bentrok", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E40AF))
-                            Surface(shape = RoundedCornerShape(4.dp), color = AccentBlue) {
-                                Text("10:30 - 11:30", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                            Text("Slot Rekomendasi Bebas Bentrok", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                            Surface(shape = RoundedCornerShape(6.dp), color = LernspaceDark) {
+                                Text(
+                                    text = "$manualStartTime - $manualEndTime",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
                             }
                         }
                         Text(
-                            text = "Terdeteksi jeda waktu luang di jadwal Anda. Waktu ideal untuk sesi fokus mandiri dengan buffer istirahat aman.",
+                            text = recommendedSlot.reason,
                             fontSize = 11.sp,
-                            color = Color(0xFF1E3A8A)
+                            color = LernspaceTextSecondary,
+                            lineHeight = 15.sp
                         )
                     }
                 }
 
+                // 6. Action Buttons
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    TextButton(onClick = onDismiss) { Text("Batal") }
+                    TextButton(onClick = onDismiss) {
+                        Text("Batal", color = LernspaceTextSecondary)
+                    }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = {
-                            if (selectedSubject != null && selectedTopic != null) {
-                                onAccept(
-                                    selectedSubject!!,
-                                    selectedTopic!!,
-                                    durationMinutes,
-                                    "10:30",
-                                    "11:30",
-                                    "Saran deterministik: Slot belajar 60m dijadwalkan di antara jam kuliah pagi."
-                                )
-                            }
+                            val finalSub = selectedSubject
+                            val finalSubName = if (customSubjectName.isNotBlank()) customSubjectName else (selectedSubject?.name ?: "Belajar Mandiri")
+                            val finalTop = selectedTopic
+                            val finalTopTitle = if (customTopicName.isNotBlank()) customTopicName else (selectedTopic?.title ?: "Review Materi & Latihan")
+
+                            onAccept(
+                                finalSub,
+                                finalSubName,
+                                finalTop,
+                                finalTopTitle,
+                                durationMinutes,
+                                selectedDayOffset,
+                                dayOfWeek,
+                                manualStartTime,
+                                manualEndTime,
+                                recommendedSlot.reason
+                            )
                         },
-                        enabled = selectedSubject != null && selectedTopic != null,
                         shape = RoundedCornerShape(8.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark, contentColor = Color.White)
                     ) {
                         Text("Jadwalkan Sekarang", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DIALOG: Input Day Agenda Manual
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun InputDayAgendaDialog(
+    subjects: List<com.lernspace.app.ui.learning.SubjectUi>,
+    initialDayOffset: Int,
+    onDismiss: () -> Unit,
+    onConfirm: (
+        title: String,
+        type: ScheduleType,
+        subject: com.lernspace.app.ui.learning.SubjectUi?,
+        customSubjectName: String,
+        startTime: String,
+        endTime: String,
+        dayOffset: Int,
+        dayOfWeek: Int,
+        room: String
+    ) -> Unit
+) {
+    val today = remember { LocalDate.now() }
+    var selectedDayOffset by remember { mutableIntStateOf(initialDayOffset.coerceIn(0, 6)) }
+    val selectedDate = remember(selectedDayOffset) { today.plusDays(selectedDayOffset.toLong()) }
+    val dayOfWeek = selectedDate.dayOfWeek.value
+
+    var title by remember { mutableStateOf("") }
+    var selectedType by remember { mutableStateOf(ScheduleType.STUDY_SESSION) }
+    var selectedSubject by remember { mutableStateOf(subjects.firstOrNull()) }
+    var customSubjectName by remember { mutableStateOf("") }
+
+    var startTime by remember { mutableStateOf("10:00") }
+    var endTime by remember { mutableStateOf("11:30") }
+    var room by remember { mutableStateOf("") }
+
+    val dayOffsets = listOf(0, 1, 2, 3, 4, 5, 6)
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = LernspaceSurfaceCard,
+            border = BorderStroke(1.dp, LernspaceBorder),
+            shadowElevation = 6.dp,
+            modifier = Modifier.width(460.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(24.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Tambah Agenda Harian",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = LernspaceDark
+                    )
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(24.dp)) {
+                        Icon(Icons.Filled.Close, null, tint = LernspaceTextSecondary)
+                    }
+                }
+
+                // 1. Title
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Judul Agenda / Sesi", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                    OutlinedTextField(
+                        value = title,
+                        onValueChange = { title = it },
+                        placeholder = { Text("misal: Belajar Mandiri Kalkulus, Diskusi Kelompok", fontSize = 12.sp) },
+                        singleLine = true,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                // 2. Type Selector
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Kategori Agenda", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf(
+                            Pair(ScheduleType.STUDY_SESSION, "Belajar"),
+                            Pair(ScheduleType.LECTURE, "Kuliah"),
+                            Pair(ScheduleType.LAB, "Praktikum"),
+                            Pair(ScheduleType.EXAM, "Ujian / Kuis")
+                        ).forEach { (type, label) ->
+                            val isSelected = selectedType == type
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isSelected) LernspaceDark else LernspaceSurfaceLow,
+                                border = BorderStroke(1.dp, if (isSelected) LernspaceDark else LernspaceBorder),
+                                modifier = Modifier.clickable { selectedType = type }
+                            ) {
+                                Text(
+                                    text = label,
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isSelected) Color.White else LernspaceDark,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // 3. Target Day
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Pilih Hari", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(dayOffsets) { offset ->
+                            val targetDate = today.plusDays(offset.toLong())
+                            val dayLabel = when (offset) {
+                                0 -> "Hari Ini"
+                                1 -> "Besok"
+                                else -> when (targetDate.dayOfWeek) {
+                                    DayOfWeek.MONDAY -> "Sen"
+                                    DayOfWeek.TUESDAY -> "Sel"
+                                    DayOfWeek.WEDNESDAY -> "Rab"
+                                    DayOfWeek.THURSDAY -> "Kam"
+                                    DayOfWeek.FRIDAY -> "Jum"
+                                    DayOfWeek.SATURDAY -> "Sab"
+                                    DayOfWeek.SUNDAY -> "Min"
+                                }
+                            }
+                            val isSelected = selectedDayOffset == offset
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isSelected) LernspaceDark else LernspaceSurfaceLow,
+                                border = BorderStroke(1.dp, if (isSelected) LernspaceDark else LernspaceBorder),
+                                modifier = Modifier.clickable { selectedDayOffset = offset }
+                            ) {
+                                Text(
+                                    text = "$dayLabel (${targetDate.dayOfMonth})",
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isSelected) Color.White else LernspaceDark,
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // 4. Subject Selector
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Mata Kuliah Terkait (Opsional)", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                    if (subjects.isNotEmpty()) {
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            items(subjects) { s ->
+                                val isSelected = selectedSubject?.id == s.id
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isSelected) LernspaceDark else LernspaceSurfaceLow,
+                                    border = BorderStroke(1.dp, if (isSelected) LernspaceDark else LernspaceBorder),
+                                    modifier = Modifier.clickable {
+                                        selectedSubject = if (isSelected) null else s
+                                    }
+                                ) {
+                                    Text(
+                                        text = s.name,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (isSelected) Color.White else LernspaceDark,
+                                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        OutlinedTextField(
+                            value = customSubjectName,
+                            onValueChange = { customSubjectName = it },
+                            placeholder = { Text("Nama mata kuliah (opsional)", fontSize = 12.sp) },
+                            singleLine = true,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+
+                // 5. Time range
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Jam Mulai", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                        OutlinedTextField(
+                            value = startTime,
+                            onValueChange = { startTime = it },
+                            placeholder = { Text("08:00") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Jam Selesai", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                        OutlinedTextField(
+                            value = endTime,
+                            onValueChange = { endTime = it },
+                            placeholder = { Text("09:30") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+
+                // 6. Room
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Ruangan / Lokasi (Opsional)", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                    OutlinedTextField(
+                        value = room,
+                        onValueChange = { room = it },
+                        placeholder = { Text("misal: Lab Komputer, Perpus Lt 2", fontSize = 12.sp) },
+                        singleLine = true,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                // 7. Actions
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Batal", color = LernspaceTextSecondary)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            val finalTitle = title.ifBlank { "Sesi Belajar" }
+                            val finalSub = selectedSubject
+                            val finalSubName = customSubjectName.ifBlank { selectedSubject?.name ?: "" }
+                            onConfirm(
+                                finalTitle,
+                                selectedType,
+                                finalSub,
+                                finalSubName,
+                                startTime,
+                                endTime,
+                                selectedDayOffset,
+                                dayOfWeek,
+                                room
+                            )
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark, contentColor = Color.White)
+                    ) {
+                        Text("Simpan Agenda", fontWeight = FontWeight.Bold)
                     }
                 }
             }

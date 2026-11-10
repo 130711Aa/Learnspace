@@ -359,24 +359,92 @@ object AcademicDatabaseManager {
         }
     }
 
-    fun persistWeeklyClass(wClass: WeeklyClassUi) {
+    fun persistWeeklyClass(wClass: WeeklyClassUi, subject: SubjectUi? = null) {
         val database = db ?: return
         scope.launch {
-            val entity = CalendarEventEntity(
-                id = wClass.id,
-                title = "${wClass.subjectName}: ${wClass.type}",
-                eventType = wClass.type,
-                startTime = wClass.startTime,
-                endTime = wClass.endTime,
-                dayOfWeek = wClass.dayOfWeek,
-                subjectId = wClass.subjectId,
-                subjectName = wClass.subjectName,
-                subjectCode = wClass.subjectCode,
-                locationOrRoom = wClass.room,
-                lecturer = wClass.lecturer,
-                isWeeklyClass = true
-            )
-            database.calendarEventDao().insertEvent(entity)
+            try {
+                if (subject != null) {
+                    val existing = database.subjectDao().getSubjectById(subject.id)
+                    if (existing == null) {
+                        val subEntity = SubjectEntity(
+                            id = subject.id,
+                            name = subject.name,
+                            code = subject.code,
+                            description = subject.description,
+                            colorArgb = subject.color.value.toLong(),
+                            updatedAt = System.currentTimeMillis()
+                        )
+                        database.subjectDao().insertSubject(subEntity)
+                    }
+                }
+                val entity = CalendarEventEntity(
+                    id = wClass.id,
+                    title = "${wClass.subjectName}: ${wClass.type}",
+                    eventType = wClass.type,
+                    startTime = wClass.startTime,
+                    endTime = wClass.endTime,
+                    dayOfWeek = wClass.dayOfWeek,
+                    subjectId = wClass.subjectId,
+                    subjectName = wClass.subjectName,
+                    subjectCode = wClass.subjectCode,
+                    locationOrRoom = wClass.room,
+                    lecturer = wClass.lecturer,
+                    isWeeklyClass = true
+                )
+                database.calendarEventDao().insertEvent(entity)
+            } catch (e: Exception) {
+                android.util.Log.e("AcademicDbManager", "Error persisting weekly class: ${e.message}", e)
+            }
+        }
+    }
+
+    fun importWeeklyClassesBatch(
+        newSubjects: List<SubjectUi>,
+        newClasses: List<WeeklyClassUi>
+    ) {
+        val database = db ?: return
+        scope.launch {
+            try {
+                // 1. Insert all new subjects FIRST in database
+                if (newSubjects.isNotEmpty()) {
+                    val subjectEntities = newSubjects.map { subject ->
+                        SubjectEntity(
+                            id = subject.id,
+                            name = subject.name,
+                            code = subject.code,
+                            description = subject.description,
+                            colorArgb = subject.color.value.toLong(),
+                            updatedAt = System.currentTimeMillis()
+                        )
+                    }
+                    database.subjectDao().insertSubjects(subjectEntities)
+                }
+
+                // 2. Insert all weekly classes SECOND
+                if (newClasses.isNotEmpty()) {
+                    val classEntities = newClasses.map { wClass ->
+                        CalendarEventEntity(
+                            id = wClass.id,
+                            title = "${wClass.subjectName}: ${wClass.type}",
+                            eventType = wClass.type,
+                            startTime = wClass.startTime,
+                            endTime = wClass.endTime,
+                            dayOfWeek = wClass.dayOfWeek,
+                            dayOffset = -1,
+                            subjectId = wClass.subjectId,
+                            subjectName = wClass.subjectName,
+                            subjectCode = wClass.subjectCode,
+                            locationOrRoom = wClass.room,
+                            lecturer = wClass.lecturer,
+                            isWeeklyClass = true,
+                            isCompleted = false
+                        )
+                    }
+                    database.calendarEventDao().insertEvents(classEntities)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("AcademicDbManager", "Failed to import weekly classes batch: ${e.message}", e)
+            }
         }
     }
 
