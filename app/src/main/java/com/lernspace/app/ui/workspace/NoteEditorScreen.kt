@@ -41,6 +41,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
@@ -53,6 +54,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
@@ -80,6 +82,9 @@ import com.lernspace.app.ui.workspace.components.NoteFloatingToolbar
 import com.lernspace.app.ui.workspace.components.PaperBackground
 import com.lernspace.app.ui.workspace.lasso.LassoHelper
 import com.lernspace.app.ui.workspace.lasso.LassoSelectionState
+import com.lernspace.app.ui.workspace.math.HandwrittenMathRecognizer
+import com.lernspace.app.ui.workspace.math.MathRecognitionOutcome
+import com.lernspace.app.ui.workspace.math.StrokeVectorFont
 import com.lernspace.app.ui.workspace.model.*
 import com.lernspace.app.ui.workspace.pdf.PdfNoteHelper
 import com.lernspace.app.ui.workspace.shape.ShapeRecognizer
@@ -88,8 +93,12 @@ import com.lernspace.app.data.local.EraserMode
 import com.lernspace.app.data.local.Handedness
 import com.lernspace.app.data.local.TouchInputMode
 import androidx.ink.strokes.MutableStrokeInputBatch
+import androidx.ink.strokes.StrokeInput
+import java.util.WeakHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
@@ -122,6 +131,16 @@ private fun isStrokeHoldAtEnd(stroke: Stroke, currentScale: Float): Boolean {
     }
     return (endT - stationaryStartTime) >= threshold
 }
+
+data class PdfRenderedTile(
+    val pageIndex: Int,
+    val bitmap: ImageBitmap,
+    val worldLeft: Float,
+    val worldTop: Float,
+    val worldRight: Float,
+    val worldBottom: Float,
+    val renderedScale: Float
+)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // STATE HOLDER: Encapsulates all data and canvas state for one note pane
@@ -163,6 +182,10 @@ class NotePaneState(
     val imageElements = mutableStateListOf<ImageElement>()
 
     var pdfPageBitmap by mutableStateOf<ImageBitmap?>(null)
+    var pdfPageWorldWidth by mutableFloatStateOf(CanvasConstants.PAGE_WIDTH)
+    var pdfPageWorldHeight by mutableFloatStateOf(CanvasConstants.PAGE_HEIGHT)
+    var pdfTile by mutableStateOf<PdfRenderedTile?>(null)
+    var pdfLoadFailed by mutableStateOf(false)
 
     // Canvas Viewport Pan & Zoom State
     var scale by mutableFloatStateOf(1f)
@@ -223,12 +246,34 @@ class NotePaneState(
     }
 
     fun loadPdfPage() {
-        if (note.canvasType == NoteCanvasType.PDF_DOCUMENT && note.pdfUri != null) {
+        if (note.canvasType == NoteCanvasType.PDF_DOCUMENT && !note.pdfUri.isNullOrBlank()) {
+            val pageToLoad = currentPageIndex
+            pdfTile = null
+            pdfLoadFailed = false
             coroutineScope.launch(Dispatchers.IO) {
-                val bmp = PdfNoteHelper.renderPdfPage(context, Uri.parse(note.pdfUri), currentPageIndex, targetWidth = 1800)
-                if (bmp != null) {
-                    withContext(Dispatchers.Main) {
-                        pdfPageBitmap = bmp.asImageBitmap()
+                val resolvedUriString = NoteStorageManager.ensurePdfInternal(context, note.id, note.pdfUri!!)
+                if (resolvedUriString != null && resolvedUriString != note.pdfUri) {
+                    note.pdfUri = resolvedUriString
+                    AcademicDatabaseManager.persistNote(note)
+                }
+                val effectiveUri = Uri.parse(resolvedUriString ?: note.pdfUri)
+                val result = PdfNoteHelper.renderPdfPageWithBounds(
+                    context = context,
+                    uri = effectiveUri,
+                    pageIndex = pageToLoad,
+                    targetWidth = 2400
+                )
+                withContext(Dispatchers.Main) {
+                    if (currentPageIndex == pageToLoad) {
+                        if (result != null) {
+                            pdfPageWorldWidth = result.worldWidth
+                            pdfPageWorldHeight = result.worldHeight
+                            pdfPageBitmap = result.bitmap.asImageBitmap()
+                            pdfLoadFailed = false
+                        } else {
+                            pdfPageBitmap = null
+                            pdfLoadFailed = true
+                        }
                     }
                 }
             }
@@ -316,6 +361,40 @@ class NotePaneState(
         return ex * ex + ey * ey
     }
 
+    // Cached per-stroke AABB [minX, minY, maxX, maxY] to make eraser hit-testing O(1) per non-intersecting stroke
+    private val strokeBoundsCache = WeakHashMap<Stroke, FloatArray>()
+    private val reusableInputA = StrokeInput()
+    private val reusableInputB = StrokeInput()
+
+    private fun getStrokeBounds(stroke: Stroke): FloatArray? {
+        strokeBoundsCache[stroke]?.let { return it }
+        val inputs = stroke.inputs
+        val count = inputs.size
+        if (count == 0) return null
+        inputs.populate(0, reusableInputA)
+        var minX = reusableInputA.x
+        var maxX = reusableInputA.x
+        var minY = reusableInputA.y
+        var maxY = reusableInputA.y
+        for (i in 1 until count) {
+            inputs.populate(i, reusableInputA)
+            val x = reusableInputA.x
+            val y = reusableInputA.y
+            if (x < minX) minX = x
+            if (x > maxX) maxX = x
+            if (y < minY) minY = y
+            if (y > maxY) maxY = y
+        }
+        return floatArrayOf(minX, minY, maxX, maxY).also { strokeBoundsCache[stroke] = it }
+    }
+
+    private fun isPointOutsideBounds(x: Float, y: Float, radius: Float, bounds: FloatArray): Boolean {
+        return x + radius < bounds[0] ||
+            x - radius > bounds[2] ||
+            y + radius < bounds[1] ||
+            y - radius > bounds[3]
+    }
+
     fun eraseNear(
         touchX: Float,
         touchY: Float,
@@ -326,25 +405,38 @@ class NotePaneState(
         val radiusSquared = effectiveRadius * effectiveRadius
 
         if (mode == EraserMode.STROKE) {
-            strokes.removeAll { stroke ->
+            for (idx in strokes.indices.reversed()) {
+                val stroke = strokes[idx]
+                val bounds = getStrokeBounds(stroke) ?: continue
+                if (isPointOutsideBounds(touchX, touchY, effectiveRadius, bounds)) continue
+
                 val inputs = stroke.inputs
                 val count = inputs.size
-                if (count == 0) return@removeAll false
+                var hit = false
                 if (count == 1) {
-                    val pt = inputs.get(0)
-                    val dx = pt.x - touchX
-                    val dy = pt.y - touchY
-                    return@removeAll (dx * dx + dy * dy) <= radiusSquared
-                }
-                for (i in 0 until count - 1) {
-                    val p1 = inputs.get(i)
-                    val p2 = inputs.get(i + 1)
-                    val d2 = distToSegmentSquared(touchX, touchY, p1.x, p1.y, p2.x, p2.y)
-                    if (d2 <= radiusSquared) {
-                        return@removeAll true
+                    inputs.populate(0, reusableInputA)
+                    val dx = reusableInputA.x - touchX
+                    val dy = reusableInputA.y - touchY
+                    hit = (dx * dx + dy * dy) <= radiusSquared
+                } else {
+                    inputs.populate(0, reusableInputA)
+                    var prevX = reusableInputA.x
+                    var prevY = reusableInputA.y
+                    for (i in 1 until count) {
+                        inputs.populate(i, reusableInputB)
+                        val curX = reusableInputB.x
+                        val curY = reusableInputB.y
+                        if (distToSegmentSquared(touchX, touchY, prevX, prevY, curX, curY) <= radiusSquared) {
+                            hit = true
+                            break
+                        }
+                        prevX = curX
+                        prevY = curY
                     }
                 }
-                false
+                if (hit) {
+                    strokes.removeAt(idx)
+                }
             }
         } else {
             // ── Pixel / Segment Erase: cut out points inside radius ──
@@ -352,14 +444,19 @@ class NotePaneState(
             val newStrokesList = ArrayList<Stroke>(strokes.size)
 
             for (stroke in strokes) {
+                val bounds = getStrokeBounds(stroke)
+                if (bounds == null) continue
+                if (isPointOutsideBounds(touchX, touchY, effectiveRadius, bounds)) {
+                    newStrokesList.add(stroke)
+                    continue
+                }
+
                 val inputs = stroke.inputs
                 val count = inputs.size
-                if (count == 0) continue
-
                 if (count == 1) {
-                    val pt = inputs.get(0)
-                    val dx = pt.x - touchX
-                    val dy = pt.y - touchY
+                    inputs.populate(0, reusableInputA)
+                    val dx = reusableInputA.x - touchX
+                    val dy = reusableInputA.y - touchY
                     if ((dx * dx + dy * dy) <= radiusSquared) {
                         modifiedAny = true
                     } else {
@@ -368,25 +465,23 @@ class NotePaneState(
                     continue
                 }
 
-                // Check if any point or segment is in radius
                 var hit = false
-                for (i in 0 until count) {
-                    val pt = inputs.get(i)
-                    val dx = pt.x - touchX
-                    val dy = pt.y - touchY
-                    if ((dx * dx + dy * dy) <= radiusSquared) {
-                        hit = true
-                        break
-                    }
-                }
-                if (!hit) {
-                    for (i in 0 until count - 1) {
-                        val p1 = inputs.get(i)
-                        val p2 = inputs.get(i + 1)
-                        if (distToSegmentSquared(touchX, touchY, p1.x, p1.y, p2.x, p2.y) <= radiusSquared) {
+                inputs.populate(0, reusableInputA)
+                var prevX = reusableInputA.x
+                var prevY = reusableInputA.y
+                if ((prevX - touchX) * (prevX - touchX) + (prevY - touchY) * (prevY - touchY) <= radiusSquared) {
+                    hit = true
+                } else {
+                    for (i in 1 until count) {
+                        inputs.populate(i, reusableInputB)
+                        val curX = reusableInputB.x
+                        val curY = reusableInputB.y
+                        if (distToSegmentSquared(touchX, touchY, prevX, prevY, curX, curY) <= radiusSquared) {
                             hit = true
                             break
                         }
+                        prevX = curX
+                        prevY = curY
                     }
                 }
 
@@ -400,13 +495,13 @@ class NotePaneState(
                 var currentBatch = MutableStrokeInputBatch()
 
                 for (i in 0 until count) {
-                    val pt = inputs.get(i)
-                    val dx = pt.x - touchX
-                    val dy = pt.y - touchY
+                    inputs.populate(i, reusableInputA)
+                    val dx = reusableInputA.x - touchX
+                    val dy = reusableInputA.y - touchY
                     val inside = (dx * dx + dy * dy) <= radiusSquared
 
                     if (!inside) {
-                        currentBatch.add(pt)
+                        currentBatch.add(reusableInputA)
                     } else {
                         if (currentBatch.size >= 2) {
                             newStrokesList.add(Stroke(stroke.brush, currentBatch))
@@ -494,6 +589,13 @@ fun NoteEditorScreen(
     var highlighterThickness by remember { mutableFloatStateOf(24f) }      // 24 px default for Highlighter
     var selectedShapeType by remember { mutableStateOf(GeometricShapeType.RECTANGLE) }
     var isExporting by remember { mutableStateOf(false) }
+    var isAutoMathEnabled by remember { mutableStateOf(true) }
+
+    LaunchedEffect(isAutoMathEnabled) {
+        if (isAutoMathEnabled) {
+            HandwrittenMathRecognizer.checkOrDownloadInkModel()
+        }
+    }
 
     val activeColor = when (activeTool) {
         NoteTool.HIGHLIGHTER -> highlighterColor
@@ -617,6 +719,7 @@ fun NoteEditorScreen(
                     selectedColor = activeColor,
                     selectedThickness = activeThickness,
                     selectedShapeType = selectedShapeType,
+                    isAutoMathEnabled = isAutoMathEnabled,
                     onActivate = { activeNoteId = primaryState.note.id },
                     modifier = Modifier
                         .fillMaxSize()
@@ -645,6 +748,7 @@ fun NoteEditorScreen(
                                 selectedColor = activeColor,
                                 selectedThickness = activeThickness,
                                 selectedShapeType = selectedShapeType,
+                                isAutoMathEnabled = isAutoMathEnabled,
                                 onActivate = { activeNoteId = leftState.note.id },
                                 modifier = Modifier
                                     .fillMaxSize()
@@ -681,6 +785,7 @@ fun NoteEditorScreen(
                                 selectedColor = activeColor,
                                 selectedThickness = activeThickness,
                                 selectedShapeType = selectedShapeType,
+                                isAutoMathEnabled = isAutoMathEnabled,
                                 onActivate = { activeNoteId = rightState.note.id },
                                 modifier = Modifier
                                     .fillMaxSize()
@@ -759,6 +864,8 @@ fun NoteEditorScreen(
             isExporting = isExporting,
             isDarkPaper = activeState.isDarkPaper,
             onToggleDarkPaper = { activeState.toggleDarkPaper() },
+            isAutoMathEnabled = isAutoMathEnabled,
+            onToggleAutoMath = { isAutoMathEnabled = !isAutoMathEnabled },
             onBack = { handleBack() },
             modifier = Modifier
                 .align(Alignment.TopCenter)
@@ -809,11 +916,128 @@ private fun NotePaneViewport(
     selectedColor: Color,
     selectedThickness: Float,
     selectedShapeType: GeometricShapeType,
+    isAutoMathEnabled: Boolean = true,
     onActivate: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val view = LocalView.current
+    val coroutineScope = rememberCoroutineScope()
     var showDeletePageDialog by remember { mutableStateOf(false) }
+    var viewportSize by remember { mutableStateOf(IntSize.Zero) }
+    var mathToastOutcome by remember { mutableStateOf<MathRecognitionOutcome?>(null) }
+    var lassoMathOutcome by remember { mutableStateOf<MathRecognitionOutcome?>(null) }
+    var lassoMathNoResult by remember { mutableStateOf(false) }
+
+    LaunchedEffect(mathToastOutcome) {
+        if (mathToastOutcome != null) {
+            delay(3600L)
+            mathToastOutcome = null
+        }
+    }
+
+    val relinkPdfLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri?.let { pickedUri ->
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    pickedUri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {}
+
+            coroutineScope.launch {
+                val savedUri = withContext(Dispatchers.IO) {
+                    NoteStorageManager.copyPdfToInternal(context, pickedUri, state.note.id) ?: pickedUri.toString()
+                }
+                val pageCount = withContext(Dispatchers.IO) {
+                    PdfNoteHelper.getPdfPageCount(context, Uri.parse(savedUri))
+                }
+                state.note.pdfUri = savedUri
+                state.note.pdfTotalPages = maxOf(1, pageCount)
+                state.totalPages = state.note.pdfTotalPages
+                AcademicDatabaseManager.persistNote(state.note)
+                state.loadPdfPage()
+            }
+        }
+    }
+
+    // Dynamic Viewport Vector Tile Renderer: keeps PDF text & diagrams razor-sharp at every zoom level
+    LaunchedEffect(
+        state.note.id,
+        state.canvasType,
+        state.note.pdfUri,
+        state.currentPageIndex,
+        state.pdfPageBitmap,
+        viewportSize
+    ) {
+        if (state.canvasType != NoteCanvasType.PDF_DOCUMENT) return@LaunchedEffect
+        val pdfUriStr = state.note.pdfUri ?: return@LaunchedEffect
+        if (state.pdfPageBitmap == null || viewportSize.width <= 0 || viewportSize.height <= 0) return@LaunchedEffect
+
+        snapshotFlow { Triple(state.scale, state.panX, state.panY) }
+            .collectLatest { (currentScale, currentPanX, currentPanY) ->
+                delay(90)
+
+                val pageIdx = state.currentPageIndex
+                val vpW = viewportSize.width.toFloat()
+                val vpH = viewportSize.height.toFloat()
+                val worldW = state.pdfPageWorldWidth
+                val worldH = state.pdfPageWorldHeight
+
+                val visLeft = -currentPanX / currentScale
+                val visTop = -currentPanY / currentScale
+                val visRight = (vpW - currentPanX) / currentScale
+                val visBottom = (vpH - currentPanY) / currentScale
+
+                val marginW = (visRight - visLeft) * 0.15f
+                val marginH = (visBottom - visTop) * 0.15f
+
+                val tileLeft = (visLeft - marginW).coerceIn(0f, worldW)
+                val tileTop = (visTop - marginH).coerceIn(0f, worldH)
+                val tileRight = (visRight + marginW).coerceIn(0f, worldW)
+                val tileBottom = (visBottom + marginH).coerceIn(0f, worldH)
+
+                val tileWorldW = tileRight - tileLeft
+                val tileWorldH = tileBottom - tileTop
+                if (tileWorldW <= 1f || tileWorldH <= 1f) return@collectLatest
+
+                var bmpW = (tileWorldW * currentScale).roundToInt().coerceAtLeast(1)
+                var bmpH = (tileWorldH * currentScale).roundToInt().coerceAtLeast(1)
+                val maxTileDim = 2400
+                if (bmpW > maxTileDim || bmpH > maxTileDim) {
+                    val down = minOf(maxTileDim.toFloat() / bmpW, maxTileDim.toFloat() / bmpH)
+                    bmpW = (bmpW * down).roundToInt().coerceAtLeast(1)
+                    bmpH = (bmpH * down).roundToInt().coerceAtLeast(1)
+                }
+
+                val rendered = withContext(Dispatchers.IO) {
+                    PdfNoteHelper.renderPdfRegion(
+                        context = context,
+                        uri = Uri.parse(pdfUriStr),
+                        pageIndex = pageIdx,
+                        worldLeft = tileLeft,
+                        worldTop = tileTop,
+                        worldRight = tileRight,
+                        worldBottom = tileBottom,
+                        targetWidth = bmpW,
+                        targetHeight = bmpH
+                    )
+                }
+                if (rendered != null && state.currentPageIndex == pageIdx) {
+                    state.pdfTile = PdfRenderedTile(
+                        pageIndex = pageIdx,
+                        bitmap = rendered.asImageBitmap(),
+                        worldLeft = tileLeft,
+                        worldTop = tileTop,
+                        worldRight = tileRight,
+                        worldBottom = tileBottom,
+                        renderedScale = currentScale
+                    )
+                }
+            }
+    }
 
     Box(
         modifier = modifier
@@ -835,6 +1059,7 @@ private fun NotePaneViewport(
             modifier = Modifier
                 .fillMaxSize()
                 .clipToBounds()
+                .onSizeChanged { viewportSize = it }
                 .pointerInput(state.note.id, isFingerDrawing) {
                     awaitEachGesture {
                         val down = awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
@@ -880,7 +1105,9 @@ private fun NotePaneViewport(
                                         event.changes.forEach { it.consume() }
 
                                         if (centroid != Offset.Unspecified && !zoom.isNaN() && zoom > 0f) {
-                                            val newScale = (state.scale * zoom).coerceIn(0.5f, 3.5f)
+                                            val minScale = if (state.canvasType == NoteCanvasType.PDF_DOCUMENT) 0.4f else 0.5f
+                                            val maxScale = if (state.canvasType == NoteCanvasType.PDF_DOCUMENT) 5.0f else 3.5f
+                                            val newScale = (state.scale * zoom).coerceIn(minScale, maxScale)
                                             val effectiveZoom = newScale / state.scale
                                             state.panX = centroid.x - (centroid.x - state.panX) * effectiveZoom + pan.x
                                             state.panY = centroid.y - (centroid.y - state.panY) * effectiveZoom + pan.y
@@ -945,7 +1172,9 @@ private fun NotePaneViewport(
                                     event.changes.forEach { it.consume() }
 
                                     if (centroid != Offset.Unspecified && !zoom.isNaN() && zoom > 0f) {
-                                        val newScale = (state.scale * zoom).coerceIn(0.5f, 3.5f)
+                                        val minScale = if (state.canvasType == NoteCanvasType.PDF_DOCUMENT) 0.4f else 0.5f
+                                        val maxScale = if (state.canvasType == NoteCanvasType.PDF_DOCUMENT) 5.0f else 3.5f
+                                        val newScale = (state.scale * zoom).coerceIn(minScale, maxScale)
                                         val effectiveZoom = newScale / state.scale
                                         state.panX = centroid.x - (centroid.x - state.panX) * effectiveZoom + pan.x
                                         state.panY = centroid.y - (centroid.y - state.panY) * effectiveZoom + pan.y
@@ -970,8 +1199,8 @@ private fun NotePaneViewport(
                         drawRect(if (state.isDarkPaper) Color(0xFF091426) else Color(0xFFE2E8F0)) // desk canvas background
                         if (state.pdfPageBitmap != null) {
                             val bmp = state.pdfPageBitmap!!
-                            val dstW = bmp.width * state.scale
-                            val dstH = bmp.height * state.scale
+                            val dstW = state.pdfPageWorldWidth * state.scale
+                            val dstH = state.pdfPageWorldHeight * state.scale
 
                             drawRoundRect(
                                 color = Color(0x1F0F172A),
@@ -982,18 +1211,36 @@ private fun NotePaneViewport(
 
                             drawImage(
                                 image = bmp,
-                                dstOffset = IntOffset(state.panX.toInt(), state.panY.toInt()),
-                                dstSize = IntSize(dstW.toInt(), dstH.toInt())
+                                dstOffset = IntOffset(state.panX.roundToInt(), state.panY.roundToInt()),
+                                dstSize = IntSize(dstW.roundToInt().coerceAtLeast(1), dstH.roundToInt().coerceAtLeast(1)),
+                                filterQuality = FilterQuality.High
                             )
+
+                            val tile = state.pdfTile
+                            if (tile != null && tile.pageIndex == state.currentPageIndex) {
+                                val tLeft = state.panX + tile.worldLeft * state.scale
+                                val tTop = state.panY + tile.worldTop * state.scale
+                                val tRight = state.panX + tile.worldRight * state.scale
+                                val tBottom = state.panY + tile.worldBottom * state.scale
+                                drawImage(
+                                    image = tile.bitmap,
+                                    dstOffset = IntOffset(tLeft.roundToInt(), tTop.roundToInt()),
+                                    dstSize = IntSize(
+                                        (tRight - tLeft).roundToInt().coerceAtLeast(1),
+                                        (tBottom - tTop).roundToInt().coerceAtLeast(1)
+                                    ),
+                                    filterQuality = FilterQuality.High
+                                )
+                            }
                         }
                     }
                 }
             } else {
                 PaperBackground(
                     style = state.paperStyle,
-                    scale = state.scale,
-                    panX = state.panX,
-                    panY = state.panY,
+                    scaleProvider = { state.scale },
+                    panXProvider = { state.panX },
+                    panYProvider = { state.panY },
                     isPaged = state.canvasType == NoteCanvasType.PAGED_NOTE,
                     isDarkPaper = state.isDarkPaper,
                     modifier = Modifier.fillMaxSize().clipToBounds()
@@ -1027,6 +1274,34 @@ private fun NotePaneViewport(
                         state.strokes.addAll(processedStrokes)
                         state.undoneStrokes.clear()
                         state.saveActivePageData()
+
+                        // Nebo-style Auto-Solve Math when user finishes writing '='
+                        if (isAutoMathEnabled && activeTool == NoteTool.PEN) {
+                            val eqMatch = HandwrittenMathRecognizer.detectEqualsTrigger(state.strokes)
+                            if (eqMatch != null) {
+                                val snapshotBrush = currentBrush
+                                coroutineScope.launch {
+                                    val outcome = HandwrittenMathRecognizer.recognizeAndSolve(eqMatch.equationStrokes)
+                                    if (outcome != null) {
+                                        val answerStrokes = StrokeVectorFont.createStrokesForText(
+                                            text = outcome.solveResult.formattedAnswer,
+                                            startX = eqMatch.answerStartX,
+                                            topY = eqMatch.answerTopY,
+                                            charHeight = eqMatch.charHeight,
+                                            brush = snapshotBrush
+                                        )
+                                        if (answerStrokes.isNotEmpty()) {
+                                            state.strokes.addAll(answerStrokes)
+                                            state.saveActivePageData()
+                                        }
+                                        try {
+                                            view.performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM)
+                                        } catch (_: Exception) {}
+                                        mathToastOutcome = outcome
+                                    }
+                                }
+                            }
+                        }
                     }
                 },
                 isEraserMode = activeTool == NoteTool.ERASER && isActive,
@@ -1035,9 +1310,9 @@ private fun NotePaneViewport(
                 isFingerDrawingEnabled = isFingerDrawing,
                 transformGeneration = transformGeneration,
                 eraserRadiusPx = AppSettingsManager.eraserRadius,
-                scale = state.scale,
-                panX = state.panX,
-                panY = state.panY,
+                scaleProvider = { state.scale },
+                panXProvider = { state.panX },
+                panYProvider = { state.panY },
                 onErase = { worldX, worldY -> state.eraseNear(worldX, worldY, AppSettingsManager.eraserRadius, AppSettingsManager.eraserMode) },
                 onEraseEnd = { state.saveActivePageData() },
                 modifier = Modifier.fillMaxSize().clipToBounds()
@@ -1381,6 +1656,35 @@ private fun NotePaneViewport(
 
                                 VerticalDivider(modifier = Modifier.height(16.dp), color = Color(0xFFE2E8F0))
 
+                                // Solve Math (Lasso -> Offline Math Solver)
+                                if (curSel.selectedStrokes.isNotEmpty()) {
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = Color(0xFFDBEAFE),
+                                        modifier = Modifier.clickable {
+                                            val selStrokes = curSel.selectedStrokes.toList()
+                                            lassoMathNoResult = false
+                                            coroutineScope.launch {
+                                                val outcome = HandwrittenMathRecognizer.recognizeAndSolve(selStrokes)
+                                                if (outcome != null) {
+                                                    lassoMathOutcome = outcome
+                                                } else {
+                                                    lassoMathNoResult = true
+                                                }
+                                            }
+                                        }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                        ) {
+                                            Icon(Icons.Filled.Calculate, contentDescription = "Solve", tint = AccentBlue, modifier = Modifier.size(13.dp))
+                                            Text("Solve", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = AccentBlue)
+                                        }
+                                    }
+                                }
+
                                 // Duplikat
                                 Surface(
                                     shape = RoundedCornerShape(8.dp),
@@ -1512,6 +1816,158 @@ private fun NotePaneViewport(
             }
         }
 
+        // Auto-Math Solve Toast Pill (positioned cleanly above bottom navigator so toolbar never covers it)
+        if (mathToastOutcome != null) {
+            val outcome = mathToastOutcome!!
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = LernspaceDark.copy(alpha = 0.94f),
+                shadowElevation = 6.dp,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 82.dp)
+                    .zIndex(12f)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(Icons.Filled.Calculate, null, tint = Color(0xFF60A5FA), modifier = Modifier.size(16.dp))
+                    Text(
+                        text = "${outcome.solveResult.normalizedExpression} = ${outcome.solveResult.formattedAnswer}",
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+
+        // Lasso Math Solve Result Dialog
+        if (lassoMathOutcome != null || lassoMathNoResult) {
+            AlertDialog(
+                onDismissRequest = {
+                    lassoMathOutcome = null
+                    lassoMathNoResult = false
+                },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(Icons.Filled.Calculate, null, tint = AccentBlue)
+                        Text(
+                            text = if (lassoMathOutcome != null) "Hasil Math Solver" else "Ekspresi Tidak Terbaca",
+                            fontWeight = FontWeight.Bold,
+                            color = LernspaceDark
+                        )
+                    }
+                },
+                text = {
+                    if (lassoMathOutcome != null) {
+                        val res = lassoMathOutcome!!.solveResult
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("Terbaca: ${res.normalizedExpression}", fontSize = 13.sp, color = LernspaceTextSecondary)
+                            Text("Hasil: ${res.formattedAnswer}", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = AccentBlue)
+                        }
+                    } else {
+                        Text(
+                            text = if (HandwrittenMathRecognizer.isInkModelDownloaded)
+                                "Pastikan angka dan operator (+, -, ×, ÷, =) tertulis cukup jelas di dalam seleksi."
+                            else
+                                "Model tulisan tangan offline sedang diunduh di background, atau tulis angka & operator lebih jelas.",
+                            fontSize = 13.sp,
+                            color = LernspaceTextSecondary
+                        )
+                    }
+                },
+                confirmButton = {
+                    val outcome = lassoMathOutcome
+                    val sel = state.lassoSelection
+                    if (outcome != null && sel != null) {
+                        Button(
+                            onClick = {
+                                val charH = sel.bounds.height.coerceIn(36f, 110f)
+                                val hasEq = outcome.recognizedText.contains('=')
+                                val textToWrite = if (hasEq) "  ${outcome.solveResult.formattedAnswer}" else " = ${outcome.solveResult.formattedAnswer}"
+                                val startX = sel.bounds.right + 16f
+                                val topY = sel.bounds.center.y - charH * 0.5f
+                                val strokesOut = StrokeVectorFont.createStrokesForText(
+                                    text = textToWrite,
+                                    startX = startX,
+                                    topY = topY,
+                                    charHeight = charH,
+                                    brush = currentBrush
+                                )
+                                if (strokesOut.isNotEmpty()) {
+                                    state.strokes.addAll(strokesOut)
+                                    state.saveActivePageData()
+                                }
+                                lassoMathOutcome = null
+                                state.lassoSelection = null
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)
+                        ) {
+                            Text("Tulis ke Kanvas")
+                        }
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        lassoMathOutcome = null
+                        lassoMathNoResult = false
+                    }) {
+                        Text("Tutup")
+                    }
+                },
+                shape = RoundedCornerShape(16.dp),
+                containerColor = Color.White
+            )
+        }
+
+        // Recovery Banner if a legacy PDF lost external URI permission
+        if (state.canvasType == NoteCanvasType.PDF_DOCUMENT && state.pdfLoadFailed) {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = Color.White,
+                shadowElevation = 6.dp,
+                border = BorderStroke(1.dp, Color(0xFFFCA5A5)),
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(24.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.PictureAsPdf,
+                        contentDescription = null,
+                        tint = Color(0xFFDC2626),
+                        modifier = Modifier.size(32.dp)
+                    )
+                    Text(
+                        text = "File PDF tidak dapat diakses",
+                        fontWeight = FontWeight.Bold,
+                        color = LernspaceDark,
+                        fontSize = 15.sp
+                    )
+                    Text(
+                        text = "Izin akses file PDF lama sudah kedaluwarsa atau file dipindahkan. Pilih ulang file PDF agar tersimpan permanen.",
+                        color = LernspaceTextSecondary,
+                        fontSize = 12.sp
+                    )
+                    Button(
+                        onClick = { relinkPdfLauncher.launch(arrayOf("application/pdf")) },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
+                    ) {
+                        Text("Pilih Ulang File PDF", color = Color.White)
+                    }
+                }
+            }
+        }
+
         // ── 2. Floating Page Navigator Bar (Bottom Center of this Pane) ──
         if (state.canvasType != NoteCanvasType.INFINITE_SCRATCHPAD) {
             PageNavigatorBar(
@@ -1573,9 +2029,7 @@ private fun NotePaneViewport(
         // ── 3. Floating Zoom Percentage Indicator (Bottom-Start or Bottom-End for Left-Handed) ──
         val isLeftHanded = AppSettingsManager.handedness == Handedness.LEFT_HANDED
         ZoomIndicator(
-            scale = state.scale,
-            panX = state.panX,
-            panY = state.panY,
+            scaleProvider = { state.scale },
             onReset = {
                 state.scale = 1f
                 state.panX = 0f
@@ -1707,6 +2161,8 @@ private fun UnifiedNoteTopBar(
     isExporting: Boolean,
     isDarkPaper: Boolean = false,
     onToggleDarkPaper: () -> Unit = {},
+    isAutoMathEnabled: Boolean = true,
+    onToggleAutoMath: () -> Unit = {},
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -1772,6 +2228,8 @@ private fun UnifiedNoteTopBar(
             onSelectEraserRadius = { AppSettingsManager.updateEraserRadius(it) },
             eraserMode = AppSettingsManager.eraserMode,
             onSelectEraserMode = { AppSettingsManager.updateEraserMode(it) },
+            isAutoMathEnabled = isAutoMathEnabled,
+            onToggleAutoMath = onToggleAutoMath,
             onPickImage = onPickImage
         )
 
@@ -2613,13 +3071,13 @@ private fun JumpToPageDialog(
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun ZoomIndicator(
-    scale: Float,
-    panX: Float,
-    panY: Float,
+    scaleProvider: () -> Float,
     onReset: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val percent = (scale * 100).roundToInt()
+    val percent by remember(scaleProvider) {
+        derivedStateOf { (scaleProvider() * 100).roundToInt() }
+    }
     Surface(
         shape = RoundedCornerShape(20.dp),
         color = Color.White.copy(alpha = 0.92f),

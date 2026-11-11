@@ -1,5 +1,6 @@
 package com.lernspace.app.ui.workspace
 
+import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -29,11 +30,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.lernspace.app.data.local.AcademicDatabaseManager
 import com.lernspace.app.data.local.AppSettingsManager
+import com.lernspace.app.data.local.NoteStorageManager
 import com.lernspace.app.data.repository.AcademicWorkspaceState
 import com.lernspace.app.ui.theme.*
 import com.lernspace.app.ui.workspace.model.*
 import com.lernspace.app.ui.workspace.pdf.PdfNoteHelper
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -45,6 +51,7 @@ fun WorkspaceScreen(
     onNavigateToSyllabus: ((subjectId: String?) -> Unit)? = null
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     val notes = AcademicWorkspaceState.notes
     val subjects = AcademicWorkspaceState.subjects
     val topics = AcademicWorkspaceState.topics
@@ -57,25 +64,40 @@ fun WorkspaceScreen(
     val importPdfLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
-        uri?.let {
-            val fileName = PdfNoteHelper.getFileName(context, it).removeSuffix(".pdf")
-            val pageCount = PdfNoteHelper.getPdfPageCount(context, it)
-            val timeStr = "Today, " + SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
-            val newNote = NoteUiModel(
-                id = UUID.randomUUID().toString(),
-                title = fileName,
-                subject = "PDF Document",
-                date = timeStr,
-                snippet = "Anotasi PDF ($pageCount Halaman)...",
-                canvasType = NoteCanvasType.PDF_DOCUMENT,
-                paperStyle = PaperStyle.BLANK,
-                pdfUri = it.toString(),
-                pdfTotalPages = pageCount,
-                pages = mutableListOf(NotePageData(pageIndex = 0))
-            )
-            notes.add(0, newNote)
-            com.lernspace.app.data.local.AcademicDatabaseManager.persistNote(newNote)
-            AcademicWorkspaceState.openNoteEditor(newNote)
+        uri?.let { pickedUri ->
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    pickedUri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {}
+
+            coroutineScope.launch {
+                val noteId = UUID.randomUUID().toString()
+                val (fileName, pageCount, savedPdfUri) = withContext(Dispatchers.IO) {
+                    val name = PdfNoteHelper.getFileName(context, pickedUri).removeSuffix(".pdf")
+                    val copiedUri = NoteStorageManager.copyPdfToInternal(context, pickedUri, noteId)
+                    val effectiveUriStr = copiedUri ?: pickedUri.toString()
+                    val count = PdfNoteHelper.getPdfPageCount(context, Uri.parse(effectiveUriStr))
+                    Triple(name, count, effectiveUriStr)
+                }
+                val timeStr = "Today, " + SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
+                val newNote = NoteUiModel(
+                    id = noteId,
+                    title = fileName,
+                    subject = "PDF Document",
+                    date = timeStr,
+                    snippet = "Anotasi PDF ($pageCount Halaman)...",
+                    canvasType = NoteCanvasType.PDF_DOCUMENT,
+                    paperStyle = PaperStyle.BLANK,
+                    pdfUri = savedPdfUri,
+                    pdfTotalPages = pageCount,
+                    pages = mutableListOf(NotePageData(pageIndex = 0))
+                )
+                notes.add(0, newNote)
+                AcademicDatabaseManager.persistNote(newNote)
+                AcademicWorkspaceState.openNoteEditor(newNote)
+            }
         }
     }
 
@@ -338,27 +360,37 @@ fun WorkspaceScreen(
             topics = topics,
             onDismiss = { showNewNoteDialog = false },
             onConfirm = { title, subject, topic, canvasType, paperStyle, pdfUri, pdfPages ->
-                val timeStr = "Today, " + SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
-                val newNote = NoteUiModel(
-                    id = UUID.randomUUID().toString(),
-                    title = title,
-                    subject = if (canvasType == NoteCanvasType.INFINITE_SCRATCHPAD) "Quick Scratchpad" else (subject?.name ?: "General Study"),
-                    date = timeStr,
-                    snippet = if (canvasType == NoteCanvasType.PDF_DOCUMENT) "Dokumen PDF ($pdfPages Halaman)..." else "Catatan ${paperStyle.displayName}...",
-                    subjectId = if (canvasType == NoteCanvasType.INFINITE_SCRATCHPAD) null else subject?.id,
-                    topicId = if (canvasType == NoteCanvasType.INFINITE_SCRATCHPAD) null else topic?.id,
-                    topicName = if (canvasType == NoteCanvasType.INFINITE_SCRATCHPAD) null else topic?.title,
-                    canvasType = canvasType,
-                    paperStyle = paperStyle,
-                    pdfUri = pdfUri,
-                    pdfTotalPages = pdfPages,
-                    pages = mutableListOf(NotePageData(pageIndex = 0)),
-                    isScratchpad = (canvasType == NoteCanvasType.INFINITE_SCRATCHPAD)
-                )
-                notes.add(0, newNote)
-                com.lernspace.app.data.local.AcademicDatabaseManager.persistNote(newNote)
                 showNewNoteDialog = false
-                AcademicWorkspaceState.openNoteEditor(newNote)
+                coroutineScope.launch {
+                    val noteId = UUID.randomUUID().toString()
+                    val finalPdfUri = if (canvasType == NoteCanvasType.PDF_DOCUMENT && !pdfUri.isNullOrBlank()) {
+                        withContext(Dispatchers.IO) {
+                            NoteStorageManager.copyPdfToInternal(context, Uri.parse(pdfUri), noteId) ?: pdfUri
+                        }
+                    } else {
+                        pdfUri
+                    }
+                    val timeStr = "Today, " + SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
+                    val newNote = NoteUiModel(
+                        id = noteId,
+                        title = title,
+                        subject = if (canvasType == NoteCanvasType.INFINITE_SCRATCHPAD) "Quick Scratchpad" else (subject?.name ?: "General Study"),
+                        date = timeStr,
+                        snippet = if (canvasType == NoteCanvasType.PDF_DOCUMENT) "Dokumen PDF ($pdfPages Halaman)..." else "Catatan ${paperStyle.displayName}...",
+                        subjectId = if (canvasType == NoteCanvasType.INFINITE_SCRATCHPAD) null else subject?.id,
+                        topicId = if (canvasType == NoteCanvasType.INFINITE_SCRATCHPAD) null else topic?.id,
+                        topicName = if (canvasType == NoteCanvasType.INFINITE_SCRATCHPAD) null else topic?.title,
+                        canvasType = canvasType,
+                        paperStyle = paperStyle,
+                        pdfUri = finalPdfUri,
+                        pdfTotalPages = pdfPages,
+                        pages = mutableListOf(NotePageData(pageIndex = 0)),
+                        isScratchpad = (canvasType == NoteCanvasType.INFINITE_SCRATCHPAD)
+                    )
+                    notes.add(0, newNote)
+                    AcademicDatabaseManager.persistNote(newNote)
+                    AcademicWorkspaceState.openNoteEditor(newNote)
+                }
             }
         )
     }
@@ -586,6 +618,12 @@ private fun CreateNoteDialog(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    it,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {}
             val fileName = PdfNoteHelper.getFileName(context, it).removeSuffix(".pdf")
             val pages = PdfNoteHelper.getPdfPageCount(context, it)
             selectedPdfUri = it.toString()
@@ -837,6 +875,7 @@ private fun CreateNoteDialog(
                     TextButton(onClick = onDismiss) { Text("Batal") }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
+                        enabled = !(selectedCanvasType == NoteCanvasType.PDF_DOCUMENT && selectedPdfUri == null),
                         onClick = {
                             val finalTitle = title.ifBlank {
                                 when (selectedCanvasType) {

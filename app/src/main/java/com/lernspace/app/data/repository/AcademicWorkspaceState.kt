@@ -271,7 +271,153 @@ object AcademicWorkspaceState {
             com.lernspace.app.data.local.AcademicDatabaseManager.persistPlannerItem(updated)
         }
     }
+
+    // ── Flashcards & Spaced Repetition State ──────────────────────────────────
+    val flashcardDecks = mutableStateListOf<FlashcardDeckUi>()
+    val flashcards = mutableStateListOf<FlashcardUi>()
+
+    fun getCardsForDeck(deckId: String): List<FlashcardUi> {
+        return flashcards.filter { it.deckId == deckId }
+    }
+
+    fun getDueCardsForDeck(deckId: String, nowMs: Long = System.currentTimeMillis()): List<FlashcardUi> {
+        return flashcards.filter { it.deckId == deckId && it.nextReviewAt <= nowMs }
+    }
+
+    fun addFlashcardDeck(deck: FlashcardDeckUi) {
+        flashcardDecks.add(0, deck)
+        com.lernspace.app.data.local.AcademicDatabaseManager.persistFlashcardDeck(deck)
+    }
+
+    fun deleteFlashcardDeck(deckId: String) {
+        flashcardDecks.removeAll { it.id == deckId }
+        flashcards.removeAll { it.deckId == deckId }
+        com.lernspace.app.data.local.AcademicDatabaseManager.deleteFlashcardDeck(deckId)
+    }
+
+    fun addFlashcard(card: FlashcardUi) {
+        flashcards.add(card)
+        com.lernspace.app.data.local.AcademicDatabaseManager.persistFlashcard(card)
+    }
+
+    fun updateFlashcard(updated: FlashcardUi) {
+        val idx = flashcards.indexOfFirst { it.id == updated.id }
+        if (idx != -1) {
+            flashcards[idx] = updated
+            com.lernspace.app.data.local.AcademicDatabaseManager.persistFlashcard(updated)
+        }
+    }
+
+    fun deleteFlashcard(cardId: String) {
+        flashcards.removeAll { it.id == cardId }
+        com.lernspace.app.data.local.AcademicDatabaseManager.deleteFlashcard(cardId)
+    }
+
+    fun reviewFlashcard(cardId: String, rating: FlashcardRating) {
+        val idx = flashcards.indexOfFirst { it.id == cardId }
+        if (idx == -1) return
+        val card = flashcards[idx]
+        val updated = computeSm2Review(card, rating)
+        flashcards[idx] = updated
+        com.lernspace.app.data.local.AcademicDatabaseManager.persistFlashcard(updated)
+    }
 }
+
+enum class FlashcardRating(val label: String) {
+    AGAIN("Lupa"),
+    HARD("Sulit"),
+    GOOD("Bagus"),
+    EASY("Mudah")
+}
+
+fun previewIntervalLabel(card: FlashcardUi, rating: FlashcardRating): String {
+    if (rating == FlashcardRating.AGAIN) return "< 10 mnt"
+    val next = computeSm2Review(card, rating)
+    val days = next.intervalDays
+    return when {
+        days <= 1 -> "1 hari"
+        days < 30 -> "$days hari"
+        else -> "${days / 30} bln"
+    }
+}
+
+fun computeSm2Review(
+    card: FlashcardUi,
+    rating: FlashcardRating,
+    nowMs: Long = System.currentTimeMillis()
+): FlashcardUi {
+    val quality = when (rating) {
+        FlashcardRating.AGAIN -> 1
+        FlashcardRating.HARD -> 3
+        FlashcardRating.GOOD -> 4
+        FlashcardRating.EASY -> 5
+    }
+    var reps = card.repetitions
+    var interval = card.intervalDays
+    var ef = card.easeFactor
+
+    if (quality < 3) {
+        reps = 0
+        interval = 0
+    } else {
+        interval = when (reps) {
+            0 -> if (rating == FlashcardRating.EASY) 4 else 1
+            1 -> if (rating == FlashcardRating.HARD) 3 else if (rating == FlashcardRating.EASY) 8 else 6
+            else -> {
+                val mult = when (rating) {
+                    FlashcardRating.HARD -> 1.2f
+                    FlashcardRating.GOOD -> ef
+                    FlashcardRating.EASY -> ef * 1.3f
+                    FlashcardRating.AGAIN -> 0f
+                }
+                kotlin.math.max(interval + 1, (interval * mult).toInt())
+            }
+        }
+        reps += 1
+    }
+
+    ef = (ef + (0.1f - (5 - quality) * (0.08f + (5 - quality) * 0.02f))).coerceAtLeast(1.3f)
+    val nextReviewMs = if (interval == 0) {
+        nowMs + 10 * 60 * 1000L // 10 minutes for Again
+    } else {
+        nowMs + interval * 24L * 60L * 60L * 1000L
+    }
+
+    return card.copy(
+        repetitions = reps,
+        intervalDays = interval,
+        easeFactor = ef,
+        nextReviewAt = nextReviewMs,
+        lastReviewedAt = nowMs
+    )
+}
+
+data class FlashcardDeckUi(
+    val id: String = UUID.randomUUID().toString(),
+    val title: String,
+    val description: String = "",
+    val subjectId: String? = null,
+    val subjectName: String = "General Study",
+    val topicId: String? = null,
+    val topicName: String? = null,
+    val sourceNoteId: String? = null,
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
+)
+
+data class FlashcardUi(
+    val id: String = UUID.randomUUID().toString(),
+    val deckId: String,
+    val front: String,
+    val back: String,
+    val hint: String = "",
+    val repetitions: Int = 0,
+    val intervalDays: Int = 0,
+    val easeFactor: Float = 2.5f,
+    val nextReviewAt: Long = System.currentTimeMillis(),
+    val lastReviewedAt: Long? = null,
+    val createdAt: Long = System.currentTimeMillis()
+)
 
 enum class ScheduleType(val label: String, val chipBg: Color, val chipFg: Color) {
     LECTURE("Lecture", Color(0xFFDBEAFE), Color(0xFF1D4ED8)),

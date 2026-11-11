@@ -58,6 +58,8 @@ fun NoteFloatingToolbar(
     onSelectEraserRadius: (Float) -> Unit = {},
     eraserMode: EraserMode = EraserMode.PIXEL,
     onSelectEraserMode: (EraserMode) -> Unit = {},
+    isAutoMathEnabled: Boolean = true,
+    onToggleAutoMath: () -> Unit = {},
     onPickImage: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -263,6 +265,33 @@ fun NoteFloatingToolbar(
                                 color = if (isCurrentConfigOpen) AccentBlue else LernspaceDark
                             )
                         }
+                    }
+                }
+
+                // Auto-Math '=' Solver Toggle Pill
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (isAutoMathEnabled) AccentBlue.copy(alpha = 0.14f) else Color(0xFFF1F5F9),
+                    border = BorderStroke(1.dp, if (isAutoMathEnabled) AccentBlue else Color(0xFFE2E8F0)),
+                    modifier = Modifier.clickable(onClick = onToggleAutoMath)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Calculate,
+                            contentDescription = "Auto-Solve Math",
+                            tint = if (isAutoMathEnabled) AccentBlue else Color(0xFF64748B),
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Text(
+                            text = "=",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = if (isAutoMathEnabled) AccentBlue else Color(0xFF64748B)
+                        )
                     }
                 }
             }

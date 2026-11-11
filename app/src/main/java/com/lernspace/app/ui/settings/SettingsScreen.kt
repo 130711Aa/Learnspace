@@ -1,5 +1,8 @@
 package com.lernspace.app.ui.settings
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -22,9 +25,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.lernspace.app.core.ai.GeminiApiClient
+import com.lernspace.app.core.ai.LocalSlmManager
+import com.lernspace.app.core.ai.SlmModelSpec
 import com.lernspace.app.core.updater.AppReleaseInfo
 import com.lernspace.app.core.updater.UpdateManager
 import com.lernspace.app.data.local.AppSettingsManager
@@ -40,6 +48,7 @@ private enum class SettingsCategory(val title: String, val subtitle: String, val
     STYLUS_ERGONOMICS("Stylus & Ergonomi", "Mode tangan, snap bentuk geometri", Icons.Filled.Draw),
     APPEARANCE("Tampilan & Tema", "Mode gelap, terang, sistem", Icons.Filled.Palette),
     WORKSPACE_DEFAULTS("Format Catatan", "Template kertas bawaan", Icons.AutoMirrored.Filled.MenuBook),
+    OFFLINE_AI("AI & SLM Offline", "Model lokal, RAM, dan unduhan", Icons.Filled.AutoAwesome),
     ABOUT("Tentang & Sistem", "Info versi dan status memori", Icons.Filled.Info)
 }
 
@@ -209,6 +218,11 @@ fun SettingsScreen(
                         SettingsCategory.WORKSPACE_DEFAULTS -> {
                             item {
                                 WorkspaceDefaultsSection()
+                            }
+                        }
+                        SettingsCategory.OFFLINE_AI -> {
+                            item {
+                                OfflineSlmSection()
                             }
                         }
                         SettingsCategory.ABOUT -> {
@@ -817,7 +831,7 @@ private fun AboutAndSystemSection() {
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text("Learnspace Tablet OS", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
-                        Text("Versi 1.1.0 (Production Release)", fontSize = 12.sp, color = LernspaceTextSecondary)
+                        Text("Versi 1.2.0 (Production Release)", fontSize = 12.sp, color = LernspaceTextSecondary)
                     }
 
                     Row(
@@ -860,7 +874,7 @@ private fun AboutAndSystemSection() {
                                 if (!isCheckingUpdate) {
                                     isCheckingUpdate = true
                                     scope.launch {
-                                        val result = UpdateManager.checkForUpdates("1.1.0")
+                                        val result = UpdateManager.checkForUpdates("1.2.0")
                                         isCheckingUpdate = false
                                         result.onSuccess { info ->
                                             if (info.hasUpdate) {
@@ -1032,6 +1046,561 @@ private fun AboutAndSystemSection() {
                             Spacer(modifier = Modifier.width(6.dp))
                             Text("Unduh & Pasang", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SECTION: AI & SLM OFFLINE (On-Device GGUF Runtime Management)
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun OfflineSlmSection() {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+
+    val activeFileName = LocalSlmManager.activeModelFileName
+    val isLoadedInRam = LocalSlmManager.isModelLoadedInRam
+    val isDownloading = LocalSlmManager.isDownloading
+    val downloadingId = LocalSlmManager.downloadingModelId
+    val dlProgress = LocalSlmManager.downloadProgress
+    val dlStatus = LocalSlmManager.downloadStatusText
+    val autoUnload = LocalSlmManager.autoUnloadEnabled
+
+    var refreshTrigger by remember { mutableIntStateOf(0) }
+    var testPrompt by remember { mutableStateOf("Jelaskan apa itu fotosintesis dalam 2 kalimat.") }
+    var testResponse by remember { mutableStateOf("") }
+    var isTesting by remember { mutableStateOf(false) }
+
+    var geminiKeyInput by remember { mutableStateOf(GeminiApiClient.apiKey) }
+    var showGeminiKey by remember { mutableStateOf(false) }
+    var geminiTestResult by remember { mutableStateOf<String?>(null) }
+    var isTestingGemini by remember { mutableStateOf(false) }
+
+    val importGgufLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri?.let { pickedUri ->
+            coroutineScope.launch {
+                val res = LocalSlmManager.importLocalGguf(context, pickedUri)
+                res.onSuccess {
+                    refreshTrigger++
+                }.onFailure { err ->
+                    testResponse = "Gagal impor file: ${err.message}"
+                }
+            }
+        }
+    }
+
+    val customModels = remember(refreshTrigger, activeFileName) {
+        LocalSlmManager.getDownloadedCustomModels(context)
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                text = "AI Belajar: Gemini Flash-Lite & SLM Offline",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = LernspaceDark
+            )
+            Text(
+                text = "Gunakan Gemini Flash-Lite (BYOK) saat online untuk hasil cepat & akurat, atau jalankan SLM lokal 100% offline sebagai cadangan.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = LernspaceTextSecondary
+            )
+        }
+
+        // Gemini Flash-Lite API Card (BYOK)
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = LernspaceSurfaceLow,
+            border = BorderStroke(
+                1.dp,
+                if (GeminiApiClient.isConfigured()) AccentBlue.copy(alpha = 0.45f) else LernspaceBorder
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "Gemini Flash-Lite API (Opsional / BYOK)",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = LernspaceDark
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = if (GeminiApiClient.isConfigured()) AccentTeal.copy(alpha = 0.14f) else LernspaceBorder.copy(alpha = 0.5f)
+                            ) {
+                                Text(
+                                    text = if (GeminiApiClient.isConfigured()) "Aktif" else "Belum Diisi",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (GeminiApiClient.isConfigured()) AccentTeal else LernspaceTextSecondary,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                        Text(
+                            text = "Masukkan API key dari Google AI Studio (aistudio.google.com). Disimpan lokal di perangkat; otomatis fallback ke SLM offline jika kuota habis (429) atau offline.",
+                            fontSize = 11.sp,
+                            color = LernspaceTextSecondary
+                        )
+                    }
+                }
+
+                OutlinedTextField(
+                    value = geminiKeyInput,
+                    onValueChange = {
+                        geminiKeyInput = it
+                        geminiTestResult = null
+                    },
+                    label = { Text("Gemini API Key (AIza...)", fontSize = 12.sp) },
+                    placeholder = { Text("Tempel API key dari Google AI Studio", fontSize = 12.sp) },
+                    singleLine = true,
+                    visualTransformation = if (showGeminiKey) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(onClick = { showGeminiKey = !showGeminiKey }) {
+                            Icon(
+                                imageVector = if (showGeminiKey) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                contentDescription = if (showGeminiKey) "Sembunyikan" else "Tampilkan"
+                            )
+                        }
+                    },
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "Model Flash-Lite",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = LernspaceDark
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        GeminiApiClient.availableModels.forEach { (modelId, label) ->
+                            FilterChip(
+                                selected = GeminiApiClient.selectedModelId == modelId,
+                                onClick = {
+                                    GeminiApiClient.updateModelId(context, modelId)
+                                    geminiTestResult = null
+                                },
+                                label = { Text(label, fontSize = 11.sp) },
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                        }
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Prioritaskan Gemini saat online",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = LernspaceDark
+                        )
+                        Text(
+                            text = "Jika dimatikan, pembuatan flashcard selalu memakai SLM lokal meskipun API key terisi.",
+                            fontSize = 11.sp,
+                            color = LernspaceTextSecondary
+                        )
+                    }
+                    Switch(
+                        checked = GeminiApiClient.preferGeminiWhenOnline,
+                        onCheckedChange = { GeminiApiClient.setPreferGemini(context, it) }
+                    )
+                }
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Button(
+                        onClick = {
+                            GeminiApiClient.updateApiKey(context, geminiKeyInput)
+                            geminiTestResult = if (geminiKeyInput.isBlank()) {
+                                "API key dihapus."
+                            } else {
+                                "API key tersimpan secara lokal."
+                            }
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)
+                    ) {
+                        Text("Simpan Key", fontSize = 12.sp)
+                    }
+
+                    OutlinedButton(
+                        enabled = !isTestingGemini && geminiKeyInput.trim().isNotEmpty(),
+                        onClick = {
+                            GeminiApiClient.updateApiKey(context, geminiKeyInput)
+                            isTestingGemini = true
+                            geminiTestResult = null
+                            coroutineScope.launch {
+                                val res = GeminiApiClient.testConnection()
+                                geminiTestResult = res.fold(
+                                    onSuccess = { reply -> "Terhubung (${GeminiApiClient.selectedModelId}): $reply" },
+                                    onFailure = { err -> "Gagal: ${err.message}" }
+                                )
+                                isTestingGemini = false
+                            }
+                        },
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        if (isTestingGemini) {
+                            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                        }
+                        Text("Tes Koneksi", fontSize = 12.sp)
+                    }
+
+                    if (GeminiApiClient.isConfigured()) {
+                        TextButton(
+                            onClick = {
+                                geminiKeyInput = ""
+                                GeminiApiClient.updateApiKey(context, "")
+                                geminiTestResult = "API key dihapus."
+                            }
+                        ) {
+                            Text("Hapus", fontSize = 12.sp, color = AccentRed)
+                        }
+                    }
+                }
+
+                if (!geminiTestResult.isNullOrBlank()) {
+                    val isErr = geminiTestResult!!.startsWith("Gagal")
+                    Text(
+                        text = geminiTestResult!!,
+                        fontSize = 11.sp,
+                        color = if (isErr) AccentRed else AccentTeal
+                    )
+                }
+            }
+        }
+
+        // Status Card
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = LernspaceSurfaceLow,
+            border = BorderStroke(1.dp, LernspaceBorder),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = if (activeFileName != null) "Model Aktif: $activeFileName" else "Belum Ada Model Terpasang",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = LernspaceDark
+                        )
+                        Text(
+                            text = when {
+                                isLoadedInRam -> "Status Memori: Aktif di RAM (siap merespons instan)"
+                                activeFileName != null -> "Status Memori: Standby di storage (0 MB RAM dipakai)"
+                                else -> "Unduh salah satu model di bawah atau impor file .gguf lokal"
+                            },
+                            fontSize = 12.sp,
+                            color = if (isLoadedInRam) AccentTeal else LernspaceTextSecondary
+                        )
+                    }
+
+                    if (isLoadedInRam) {
+                        OutlinedButton(
+                            onClick = { LocalSlmManager.unloadModelNow() },
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("Bebaskan RAM", fontSize = 12.sp)
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = LernspaceBorder)
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Auto-Unload RAM (30 detik idle)", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = LernspaceDark)
+                        Text("Otomatis membebaskan memori setelah selesai generate agar kanvas PDF & Stylus tetap ringan di tablet 8 GB.", fontSize = 11.sp, color = LernspaceTextSecondary)
+                    }
+                    Switch(
+                        checked = autoUnload,
+                        onCheckedChange = { LocalSlmManager.setAutoUnload(context, it) }
+                    )
+                }
+            }
+        }
+
+        // Curated Models
+        Text("Model Rekomendasi (Open Apache-2.0)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = LernspaceDark)
+
+        SlmModelSpec.entries.forEach { spec ->
+            val isDownloaded = remember(refreshTrigger, isDownloading, activeFileName) {
+                LocalSlmManager.isModelDownloaded(context, spec)
+            }
+            val isThisActive = activeFileName == spec.fileName
+            val isThisDownloading = isDownloading && downloadingId == spec.id
+
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = if (isThisActive) AccentBlue.copy(alpha = 0.06f) else LernspaceSurfaceCard,
+                border = BorderStroke(if (isThisActive) 1.5.dp else 1.dp, if (isThisActive) AccentBlue else LernspaceBorder),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(spec.displayName, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = LernspaceDark)
+                                Surface(shape = RoundedCornerShape(6.dp), color = AccentBlue.copy(alpha = 0.12f)) {
+                                    Text(
+                                        text = spec.badge,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = AccentBlue,
+                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                    )
+                                }
+                                Surface(shape = RoundedCornerShape(6.dp), color = LernspaceSurfaceLow) {
+                                    Text(
+                                        text = spec.approximateSizeLabel,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = LernspaceTextSecondary,
+                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                            Text(spec.description, fontSize = 12.sp, color = LernspaceTextSecondary)
+                        }
+
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        if (isThisDownloading) {
+                            OutlinedButton(
+                                onClick = { LocalSlmManager.cancelDownload() },
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text("Batal", fontSize = 12.sp, color = AccentRed)
+                            }
+                        } else if (isDownloaded) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                if (!isThisActive) {
+                                    Button(
+                                        onClick = { LocalSlmManager.selectActiveModel(context, spec.fileName) },
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark)
+                                    ) {
+                                        Text("Gunakan", fontSize = 12.sp)
+                                    }
+                                } else {
+                                    Surface(shape = RoundedCornerShape(8.dp), color = AccentTeal.copy(alpha = 0.14f)) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Icon(Icons.Filled.CheckCircle, null, tint = AccentTeal, modifier = Modifier.size(15.dp))
+                                            Text("Aktif", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = AccentTeal)
+                                        }
+                                    }
+                                }
+                                IconButton(
+                                    onClick = {
+                                        LocalSlmManager.deleteModel(context, spec.fileName)
+                                        refreshTrigger++
+                                    }
+                                ) {
+                                    Icon(Icons.Filled.Delete, null, tint = AccentRed, modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        } else {
+                            Button(
+                                enabled = !isDownloading,
+                                onClick = { LocalSlmManager.startModelDownload(context, spec) },
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark)
+                            ) {
+                                Icon(Icons.Filled.Download, null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Unduh", fontSize = 12.sp)
+                            }
+                        }
+                    }
+
+                    if (isThisDownloading) {
+                        LinearProgressIndicator(
+                            progress = { dlProgress },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(3.dp)),
+                            color = AccentBlue,
+                            trackColor = LernspaceBorder
+                        )
+                        Text(dlStatus, fontSize = 11.sp, color = LernspaceTextSecondary)
+                    }
+                }
+            }
+        }
+
+        if (!isDownloading && dlStatus.isNotBlank()) {
+            Text(dlStatus, fontSize = 12.sp, color = LernspaceTextSecondary)
+        }
+
+        // Custom GGUF Import
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = LernspaceSurfaceLow,
+            border = BorderStroke(1.dp, LernspaceBorder),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Impor Model .gguf Sendiri", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = LernspaceDark)
+                        Text("Sudah punya file .gguf di folder Downloads tablet? Impor langsung secara offline.", fontSize = 12.sp, color = LernspaceTextSecondary)
+                    }
+                    OutlinedButton(
+                        onClick = { importGgufLauncher.launch(arrayOf("*/*")) },
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Icon(Icons.Filled.FolderOpen, null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Pilih File .gguf", fontSize = 12.sp)
+                    }
+                }
+
+                customModels.forEach { file ->
+                    val isThisActive = activeFileName == file.name
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("${file.name} (${file.length() / (1024 * 1024)} MB)", fontSize = 12.sp, color = LernspaceDark)
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            if (!isThisActive) {
+                                TextButton(onClick = { LocalSlmManager.selectActiveModel(context, file.name) }) {
+                                    Text("Gunakan")
+                                }
+                            } else {
+                                Text("Aktif", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = AccentTeal)
+                            }
+                            IconButton(onClick = {
+                                LocalSlmManager.deleteModel(context, file.name)
+                                refreshTrigger++
+                            }) {
+                                Icon(Icons.Filled.Delete, null, tint = AccentRed, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Quick Test Box
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = LernspaceSurfaceLow,
+            border = BorderStroke(1.dp, LernspaceBorder),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Uji Coba SLM Offline", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = LernspaceDark)
+                OutlinedTextField(
+                    value = testPrompt,
+                    onValueChange = { testPrompt = it },
+                    label = { Text("Prompt Tes") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp)
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (isTesting) LocalSlmManager.statusMessage.ifBlank { "Memproses..." } else "",
+                        fontSize = 11.sp,
+                        color = AccentBlue
+                    )
+                    Button(
+                        enabled = !isTesting && activeFileName != null && testPrompt.isNotBlank(),
+                        onClick = {
+                            isTesting = true
+                            testResponse = ""
+                            coroutineScope.launch {
+                                val res = LocalSlmManager.generateQuickResponse(
+                                    context = context,
+                                    systemPrompt = "Jawab dengan ringkas, jelas, dan akurat dalam Bahasa Indonesia.",
+                                    userPrompt = testPrompt
+                                )
+                                res.onSuccess { testResponse = it }
+                                    .onFailure { testResponse = "Error: ${it.message}" }
+                                isTesting = false
+                            }
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark)
+                    ) {
+                        if (isTesting) {
+                            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = Color.White)
+                            Spacer(modifier = Modifier.width(6.dp))
+                        }
+                        Text("Jalankan Tes", fontSize = 12.sp)
+                    }
+                }
+                if (testResponse.isNotBlank()) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = LernspaceSurfaceCard,
+                        border = BorderStroke(1.dp, LernspaceBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = testResponse,
+                            fontSize = 12.sp,
+                            color = LernspaceDark,
+                            modifier = Modifier.padding(12.dp)
+                        )
                     }
                 }
             }

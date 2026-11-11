@@ -124,7 +124,11 @@ object AcademicDatabaseManager {
                     topicId = entity.topicId,
                     topicName = entity.topicName,
                     isScratchpad = entity.isScratchpad,
-                    canvasType = if (entity.isScratchpad) NoteCanvasType.INFINITE_SCRATCHPAD else NoteCanvasType.PAGED_NOTE,
+                    canvasType = when {
+                        !entity.pdfUri.isNullOrBlank() -> NoteCanvasType.PDF_DOCUMENT
+                        entity.isScratchpad -> NoteCanvasType.INFINITE_SCRATCHPAD
+                        else -> NoteCanvasType.PAGED_NOTE
+                    },
                     paperStyle = paperStyle,
                     isDarkPaper = storageManager?.isDarkPaper(entity.id) ?: false,
                     pdfUri = entity.pdfUri,
@@ -203,6 +207,43 @@ object AcademicDatabaseManager {
                 }
                 AcademicWorkspaceState.totalFocusStudyMinutes = totalMins
             }
+        }
+
+        // 7. Flashcards & Decks
+        val existingDecks = database.flashcardDao().getAllDecks()
+        val existingCards = database.flashcardDao().getAllCards()
+        withContext(Dispatchers.Main) {
+            AcademicWorkspaceState.flashcardDecks.clear()
+            AcademicWorkspaceState.flashcardDecks.addAll(existingDecks.map { entity ->
+                FlashcardDeckUi(
+                    id = entity.id,
+                    title = entity.title,
+                    description = entity.description,
+                    subjectId = entity.subjectId,
+                    subjectName = entity.subjectName,
+                    topicId = entity.topicId,
+                    topicName = entity.topicName,
+                    sourceNoteId = entity.sourceNoteId,
+                    createdAt = entity.createdAt,
+                    updatedAt = entity.updatedAt
+                )
+            })
+            AcademicWorkspaceState.flashcards.clear()
+            AcademicWorkspaceState.flashcards.addAll(existingCards.map { entity ->
+                FlashcardUi(
+                    id = entity.id,
+                    deckId = entity.deckId,
+                    front = entity.front,
+                    back = entity.back,
+                    hint = entity.hint,
+                    repetitions = entity.repetitions,
+                    intervalDays = entity.intervalDays,
+                    easeFactor = entity.easeFactor,
+                    nextReviewAt = entity.nextReviewAt,
+                    lastReviewedAt = entity.lastReviewedAt,
+                    createdAt = entity.createdAt
+                )
+            })
         }
     }
 
@@ -473,6 +514,61 @@ object AcademicDatabaseManager {
         }
     }
 
+    fun persistFlashcardDeck(deck: FlashcardDeckUi) {
+        val database = db ?: return
+        scope.launch {
+            database.flashcardDao().insertDeck(
+                FlashcardDeckEntity(
+                    id = deck.id,
+                    title = deck.title,
+                    description = deck.description,
+                    subjectId = deck.subjectId,
+                    subjectName = deck.subjectName,
+                    topicId = deck.topicId,
+                    topicName = deck.topicName,
+                    sourceNoteId = deck.sourceNoteId,
+                    createdAt = deck.createdAt,
+                    updatedAt = System.currentTimeMillis()
+                )
+            )
+        }
+    }
+
+    fun deleteFlashcardDeck(deckId: String) {
+        val database = db ?: return
+        scope.launch {
+            database.flashcardDao().deleteDeckById(deckId)
+        }
+    }
+
+    fun persistFlashcard(card: FlashcardUi) {
+        val database = db ?: return
+        scope.launch {
+            database.flashcardDao().insertCard(
+                FlashcardEntity(
+                    id = card.id,
+                    deckId = card.deckId,
+                    front = card.front,
+                    back = card.back,
+                    hint = card.hint,
+                    repetitions = card.repetitions,
+                    intervalDays = card.intervalDays,
+                    easeFactor = card.easeFactor,
+                    nextReviewAt = card.nextReviewAt,
+                    lastReviewedAt = card.lastReviewedAt,
+                    createdAt = card.createdAt
+                )
+            )
+        }
+    }
+
+    fun deleteFlashcard(cardId: String) {
+        val database = db ?: return
+        scope.launch {
+            database.flashcardDao().deleteCardById(cardId)
+        }
+    }
+
     /**
      * Wipes all data from Room tables and local disk files, resetting state to clean empty.
      */
@@ -490,6 +586,8 @@ object AcademicDatabaseManager {
                 AcademicWorkspaceState.weeklyClasses.clear()
                 AcademicWorkspaceState.focusSessionHistory.clear()
                 AcademicWorkspaceState.totalFocusStudyMinutes = 0
+                AcademicWorkspaceState.flashcardDecks.clear()
+                AcademicWorkspaceState.flashcards.clear()
             }
         }
     }

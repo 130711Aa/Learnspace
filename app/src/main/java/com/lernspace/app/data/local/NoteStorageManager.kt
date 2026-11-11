@@ -33,7 +33,62 @@ class NoteStorageManager(private val context: Context) {
     private val imagesDir: File
         get() = File(notesDir, "images").apply { if (!exists()) mkdirs() }
 
+    private val pdfsDir: File
+        get() = File(notesDir, "pdfs").apply { if (!exists()) mkdirs() }
+
     companion object {
+        /**
+         * Safely copies an external PDF Uri into the app's internal private storage directory
+         * (files/notes/pdfs/<noteId>.pdf) so it stays permanently readable across app restarts.
+         */
+        fun copyPdfToInternal(context: Context, uri: Uri, noteId: String): String? {
+            return try {
+                val notesDir = File(context.filesDir, "notes").apply { if (!exists()) mkdirs() }
+                val pdfsDir = File(notesDir, "pdfs").apply { if (!exists()) mkdirs() }
+                val targetFile = File(pdfsDir, "$noteId.pdf")
+
+                if (uri.scheme == "file" && uri.path == targetFile.absolutePath && targetFile.exists() && targetFile.length() > 0L) {
+                    return Uri.fromFile(targetFile).toString()
+                }
+
+                val inputStream = if (uri.scheme == "file" && uri.path != null) {
+                    val srcFile = File(uri.path!!)
+                    if (srcFile.exists()) srcFile.inputStream() else null
+                } else {
+                    context.contentResolver.openInputStream(uri)
+                } ?: return null
+
+                inputStream.use { input ->
+                    FileOutputStream(targetFile).use { output ->
+                        input.copyTo(output)
+                        output.flush()
+                    }
+                }
+
+                if (targetFile.exists() && targetFile.length() > 0L) {
+                    Uri.fromFile(targetFile).toString()
+                } else {
+                    null
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                null
+            }
+        }
+
+        /**
+         * Ensures a note's PDF resides in internal storage, migrating legacy content:// URIs if readable.
+         */
+        fun ensurePdfInternal(context: Context, noteId: String, currentUriString: String): String? {
+            val notesDir = File(context.filesDir, "notes").apply { if (!exists()) mkdirs() }
+            val pdfsDir = File(notesDir, "pdfs").apply { if (!exists()) mkdirs() }
+            val targetFile = File(pdfsDir, "$noteId.pdf")
+            if (targetFile.exists() && targetFile.length() > 0L) {
+                return Uri.fromFile(targetFile).toString()
+            }
+            return copyPdfToInternal(context, Uri.parse(currentUriString), noteId)
+        }
+
         /**
          * Safely copies an external image Uri into the app's internal private storage directory
          * (files/notes/images/<imageId>.png) with automatic memory-safe downsampling for huge photos.
@@ -296,12 +351,16 @@ class NoteStorageManager(private val context: Context) {
     }
 
     /**
-     * Deletes note storage file.
+     * Deletes note storage file and any internal PDF copy.
      */
     fun deleteNoteStorage(noteId: String) {
         val noteFile = File(notesDir, "$noteId.json")
         if (noteFile.exists()) {
             noteFile.delete()
+        }
+        val pdfFile = File(pdfsDir, "$noteId.pdf")
+        if (pdfFile.exists()) {
+            pdfFile.delete()
         }
     }
 
@@ -312,6 +371,7 @@ class NoteStorageManager(private val context: Context) {
         try {
             notesDir.listFiles()?.forEach { it.delete() }
             imagesDir.listFiles()?.forEach { it.delete() }
+            pdfsDir.listFiles()?.forEach { it.delete() }
         } catch (e: Exception) {
             e.printStackTrace()
         }

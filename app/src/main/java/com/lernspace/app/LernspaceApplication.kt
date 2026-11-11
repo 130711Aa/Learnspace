@@ -1,6 +1,8 @@
 package com.lernspace.app
 
 import android.app.Application
+import com.lernspace.app.core.ai.GeminiApiClient
+import com.lernspace.app.core.ai.LocalSlmManager
 import com.lernspace.app.data.local.AcademicDatabaseManager
 import com.lernspace.app.data.local.AppSettingsManager
 import com.lernspace.app.data.local.LernspaceDatabase
@@ -25,6 +27,8 @@ class LernspaceApplication : Application() {
         super.onCreate()
         AppSettingsManager.init(this)
         AcademicDatabaseManager.init(database, this)
+        LocalSlmManager.init(this)
+        GeminiApiClient.init(this)
     }
 }
 

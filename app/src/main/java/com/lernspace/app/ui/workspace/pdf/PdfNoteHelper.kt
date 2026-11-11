@@ -4,7 +4,9 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Matrix
 import android.graphics.Paint
+import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.pdf.PdfDocument
 import android.graphics.pdf.PdfRenderer
@@ -23,7 +25,34 @@ import com.lernspace.app.ui.workspace.model.PaperStyle
 import java.io.File
 import java.io.FileOutputStream
 
+import kotlin.math.roundToInt
+
+data class PdfPageRenderResult(
+    val bitmap: Bitmap,
+    val worldWidth: Float,
+    val worldHeight: Float
+)
+
 object PdfNoteHelper {
+
+    private val pdfRendererLock = Any()
+
+    private fun openPdfDescriptor(context: Context, uri: Uri): ParcelFileDescriptor? {
+        return try {
+            if (uri.scheme == "file" && uri.path != null) {
+                val file = File(uri.path!!)
+                if (file.exists()) {
+                    ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+                } else {
+                    null
+                }
+            } else {
+                context.contentResolver.openFileDescriptor(uri, "r")
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     fun getFileName(context: Context, uri: Uri): String {
         var name = "Document.pdf"
@@ -42,19 +71,21 @@ object PdfNoteHelper {
     }
 
     fun getPdfPageCount(context: Context, uri: Uri): Int {
-        var pfd: ParcelFileDescriptor? = null
-        var renderer: PdfRenderer? = null
-        return try {
-            pfd = context.contentResolver.openFileDescriptor(uri, "r")
-            if (pfd != null) {
-                renderer = PdfRenderer(pfd)
-                renderer.pageCount
-            } else 1
-        } catch (e: Exception) {
-            1
-        } finally {
-            try { renderer?.close() } catch (_: Exception) {}
-            try { pfd?.close() } catch (_: Exception) {}
+        synchronized(pdfRendererLock) {
+            var pfd: ParcelFileDescriptor? = null
+            var renderer: PdfRenderer? = null
+            return try {
+                pfd = openPdfDescriptor(context, uri)
+                if (pfd != null) {
+                    renderer = PdfRenderer(pfd)
+                    renderer.pageCount
+                } else 1
+            } catch (e: Exception) {
+                1
+            } finally {
+                try { renderer?.close() } catch (_: Exception) {}
+                try { pfd?.close() } catch (_: Exception) {}
+            }
         }
     }
 
@@ -64,33 +95,117 @@ object PdfNoteHelper {
         pageIndex: Int,
         targetWidth: Int = CanvasConstants.PAGE_WIDTH.toInt()
     ): Bitmap? {
-        var pfd: ParcelFileDescriptor? = null
-        var renderer: PdfRenderer? = null
-        var page: PdfRenderer.Page? = null
-        return try {
-            pfd = context.contentResolver.openFileDescriptor(uri, "r") ?: return null
-            renderer = PdfRenderer(pfd)
-            if (pageIndex < 0 || pageIndex >= renderer.pageCount) return null
-            page = renderer.openPage(pageIndex)
+        return renderPdfPageWithBounds(context, uri, pageIndex, targetWidth)?.bitmap
+    }
 
-            val pageWidth = page.width
-            val pageHeight = page.height
-            val scale = targetWidth.toFloat() / pageWidth.toFloat()
-            val targetHeight = (pageHeight * scale).toInt()
+    /**
+     * Renders a full PDF page at [targetWidth] pixels while returning its canonical
+     * world dimensions anchored to [CanvasConstants.PAGE_WIDTH] so strokes remain 1:1 aligned.
+     */
+    fun renderPdfPageWithBounds(
+        context: Context,
+        uri: Uri,
+        pageIndex: Int,
+        targetWidth: Int = 2400
+    ): PdfPageRenderResult? {
+        synchronized(pdfRendererLock) {
+            var pfd: ParcelFileDescriptor? = null
+            var renderer: PdfRenderer? = null
+            var page: PdfRenderer.Page? = null
+            return try {
+                pfd = openPdfDescriptor(context, uri) ?: return null
+                renderer = PdfRenderer(pfd)
+                if (pageIndex < 0 || pageIndex >= renderer.pageCount) return null
+                page = renderer.openPage(pageIndex)
 
-            val bitmap = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
-            // Fill with pure white background first
-            val canvas = Canvas(bitmap)
-            canvas.drawColor(android.graphics.Color.WHITE)
+                val pageWidth = page.width.toFloat().coerceAtLeast(1f)
+                val pageHeight = page.height.toFloat().coerceAtLeast(1f)
+                val aspect = pageHeight / pageWidth
 
-            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-            bitmap
-        } catch (e: Exception) {
-            null
-        } finally {
-            try { page?.close() } catch (_: Exception) {}
-            try { renderer?.close() } catch (_: Exception) {}
-            try { pfd?.close() } catch (_: Exception) {}
+                val bmpWidth = targetWidth.coerceAtLeast(1)
+                val bmpHeight = (bmpWidth * aspect).roundToInt().coerceAtLeast(1)
+
+                val worldWidth = CanvasConstants.PAGE_WIDTH
+                val worldHeight = worldWidth * aspect
+
+                val bitmap = Bitmap.createBitmap(bmpWidth, bmpHeight, Bitmap.Config.ARGB_8888)
+                val canvas = Canvas(bitmap)
+                canvas.drawColor(android.graphics.Color.WHITE)
+
+                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                PdfPageRenderResult(
+                    bitmap = bitmap,
+                    worldWidth = worldWidth,
+                    worldHeight = worldHeight
+                )
+            } catch (e: Exception) {
+                null
+            } finally {
+                try { page?.close() } catch (_: Exception) {}
+                try { renderer?.close() } catch (_: Exception) {}
+                try { pfd?.close() } catch (_: Exception) {}
+            }
+        }
+    }
+
+    /**
+     * Renders a specific world-space rectangle of a PDF page directly from PDF vectors
+     * at the exact requested pixel resolution for razor-sharp text & diagrams at any zoom level.
+     */
+    fun renderPdfRegion(
+        context: Context,
+        uri: Uri,
+        pageIndex: Int,
+        worldLeft: Float,
+        worldTop: Float,
+        worldRight: Float,
+        worldBottom: Float,
+        targetWidth: Int,
+        targetHeight: Int
+    ): Bitmap? {
+        synchronized(pdfRendererLock) {
+            var pfd: ParcelFileDescriptor? = null
+            var renderer: PdfRenderer? = null
+            var page: PdfRenderer.Page? = null
+            return try {
+                pfd = openPdfDescriptor(context, uri) ?: return null
+                renderer = PdfRenderer(pfd)
+                if (pageIndex < 0 || pageIndex >= renderer.pageCount) return null
+                page = renderer.openPage(pageIndex)
+
+                val pageWidth = page.width.toFloat().coerceAtLeast(1f)
+                val pageHeight = page.height.toFloat().coerceAtLeast(1f)
+                val worldWidth = CanvasConstants.PAGE_WIDTH
+                val worldHeight = worldWidth * (pageHeight / pageWidth)
+
+                val regionW = (worldRight - worldLeft).coerceAtLeast(1f)
+                val regionH = (worldBottom - worldTop).coerceAtLeast(1f)
+                val bmpW = targetWidth.coerceAtLeast(1)
+                val bmpH = targetHeight.coerceAtLeast(1)
+
+                val scaleX = bmpW.toFloat() / regionW
+                val scaleY = bmpH.toFloat() / regionH
+
+                val bitmap = Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.ARGB_8888)
+                val canvas = Canvas(bitmap)
+                canvas.drawColor(android.graphics.Color.WHITE)
+
+                val matrix = Matrix().apply {
+                    postScale(worldWidth / pageWidth, worldHeight / pageHeight)
+                    postTranslate(-worldLeft, -worldTop)
+                    postScale(scaleX, scaleY)
+                }
+
+                val destClip = Rect(0, 0, bmpW, bmpH)
+                page.render(bitmap, destClip, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                bitmap
+            } catch (e: Exception) {
+                null
+            } finally {
+                try { page?.close() } catch (_: Exception) {}
+                try { renderer?.close() } catch (_: Exception) {}
+                try { pfd?.close() } catch (_: Exception) {}
+            }
         }
     }
 
@@ -112,12 +227,17 @@ object PdfNoteHelper {
                 var exportWidth = CanvasConstants.PAGE_WIDTH.toInt()
                 var exportHeight = CanvasConstants.PAGE_HEIGHT.toInt()
 
-                var pdfBitmap: Bitmap? = null
+                var pdfResult: PdfPageRenderResult? = null
                 if (note.canvasType == NoteCanvasType.PDF_DOCUMENT && uri != null) {
-                    pdfBitmap = renderPdfPage(context, uri, pageIdx, targetWidth = CanvasConstants.PAGE_WIDTH.toInt())
-                    if (pdfBitmap != null) {
-                        exportWidth = pdfBitmap.width
-                        exportHeight = pdfBitmap.height
+                    pdfResult = renderPdfPageWithBounds(
+                        context = context,
+                        uri = uri,
+                        pageIndex = pageIdx,
+                        targetWidth = (CanvasConstants.PAGE_WIDTH * 2f).roundToInt()
+                    )
+                    if (pdfResult != null) {
+                        exportWidth = pdfResult.worldWidth.roundToInt()
+                        exportHeight = pdfResult.worldHeight.roundToInt()
                     }
                 } else {
                     // For PAGED_NOTE or INFINITE_SCRATCHPAD:
@@ -153,8 +273,10 @@ object PdfNoteHelper {
 
                 // 1. Draw Background
                 if (note.canvasType == NoteCanvasType.PDF_DOCUMENT) {
-                    if (pdfBitmap != null) {
-                        canvas.drawBitmap(pdfBitmap, 0f, 0f, null)
+                    if (pdfResult != null) {
+                        val dstRect = RectF(0f, 0f, exportWidth.toFloat(), exportHeight.toFloat())
+                        val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+                        canvas.drawBitmap(pdfResult.bitmap, null, dstRect, bitmapPaint)
                     } else {
                         canvas.drawColor(android.graphics.Color.WHITE)
                     }
@@ -207,6 +329,7 @@ object PdfNoteHelper {
                 }
 
                 pdfDoc.finishPage(page)
+                pdfResult?.bitmap?.recycle()
             }
 
             val exportDir = File(context.cacheDir, "exports")

@@ -6,6 +6,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layout
+import com.lernspace.app.ui.flashcards.FlashcardsScreen
 import com.lernspace.app.ui.home.HomeScreen
 import com.lernspace.app.ui.home.HomeViewModel
 import com.lernspace.app.ui.insights.InsightsScreen
@@ -105,6 +106,17 @@ fun LernspaceTabHost(
                         onNavigate(Screen.Learning.route)
                     }
                 )
+            }
+        }
+
+        // Tab 5: Flashcards
+        if (visitedTabs.contains(Screen.Flashcards.route)) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .keepAliveTab(currentRoute == Screen.Flashcards.route)
+            ) {
+                FlashcardsScreen()
             }
         }
 
