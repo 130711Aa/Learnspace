@@ -130,10 +130,22 @@ object GeminiApiClient {
         userPrompt: String,
         imageBitmap: Bitmap? = null
     ): Result<String> {
+        return generateTextFromImages(
+            systemPrompt = systemPrompt,
+            userPrompt = userPrompt,
+            imageBitmaps = if (imageBitmap != null) listOf(imageBitmap) else emptyList()
+        )
+    }
+
+    suspend fun generateTextFromImages(
+        systemPrompt: String,
+        userPrompt: String,
+        imageBitmaps: List<Bitmap>
+    ): Result<String> = withContext(Dispatchers.IO) {
         val parts = JSONArray()
-        if (imageBitmap != null) {
+        for (bmp in imageBitmaps) {
             val baos = ByteArrayOutputStream()
-            imageBitmap.compress(Bitmap.CompressFormat.JPEG, 85, baos)
+            bmp.compress(Bitmap.CompressFormat.JPEG, 82, baos)
             val b64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
             parts.put(
                 JSONObject().put(
@@ -145,11 +157,11 @@ object GeminiApiClient {
             )
         }
         parts.put(JSONObject().put("text", userPrompt))
-        return callGenerateContent(
+        callGenerateContent(
             systemPrompt = systemPrompt,
             parts = parts,
             expectJson = false,
-            temperature = 0.35
+            temperature = 0.25
         )
     }
 

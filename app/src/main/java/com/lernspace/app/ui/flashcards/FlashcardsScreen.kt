@@ -35,6 +35,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.lernspace.app.core.ai.GeminiApiClient
 import com.lernspace.app.core.ai.GeneratedFlashcard
+import com.lernspace.app.core.ai.HandwrittenNoteRecognizer
 import com.lernspace.app.core.ai.HybridStudyAiRouter
 import com.lernspace.app.core.ai.LocalSlmManager
 import com.lernspace.app.core.ai.SlmModelSpec
@@ -1591,6 +1592,62 @@ private fun GenerateFlashcardsFromNoteDialog(
     var activeProviderResult by remember { mutableStateOf<String?>(null) }
     var activeGenJob by remember { mutableStateOf<Job?>(null) }
 
+    var recognizedHandwritingText by remember { mutableStateOf("") }
+    var handwritingStatus by remember { mutableStateOf<String?>(null) }
+    var isRecognizingInk by remember { mutableStateOf(false) }
+
+    val activeSourcePages = remember(sourceMode, selectedNote, selectedTopic, notes) {
+        when (sourceMode) {
+            0 -> selectedNote?.pages ?: emptyList()
+            1 -> selectedTopic?.let { t ->
+                notes.filter { it.topicId == t.id }.flatMap { it.pages }
+            } ?: emptyList()
+            else -> emptyList()
+        }
+    }
+    val activeStrokeCount = remember(activeSourcePages) {
+        HandwrittenNoteRecognizer.countHandwrittenStrokes(activeSourcePages)
+    }
+
+    LaunchedEffect(sourceMode, selectedNote?.id, selectedTopic?.id, activeStrokeCount) {
+        recognizedHandwritingText = ""
+        handwritingStatus = null
+        if (sourceMode == 2 || activeStrokeCount <= 0) {
+            isRecognizingInk = false
+            return@LaunchedEffect
+        }
+        val cacheId = if (sourceMode == 0) selectedNote?.id ?: "note" else "topic_${selectedTopic?.id ?: ""}"
+        val titleForVision = if (sourceMode == 0) selectedNote?.title ?: "Catatan" else selectedTopic?.title ?: "Sub-bab"
+        isRecognizingInk = true
+        try {
+            val offlineRes = HandwrittenNoteRecognizer.recognizePagesOffline(
+                cacheKeyId = cacheId,
+                pages = activeSourcePages
+            )
+            if (offlineRes.text.isNotBlank()) {
+                recognizedHandwritingText = offlineRes.text
+                handwritingStatus = offlineRes.sourceLabel
+            } else if (hasGeminiReady) {
+                handwritingStatus = "Membaca tulisan tangan via ${GeminiApiClient.selectedModelId} Vision..."
+                val visionRes = HandwrittenNoteRecognizer.recognizePagesWithGeminiVision(
+                    cacheKeyId = cacheId,
+                    pages = activeSourcePages,
+                    topicTitle = titleForVision
+                )
+                visionRes.onSuccess { vr ->
+                    recognizedHandwritingText = vr.text
+                    handwritingStatus = vr.sourceLabel
+                }.onFailure {
+                    handwritingStatus = offlineRes.sourceLabel
+                }
+            } else {
+                handwritingStatus = offlineRes.sourceLabel
+            }
+        } finally {
+            isRecognizingInk = false
+        }
+    }
+
     val notePlainText = remember(selectedNote) {
         selectedNote?.pages
             ?.flatMap { it.textBoxes }
@@ -1600,7 +1657,13 @@ private fun GenerateFlashcardsFromNoteDialog(
             ?: ""
     }
 
-    val topicMaterialText = remember(selectedTopic, notes) {
+    val combinedNoteText = remember(notePlainText, recognizedHandwritingText) {
+        listOf(notePlainText.trim(), recognizedHandwritingText.trim())
+            .filter { it.isNotBlank() }
+            .joinToString("\n\n")
+    }
+
+    val topicMaterialText = remember(selectedTopic, notes, recognizedHandwritingText) {
         val t = selectedTopic ?: return@remember ""
         val linkedNotesText = notes.filter { it.topicId == t.id }
             .flatMap { it.pages }
@@ -1612,14 +1675,18 @@ private fun GenerateFlashcardsFromNoteDialog(
             appendLine("Sub-bab: ${t.title}")
             if (t.description.isNotBlank()) appendLine("Deskripsi: ${t.description}")
             if (linkedNotesText.isNotBlank()) {
-                appendLine("Catatan terkait:")
+                appendLine("Teks catatan terkait:")
                 appendLine(linkedNotesText)
+            }
+            if (recognizedHandwritingText.isNotBlank()) {
+                appendLine("Tulisan tangan di catatan terkait:")
+                appendLine(recognizedHandwritingText.trim())
             }
         }.trim()
     }
 
     val effectiveSourceText = when (sourceMode) {
-        0 -> if (manualMaterialText.isNotBlank()) manualMaterialText else notePlainText
+        0 -> if (manualMaterialText.isNotBlank()) manualMaterialText else combinedNoteText
         1 -> if (manualMaterialText.isNotBlank()) manualMaterialText else topicMaterialText
         else -> manualMaterialText
     }
@@ -1801,9 +1868,12 @@ private fun GenerateFlashcardsFromNoteDialog(
                                     )
                                 }
                             }
-                            if (notePlainText.isBlank()) {
+                            if (combinedNoteText.isBlank() && !isRecognizingInk) {
                                 Text(
-                                    text = "Catatan ini belum memiliki teks ketikan (TextBox). Tempel ringkasan materinya di bawah:",
+                                    text = if (activeStrokeCount > 0)
+                                        "Catatan punya $activeStrokeCount coretan tulisan tangan. Ketuk 'Scan Tulisan' di bawah atau tempel materi:"
+                                    else
+                                        "Catatan ini belum memiliki teks maupun tulisan tangan. Tempel ringkasan materinya di bawah:",
                                     fontSize = 11.sp,
                                     color = LernspaceTextSecondary
                                 )
@@ -1822,6 +1892,113 @@ private fun GenerateFlashcardsFromNoteDialog(
                                         label = { Text(top.title, fontSize = 11.sp, maxLines = 1) },
                                         shape = RoundedCornerShape(8.dp)
                                     )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Handwriting-to-Text Controls when source note(s) contain stylus handwriting
+                if (sourceMode != 2 && activeStrokeCount > 0) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = LernspaceSurfaceLow,
+                        border = BorderStroke(1.dp, LernspaceBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                if (isRecognizingInk) {
+                                    CircularProgressIndicator(modifier = Modifier.size(13.dp), strokeWidth = 2.dp)
+                                    Text(
+                                        text = "Mengonversi tulisan tangan ($activeStrokeCount coretan)...",
+                                        fontSize = 11.sp,
+                                        color = AccentBlue
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Filled.Draw,
+                                        contentDescription = null,
+                                        tint = if (recognizedHandwritingText.isNotBlank()) AccentTeal else LernspaceTextSecondary,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Text(
+                                        text = handwritingStatus
+                                            ?: "Terdeteksi $activeStrokeCount coretan tulisan tangan",
+                                        fontSize = 11.sp,
+                                        color = if (recognizedHandwritingText.isNotBlank()) AccentTeal else LernspaceTextSecondary,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(
+                                    enabled = !isRecognizingInk && !isGenerating,
+                                    onClick = {
+                                        val cacheId = if (sourceMode == 0) selectedNote?.id ?: "note" else "topic_${selectedTopic?.id ?: ""}"
+                                        isRecognizingInk = true
+                                        coroutineScope.launch {
+                                            try {
+                                                val res = HandwrittenNoteRecognizer.recognizePagesOffline(cacheId, activeSourcePages)
+                                                if (res.text.isNotBlank()) {
+                                                    manualMaterialText = ""
+                                                    recognizedHandwritingText = res.text
+                                                }
+                                                handwritingStatus = res.sourceLabel
+                                            } finally {
+                                                isRecognizingInk = false
+                                            }
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                ) {
+                                    Text("Scan Offline", fontSize = 11.sp)
+                                }
+
+                                if (GeminiApiClient.isConfigured()) {
+                                    OutlinedButton(
+                                        enabled = !isRecognizingInk && !isGenerating,
+                                        onClick = {
+                                            val cacheId = if (sourceMode == 0) selectedNote?.id ?: "note" else "topic_${selectedTopic?.id ?: ""}"
+                                            val titleForVision = if (sourceMode == 0) selectedNote?.title ?: "Catatan" else selectedTopic?.title ?: "Sub-bab"
+                                            isRecognizingInk = true
+                                            handwritingStatus = "Membaca tulisan tangan via ${GeminiApiClient.selectedModelId} Vision..."
+                                            coroutineScope.launch {
+                                                try {
+                                                    val res = HandwrittenNoteRecognizer.recognizePagesWithGeminiVision(
+                                                        cacheKeyId = cacheId,
+                                                        pages = activeSourcePages,
+                                                        topicTitle = titleForVision
+                                                    )
+                                                    res.onSuccess { vr ->
+                                                        if (vr.text.isNotBlank()) {
+                                                            manualMaterialText = ""
+                                                            recognizedHandwritingText = vr.text
+                                                        }
+                                                        handwritingStatus = vr.sourceLabel
+                                                    }.onFailure { err ->
+                                                        handwritingStatus = "Vision gagal: ${err.message}"
+                                                    }
+                                                } finally {
+                                                    isRecognizingInk = false
+                                                }
+                                            }
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                    ) {
+                                        Icon(Icons.Filled.AutoAwesome, null, modifier = Modifier.size(13.dp), tint = AccentBlue)
+                                        Spacer(modifier = Modifier.width(5.dp))
+                                        Text("Baca via Gemini Vision", fontSize = 11.sp)
+                                    }
                                 }
                             }
                         }

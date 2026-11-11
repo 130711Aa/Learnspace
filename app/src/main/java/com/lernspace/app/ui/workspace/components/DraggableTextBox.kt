@@ -14,7 +14,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.DragHandle
+import androidx.compose.material.icons.filled.OpenWith
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -46,8 +46,8 @@ import kotlin.math.roundToInt
 fun DraggableTextBox(
     box: TextBoxElement,
     scale: Float = 1f,
-    panX: Float = 0f,
-    panY: Float = 0f,
+    panXProvider: () -> Float = { 0f },
+    panYProvider: () -> Float = { 0f },
     isDarkPaper: Boolean = false,
     onCommitMove: (Float, Float) -> Unit,
     onCommitResize: (Float, Float) -> Unit,
@@ -98,110 +98,68 @@ fun DraggableTextBox(
     }
 
     val selectionColor = Color(0xFF2563EB) // MS Word Selection Blue
+    val sideMarginDp = 16.dp
+    val topMarginDp = 34.dp
+    val sideMarginPx = with(density) { sideMarginDp.toPx() }
+    val topMarginPx = with(density) { topMarginDp.toPx() }
 
-    val quantizedScale = (scale * 10f).roundToInt() / 10f
-    val dynamicFontSize = (16 * quantizedScale.coerceIn(0.7f, 2.2f)).sp
-    val dynamicLineHeight = (24 * quantizedScale.coerceIn(0.7f, 2.2f)).sp
+    val screenWidthDp = with(density) { (worldWidth * scale).toDp() }
+    val screenHeightDp = with(density) { (worldHeight * scale).toDp() }
+    val dynamicFontSize = with(density) { ((28f * scale) / density.fontScale.coerceAtLeast(0.5f)).toSp() }
+    val dynamicLineHeight = with(density) { ((40f * scale) / density.fontScale.coerceAtLeast(0.5f)).toSp() }
+    val constantTextPad = with(density) { (6f * scale).toDp().coerceIn(3.dp, 12.dp) }
 
+    // Outer Box reserves margin when selected for corner move/delete pills and edge resize handles,
+    // while keeping the TextBox body strictly at (worldX, worldY) with ZERO text jump on deselect.
     Box(
         modifier = modifier
             .offset {
-                val screenX = worldX * scale + panX
-                val screenY = worldY * scale + panY
+                val padX = if (box.isSelected) sideMarginPx else 0f
+                val padY = if (box.isSelected) topMarginPx else 0f
+                val screenX = worldX * scale + panXProvider() - padX
+                val screenY = worldY * scale + panYProvider() - padY
                 IntOffset(screenX.roundToInt(), screenY.roundToInt())
             }
-            .width((worldWidth * scale).dp)
-            .height((worldHeight * scale).dp)
+            .width(screenWidthDp + if (box.isSelected) sideMarginDp * 2 else 0.dp)
+            .height(screenHeightDp + if (box.isSelected) topMarginDp + sideMarginDp else 0.dp)
     ) {
-        // Main Box Container
-        Surface(
+        // Main TextBox Surface anchored strictly at (worldX, worldY) with exact worldWidth x worldHeight
+        Box(
             modifier = Modifier
-                .fillMaxSize()
-                .then(
-                    if (box.isSelected) {
-                        Modifier
-                            .shadow(3.dp, RoundedCornerShape(6.dp))
-                            .border(1.5.dp, selectionColor, RoundedCornerShape(6.dp))
-                    } else if (textContent.isEmpty()) {
-                        Modifier.border(1.dp, if (isDarkPaper) Color(0xFF334155) else Color(0xFFCBD5E1), RoundedCornerShape(6.dp))
-                    } else {
-                        Modifier
-                    }
-                ),
-            color = if (box.isSelected) (if (isDarkPaper) Color(0xFF1E293B) else Color.White.copy(alpha = 0.98f)) else Color.Transparent,
-            shape = RoundedCornerShape(6.dp)
+                .padding(
+                    start = if (box.isSelected) sideMarginDp else 0.dp,
+                    top = if (box.isSelected) topMarginDp else 0.dp
+                )
+                .width(screenWidthDp)
+                .height(screenHeightDp)
         ) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                // MS Word Style Top Drag Header (Visible only when selected)
-                if (box.isSelected) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(28.dp)
-                            .background(if (isDarkPaper) Color(0xFF0F172A) else Color(0xFFEFF6FF))
-                            .pointerInput(box.id, scale) {
-                                detectDragGestures(
-                                    onDragEnd = { onCommitMove(worldX, worldY) },
-                                    onDragCancel = { onCommitMove(worldX, worldY) },
-                                    onDrag = { change, dragAmount ->
-                                        change.consume()
-                                        worldX += dragAmount.x / scale
-                                        worldY += dragAmount.y / scale
-                                    }
-                                )
-                            }
-                            .padding(horizontal = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.DragHandle,
-                                contentDescription = "Drag to move",
-                                tint = selectionColor,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Text(
-                                text = "Text Box",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = selectionColor
-                            )
+            Surface(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .then(
+                        if (box.isSelected) {
+                            Modifier
+                                .shadow(2.dp, RoundedCornerShape(6.dp))
+                                .border(1.5.dp, selectionColor, RoundedCornerShape(6.dp))
+                        } else if (textContent.isEmpty()) {
+                            Modifier.border(1.dp, if (isDarkPaper) Color(0xFF334155) else Color(0xFFCBD5E1), RoundedCornerShape(6.dp))
+                        } else {
+                            Modifier
                         }
-
-                        Box(
-                            modifier = Modifier
-                                .size(20.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFFEF4444).copy(alpha = 0.15f))
-                                .clickable { onDelete() },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Close,
-                                contentDescription = "Delete",
-                                tint = Color(0xFFEF4444),
-                                modifier = Modifier.size(12.dp)
-                            )
-                        }
-                    }
-                }
-
-                // Inner Text Display / Input Area (Vector FreeType fonts - Zero Blur)
+                    ),
+                color = if (box.isSelected) (if (isDarkPaper) Color(0xFF1E293B).copy(alpha = 0.94f) else Color.White.copy(alpha = 0.94f)) else Color.Transparent,
+                shape = RoundedCornerShape(6.dp)
+            ) {
+                // Inner Text Display / Input Area with IDENTICAL padding in both states -> ZERO jump!
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .padding(if (box.isSelected) 8.dp else 4.dp)
+                        .fillMaxSize()
+                        .padding(constantTextPad)
                 ) {
                     if (box.isSelected) {
-                        // EDIT MODE: BasicTextField with active cursor and keyboard
                         if (textContent.isEmpty()) {
                             Text(
-                                text = "Type notes here...",
+                                text = "Ketik catatan...",
                                 color = Color(0xFF94A3B8),
                                 fontSize = dynamicFontSize,
                                 lineHeight = dynamicLineHeight
@@ -225,7 +183,6 @@ fun DraggableTextBox(
                                 .focusRequester(focusRequester)
                         )
                     } else {
-                        // UNSELECTED MODE: Pure Text - ZERO cursor, ZERO focus
                         if (textContent.isNotEmpty()) {
                             Text(
                                 text = textContent,
@@ -238,7 +195,7 @@ fun DraggableTextBox(
                             )
                         } else {
                             Text(
-                                text = "Empty note",
+                                text = "Teks kosong",
                                 color = Color(0xFF94A3B8),
                                 fontSize = dynamicFontSize,
                                 lineHeight = dynamicLineHeight
@@ -247,49 +204,50 @@ fun DraggableTextBox(
                     }
                 }
             }
-        }
 
-        // Tap or Drag to Move when UNSELECTED:
-        if (!box.isSelected) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .pointerInput(box.id, scale) {
-                        awaitEachGesture {
-                            val down = awaitFirstDown(requireUnconsumed = false)
-                            var moved = false
-                            var overSlop = Offset.Zero
-                            val dragChange = awaitTouchSlopOrCancellation(down.id) { change, over ->
-                                change.consume()
-                                overSlop = over
-                                moved = true
-                            }
-                            if (dragChange != null && moved) {
-                                onSelect()
-                                worldX += overSlop.x / scale
-                                worldY += overSlop.y / scale
-                                drag(dragChange.id) { change ->
+            // When unselected: tap selects, drag anywhere moves box directly!
+            if (!box.isSelected) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(box.id, scale) {
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                var moved = false
+                                var overSlop = Offset.Zero
+                                val dragChange = awaitTouchSlopOrCancellation(down.id) { change, over ->
                                     change.consume()
-                                    worldX += change.positionChange().x / scale
-                                    worldY += change.positionChange().y / scale
+                                    overSlop = over
+                                    moved = true
                                 }
-                                onCommitMove(worldX, worldY)
-                            } else {
-                                onSelect()
+                                if (dragChange != null && moved) {
+                                    onSelect()
+                                    worldX += overSlop.x / scale
+                                    worldY += overSlop.y / scale
+                                    drag(dragChange.id) { change ->
+                                        change.consume()
+                                        worldX += change.positionChange().x / scale
+                                        worldY += change.positionChange().y / scale
+                                    }
+                                    onCommitMove(worldX, worldY)
+                                } else {
+                                    onSelect()
+                                }
                             }
                         }
-                    }
-            )
+                )
+            }
         }
 
-        // 120 FPS Resizing Handles & Border Drag Zones (Shown only when selected)
+        // Floating Small Controls & Edge Resize Handles (Shown only when selected)
         if (box.isSelected) {
-            // Left Border Drag Zone to Move Box
+            // Left Border Drag Zone (drag along the left border edge to move)
             Box(
                 modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .fillMaxHeight()
-                    .width(12.dp)
+                    .padding(start = sideMarginDp, top = topMarginDp)
+                    .align(Alignment.TopStart)
+                    .width(14.dp)
+                    .height(screenHeightDp)
                     .pointerInput(box.id, scale) {
                         detectDragGestures(
                             onDragEnd = { onCommitMove(worldX, worldY) },
@@ -303,20 +261,83 @@ fun DraggableTextBox(
                     }
             )
 
+            // Small Word-style circular Drag Button centered neatly ABOVE the top border
+            // Visual circle stays tiny (22.dp) with clean gap above border, while touch target is generous (56x34.dp)!
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .size(width = 56.dp, height = 34.dp)
+                    .pointerInput(box.id, scale) {
+                        detectDragGestures(
+                            onDragEnd = { onCommitMove(worldX, worldY) },
+                            onDragCancel = { onCommitMove(worldX, worldY) },
+                            onDrag = { change, dragAmount ->
+                                change.consume()
+                                worldX += dragAmount.x / scale
+                                worldY += dragAmount.y / scale
+                            }
+                        )
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(22.dp)
+                        .shadow(2.dp, CircleShape)
+                        .clip(CircleShape)
+                        .background(Color.White)
+                        .border(1.5.dp, selectionColor, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.OpenWith,
+                        contentDescription = "Geser TextBox",
+                        tint = selectionColor,
+                        modifier = Modifier.size(13.dp)
+                    )
+                }
+            }
+
+            // Small Top-Right Delete Circle with generous 36x32dp tap target
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(end = 2.dp)
+                    .size(width = 36.dp, height = 32.dp)
+                    .clickable { onDelete() },
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(20.dp)
+                        .shadow(2.dp, CircleShape)
+                        .clip(CircleShape)
+                        .background(Color(0xFFEF4444))
+                        .border(1.2.dp, Color.White, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "Delete",
+                        tint = Color.White,
+                        modifier = Modifier.size(11.dp)
+                    )
+                }
+            }
+
             // Right-Edge Horizontal Resize Handle
             Box(
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
-                    .offset(x = 16.dp)
-                    .size(width = 36.dp, height = 48.dp)
+                    .padding(top = topMarginDp / 2f)
+                    .size(width = 32.dp, height = 48.dp)
                     .pointerInput(box.id, scale) {
                         detectDragGestures(
                             onDragEnd = { onCommitResize(worldWidth, worldHeight) },
                             onDragCancel = { onCommitResize(worldWidth, worldHeight) },
                             onDrag = { change, dragAmount ->
                                 change.consume()
-                                val deltaDp = (dragAmount.x / density.density) / scale
-                                worldWidth = maxOf(100f, worldWidth + deltaDp)
+                                worldWidth = maxOf(120f, worldWidth + dragAmount.x / scale)
                             }
                         )
                     },
@@ -336,16 +357,14 @@ fun DraggableTextBox(
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .offset(y = 16.dp)
-                    .size(width = 48.dp, height = 36.dp)
+                    .size(width = 48.dp, height = 32.dp)
                     .pointerInput(box.id, scale) {
                         detectDragGestures(
                             onDragEnd = { onCommitResize(worldWidth, worldHeight) },
                             onDragCancel = { onCommitResize(worldWidth, worldHeight) },
                             onDrag = { change, dragAmount ->
                                 change.consume()
-                                val deltaDp = (dragAmount.y / density.density) / scale
-                                worldHeight = maxOf(48f, worldHeight + deltaDp)
+                                worldHeight = maxOf(64f, worldHeight + dragAmount.y / scale)
                             }
                         )
                     },
@@ -365,18 +384,15 @@ fun DraggableTextBox(
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .offset(x = 14.dp, y = 14.dp)
-                    .size(44.dp)
+                    .size(34.dp)
                     .pointerInput(box.id, scale) {
                         detectDragGestures(
                             onDragEnd = { onCommitResize(worldWidth, worldHeight) },
                             onDragCancel = { onCommitResize(worldWidth, worldHeight) },
                             onDrag = { change, dragAmount ->
                                 change.consume()
-                                val deltaX = (dragAmount.x / density.density) / scale
-                                val deltaY = (dragAmount.y / density.density) / scale
-                                worldWidth = maxOf(100f, worldWidth + deltaX)
-                                worldHeight = maxOf(48f, worldHeight + deltaY)
+                                worldWidth = maxOf(120f, worldWidth + dragAmount.x / scale)
+                                worldHeight = maxOf(64f, worldHeight + dragAmount.y / scale)
                             }
                         )
                     },
@@ -384,7 +400,7 @@ fun DraggableTextBox(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(18.dp)
+                        .size(16.dp)
                         .shadow(3.dp, CircleShape)
                         .clip(CircleShape)
                         .background(Color.White)

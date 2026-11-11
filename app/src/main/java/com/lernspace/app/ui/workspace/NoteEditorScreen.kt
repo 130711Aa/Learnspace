@@ -51,6 +51,7 @@ import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke as DrawStroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
@@ -175,17 +176,79 @@ class NotePaneState(
     )
 
     val strokes = mutableStateListOf<Stroke>()
-    val undoneStrokes = mutableStateListOf<Stroke>()
-    val canvasStrokeRenderer = CanvasStrokeRenderer.create()
+    val canvasStrokeRenderer = CanvasStrokeRenderer.create(true)
 
     val textBoxes = mutableStateListOf<TextBoxElement>()
     val imageElements = mutableStateListOf<ImageElement>()
+
+    data class CanvasHistorySnapshot(
+        val strokes: List<Stroke>,
+        val textBoxes: List<TextBoxElement>,
+        val imageElements: List<ImageElement>
+    )
+
+    val undoStack = mutableStateListOf<CanvasHistorySnapshot>()
+    val redoStack = mutableStateListOf<CanvasHistorySnapshot>()
+    private var pendingTransactionSnapshot: CanvasHistorySnapshot? = null
+
+    fun captureSnapshot(): CanvasHistorySnapshot = CanvasHistorySnapshot(
+        strokes = strokes.toList(),
+        textBoxes = textBoxes.map { it.copy(isSelected = false) },
+        imageElements = imageElements.map { it.copy(isSelected = false) }
+    )
+
+    fun pushUndoSnapshot(before: CanvasHistorySnapshot = captureSnapshot()) {
+        if (undoStack.size >= 60) {
+            undoStack.removeAt(0)
+        }
+        undoStack.add(before)
+        redoStack.clear()
+    }
+
+    fun beginUndoTransaction() {
+        if (pendingTransactionSnapshot == null) {
+            pendingTransactionSnapshot = captureSnapshot()
+        }
+    }
+
+    fun commitUndoTransactionIfChanged() {
+        val before = pendingTransactionSnapshot ?: return
+        pendingTransactionSnapshot = null
+        val now = captureSnapshot()
+        if (before.strokes != now.strokes ||
+            before.textBoxes != now.textBoxes ||
+            before.imageElements != now.imageElements
+        ) {
+            pushUndoSnapshot(before)
+        }
+    }
+
+    private fun applySnapshot(snapshot: CanvasHistorySnapshot) {
+        strokes.clear()
+        strokes.addAll(snapshot.strokes)
+        textBoxes.clear()
+        textBoxes.addAll(snapshot.textBoxes.map { it.copy(isSelected = false) })
+        imageElements.clear()
+        imageElements.addAll(snapshot.imageElements.map { it.copy(isSelected = false) })
+        lassoSelection = null
+    }
 
     var pdfPageBitmap by mutableStateOf<ImageBitmap?>(null)
     var pdfPageWorldWidth by mutableFloatStateOf(CanvasConstants.PAGE_WIDTH)
     var pdfPageWorldHeight by mutableFloatStateOf(CanvasConstants.PAGE_HEIGHT)
     var pdfTile by mutableStateOf<PdfRenderedTile?>(null)
     var pdfLoadFailed by mutableStateOf(false)
+
+    var isLoadingFromDisk by mutableStateOf(false)
+
+    init {
+        if (note.pages.isNotEmpty()) {
+            val firstPage = note.pages[0]
+            strokes.addAll(firstPage.strokes)
+            textBoxes.addAll(firstPage.textBoxes)
+            imageElements.addAll(firstPage.imageElements)
+        }
+    }
 
     // Canvas Viewport Pan & Zoom State
     var scale by mutableFloatStateOf(1f)
@@ -200,7 +263,8 @@ class NotePaneState(
     var shapeDrawStart by mutableStateOf<Offset?>(null)
     var shapeDrawCurrent by mutableStateOf<Offset?>(null)
 
-    fun saveActivePageData() {
+    fun saveActivePageData(immediate: Boolean = false) {
+        if (isLoadingFromDisk) return
         while (note.pages.size <= currentPageIndex) {
             note.pages.add(NotePageData(pageIndex = note.pages.size))
         }
@@ -213,12 +277,14 @@ class NotePaneState(
         target.imageElements.addAll(imageElements)
         note.isDarkPaper = isDarkPaper
         note.paperStyle = paperStyle
-        AcademicDatabaseManager.persistNote(note)
+        AcademicDatabaseManager.persistNote(note, immediate = immediate)
     }
 
     fun loadActivePageData(index: Int) {
         strokes.clear()
-        undoneStrokes.clear()
+        undoStack.clear()
+        redoStack.clear()
+        pendingTransactionSnapshot = null
         textBoxes.clear()
         imageElements.clear()
         lassoSelection = null
@@ -235,14 +301,29 @@ class NotePaneState(
         imageElements.addAll(source.imageElements)
     }
 
-    fun loadFromDisk() {
-        val diskPages = AcademicDatabaseManager.loadPagesForNote(note.id)
-        if (diskPages != null && diskPages.isNotEmpty()) {
-            note.pages.clear()
-            note.pages.addAll(diskPages)
-            totalPages = if (note.canvasType == NoteCanvasType.PDF_DOCUMENT) maxOf(1, note.pdfTotalPages) else maxOf(1, note.pages.size)
+    suspend fun loadFromDiskAsync() {
+        val alreadyInRam = note.pages.any {
+            it.strokes.isNotEmpty() || it.textBoxes.isNotEmpty() || it.imageElements.isNotEmpty()
         }
-        loadActivePageData(0)
+        if (alreadyInRam || AcademicDatabaseManager.hasPendingSave(note.id)) {
+            return
+        }
+
+        isLoadingFromDisk = true
+        try {
+            AcademicDatabaseManager.awaitPendingSave(note.id)
+            val diskPages = withContext(Dispatchers.IO) {
+                AcademicDatabaseManager.loadPagesForNote(note.id)
+            }
+            if (diskPages != null && diskPages.isNotEmpty()) {
+                note.pages.clear()
+                note.pages.addAll(diskPages)
+                totalPages = if (note.canvasType == NoteCanvasType.PDF_DOCUMENT) maxOf(1, note.pdfTotalPages) else maxOf(1, note.pages.size)
+            }
+            loadActivePageData(currentPageIndex.coerceIn(0, (note.pages.size - 1).coerceAtLeast(0)))
+        } finally {
+            isLoadingFromDisk = false
+        }
     }
 
     fun loadPdfPage() {
@@ -250,18 +331,28 @@ class NotePaneState(
             val pageToLoad = currentPageIndex
             pdfTile = null
             pdfLoadFailed = false
+
+            // Fast synchronous cache hit (instant page flip!)
+            val currentUri = Uri.parse(note.pdfUri)
+            val cached = PdfNoteHelper.getCachedPage(currentUri, pageToLoad, 1400)
+            if (cached != null) {
+                pdfPageWorldWidth = cached.worldWidth
+                pdfPageWorldHeight = cached.worldHeight
+                pdfPageBitmap = cached.bitmap.asImageBitmap()
+            }
+
             coroutineScope.launch(Dispatchers.IO) {
                 val resolvedUriString = NoteStorageManager.ensurePdfInternal(context, note.id, note.pdfUri!!)
                 if (resolvedUriString != null && resolvedUriString != note.pdfUri) {
                     note.pdfUri = resolvedUriString
-                    AcademicDatabaseManager.persistNote(note)
+                    AcademicDatabaseManager.persistNote(note, immediate = true)
                 }
                 val effectiveUri = Uri.parse(resolvedUriString ?: note.pdfUri)
                 val result = PdfNoteHelper.renderPdfPageWithBounds(
                     context = context,
                     uri = effectiveUri,
                     pageIndex = pageToLoad,
-                    targetWidth = 2400
+                    targetWidth = 1400
                 )
                 withContext(Dispatchers.Main) {
                     if (currentPageIndex == pageToLoad) {
@@ -276,13 +367,17 @@ class NotePaneState(
                         }
                     }
                 }
+                // Warm next page cleanly in background for instant Next flip
+                if (result != null && pageToLoad + 1 < totalPages) {
+                    PdfNoteHelper.preloadPage(context, effectiveUri, pageToLoad + 1, 1400)
+                }
             }
         }
     }
 
     fun goToPage(targetIndex: Int) {
         if (targetIndex != currentPageIndex && targetIndex in 0 until totalPages) {
-            saveActivePageData()
+            saveActivePageData(immediate = true)
             currentPageIndex = targetIndex
             loadActivePageData(targetIndex)
             loadPdfPage()
@@ -290,7 +385,7 @@ class NotePaneState(
     }
 
     fun addNewPage() {
-        saveActivePageData()
+        saveActivePageData(immediate = true)
         val newPage = NotePageData(pageIndex = note.pages.size)
         note.pages.add(newPage)
         totalPages = note.pages.size
@@ -307,6 +402,7 @@ class NotePaneState(
             totalPages = note.pages.size
             loadActivePageData(newIdx)
             loadPdfPage()
+            saveActivePageData(immediate = true)
         }
     }
 
@@ -321,27 +417,36 @@ class NotePaneState(
     }
 
     fun undo() {
-        if (strokes.isNotEmpty()) {
-            val removed = strokes.removeLast()
-            undoneStrokes.add(removed)
+        pendingTransactionSnapshot = null
+        if (undoStack.isNotEmpty()) {
+            val previous = undoStack.removeLast()
+            redoStack.add(captureSnapshot())
+            applySnapshot(previous)
             saveActivePageData()
         }
     }
 
     fun redo() {
-        if (undoneStrokes.isNotEmpty()) {
-            val restored = undoneStrokes.removeLast()
-            strokes.add(restored)
+        pendingTransactionSnapshot = null
+        if (redoStack.isNotEmpty()) {
+            val next = redoStack.removeLast()
+            if (undoStack.size >= 60) {
+                undoStack.removeAt(0)
+            }
+            undoStack.add(captureSnapshot())
+            applySnapshot(next)
             saveActivePageData()
         }
     }
 
     fun clearAll() {
+        if (strokes.isEmpty() && textBoxes.isEmpty() && imageElements.isEmpty()) return
+        pushUndoSnapshot()
         strokes.clear()
-        undoneStrokes.clear()
         textBoxes.clear()
         imageElements.clear()
-        saveActivePageData()
+        lassoSelection = null
+        saveActivePageData(immediate = true)
     }
 
     private fun distToSegmentSquared(px: Float, py: Float, x1: Float, y1: Float, x2: Float, y2: Float): Float {
@@ -439,17 +544,11 @@ class NotePaneState(
                 }
             }
         } else {
-            // ── Pixel / Segment Erase: cut out points inside radius ──
-            var modifiedAny = false
-            val newStrokesList = ArrayList<Stroke>(strokes.size)
-
-            for (stroke in strokes) {
-                val bounds = getStrokeBounds(stroke)
-                if (bounds == null) continue
-                if (isPointOutsideBounds(touchX, touchY, effectiveRadius, bounds)) {
-                    newStrokesList.add(stroke)
-                    continue
-                }
+            // ── Pixel / Segment Erase: cut out points inside radius in-place (zero whole-list clear!) ──
+            for (idx in strokes.indices.reversed()) {
+                val stroke = strokes[idx]
+                val bounds = getStrokeBounds(stroke) ?: continue
+                if (isPointOutsideBounds(touchX, touchY, effectiveRadius, bounds)) continue
 
                 val inputs = stroke.inputs
                 val count = inputs.size
@@ -458,9 +557,7 @@ class NotePaneState(
                     val dx = reusableInputA.x - touchX
                     val dy = reusableInputA.y - touchY
                     if ((dx * dx + dy * dy) <= radiusSquared) {
-                        modifiedAny = true
-                    } else {
-                        newStrokesList.add(stroke)
+                        strokes.removeAt(idx)
                     }
                     continue
                 }
@@ -485,13 +582,9 @@ class NotePaneState(
                     }
                 }
 
-                if (!hit) {
-                    newStrokesList.add(stroke)
-                    continue
-                }
+                if (!hit) continue
 
-                // Split stroke into remaining sub-strokes outside radius
-                modifiedAny = true
+                val splitParts = ArrayList<Stroke>(2)
                 var currentBatch = MutableStrokeInputBatch()
 
                 for (i in 0 until count) {
@@ -504,7 +597,7 @@ class NotePaneState(
                         currentBatch.add(reusableInputA)
                     } else {
                         if (currentBatch.size >= 2) {
-                            newStrokesList.add(Stroke(stroke.brush, currentBatch))
+                            splitParts.add(Stroke(stroke.brush, currentBatch))
                             currentBatch = MutableStrokeInputBatch()
                         } else {
                             currentBatch.clear()
@@ -512,13 +605,17 @@ class NotePaneState(
                     }
                 }
                 if (currentBatch.size >= 2) {
-                    newStrokesList.add(Stroke(stroke.brush, currentBatch))
+                    splitParts.add(Stroke(stroke.brush, currentBatch))
                 }
-            }
 
-            if (modifiedAny) {
-                strokes.clear()
-                strokes.addAll(newStrokesList)
+                when (splitParts.size) {
+                    0 -> strokes.removeAt(idx)
+                    1 -> strokes[idx] = splitParts[0]
+                    else -> {
+                        strokes.removeAt(idx)
+                        strokes.addAll(idx, splitParts)
+                    }
+                }
             }
         }
     }
@@ -534,12 +631,12 @@ fun rememberNotePaneState(
         NotePaneState(note, context, coroutineScope)
     }
     LaunchedEffect(note.id) {
-        state.loadFromDisk()
+        state.loadFromDiskAsync()
         state.loadPdfPage()
     }
     DisposableEffect(note.id) {
         onDispose {
-            state.saveActivePageData()
+            state.saveActivePageData(immediate = true)
         }
     }
     return state
@@ -630,14 +727,14 @@ fun NoteEditorScreen(
 
     // Auto-save on exit or disposal
     fun handleBack() {
-        primaryState.saveActivePageData()
-        secondaryState?.saveActivePageData()
+        primaryState.saveActivePageData(immediate = true)
+        secondaryState?.saveActivePageData(immediate = true)
         onBack()
     }
 
     fun handleCloseSplit() {
-        secondaryState?.saveActivePageData()
-        secondaryNote?.let { AcademicDatabaseManager.persistNote(it) }
+        secondaryState?.saveActivePageData(immediate = true)
+        secondaryNote?.let { AcademicDatabaseManager.persistNote(it, immediate = true) }
         secondaryNote = null
         isSwapped = false
         activeNoteId = primaryState.note.id
@@ -671,6 +768,7 @@ fun NoteEditorScreen(
                             // Clean natural initial size in world canvas pixels (450px wide)
                             val baseWidth = 450f
                             val baseHeight = baseWidth / aspect
+                            activeState.pushUndoSnapshot()
                             activeState.imageElements.add(
                                 ImageElement(
                                     id = imageId,
@@ -828,14 +926,15 @@ fun NoteEditorScreen(
                     activeState.deselectAll()
                 } else {
                     activeState.deselectAll()
+                    activeState.pushUndoSnapshot()
                     val screenCenterX = (-activeState.panX + 260f) / activeState.scale
                     val screenCenterY = (-activeState.panY + 220f) / activeState.scale
                     activeState.textBoxes.add(
                         TextBoxElement(
                             x = maxOf(40f, screenCenterX),
-                            y = maxOf(60f, screenCenterY),
-                            width = 260f,
-                            height = 110f,
+                            y = maxOf(80f, screenCenterY),
+                            width = 420f,
+                            height = 140f,
                             text = "",
                             isSelected = true
                         )
@@ -855,9 +954,9 @@ fun NoteEditorScreen(
             onPickImage = {
                 imagePickerLauncher.launch("image/*")
             },
-            canUndo = activeState.strokes.isNotEmpty(),
+            canUndo = activeState.undoStack.isNotEmpty(),
             onUndo = { activeState.undo() },
-            canRedo = activeState.undoneStrokes.isNotEmpty(),
+            canRedo = activeState.redoStack.isNotEmpty(),
             onRedo = { activeState.redo() },
             onClearAll = { activeState.clearAll() },
             onExportPdf = { handleExportPdf() },
@@ -922,6 +1021,7 @@ private fun NotePaneViewport(
 ) {
     val context = LocalContext.current
     val view = LocalView.current
+    val density = androidx.compose.ui.platform.LocalDensity.current
     val coroutineScope = rememberCoroutineScope()
     var showDeletePageDialog by remember { mutableStateOf(false) }
     var viewportSize by remember { mutableStateOf(IntSize.Zero) }
@@ -957,7 +1057,8 @@ private fun NotePaneViewport(
                 state.note.pdfUri = savedUri
                 state.note.pdfTotalPages = maxOf(1, pageCount)
                 state.totalPages = state.note.pdfTotalPages
-                AcademicDatabaseManager.persistNote(state.note)
+                PdfNoteHelper.invalidatePdfCache(savedUri)
+                AcademicDatabaseManager.persistNote(state.note, immediate = true)
                 state.loadPdfPage()
             }
         }
@@ -1039,14 +1140,27 @@ private fun NotePaneViewport(
             }
     }
 
+    var lastStylusActivityMs by remember(state.note.id) { mutableLongStateOf(0L) }
+    val shouldRejectFloatingTouch = remember(state.note.id) {
+        { System.currentTimeMillis() - lastStylusActivityMs < 850L }
+    }
+
     Box(
         modifier = modifier
             .clipToBounds()
-            // Auto-activate pane on any touch or stylus down (keyed strictly to state.note.id)
+            // Track stylus activity (touch + hover) across the entire pane for palm rejection on floating bars,
+            // and auto-activate pane on press.
             .pointerInput(state.note.id) {
-                awaitEachGesture {
-                    awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
-                    onActivate()
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+                        if (event.changes.any { it.type == PointerType.Stylus || it.type == PointerType.Eraser }) {
+                            lastStylusActivityMs = System.currentTimeMillis()
+                        }
+                        if (event.type == PointerEventType.Press) {
+                            onActivate()
+                        }
+                    }
                 }
             }
     ) {
@@ -1067,7 +1181,46 @@ private fun NotePaneViewport(
                         if (!isFingerDrawing) {
                             // ── MODE HANYA STYLUS (Palm Rejection Maksimal) ──
                             // 1 Jari = Geser (Pan), 2 Jari = Zoom & Pan, Stylus = Tulis
+                            // Pengecualian: sentuhan 1 jari di atas TextBox/Gambar tetap diteruskan agar bisa dipindah pakai tangan!
                             if (down.type == PointerType.Touch) {
+                                val worldDownX = (down.position.x - state.panX) / state.scale
+                                val worldDownY = (down.position.y - state.panY) / state.scale
+                                val hitPlacedElement = state.textBoxes.any { tb ->
+                                    val topPad = if (tb.isSelected) with(density) { 44.dp.toPx() } / state.scale else 12f / state.scale
+                                    val sidePad = if (tb.isSelected) with(density) { 26.dp.toPx() } / state.scale else 12f / state.scale
+                                    worldDownX in (tb.x - sidePad)..(tb.x + tb.width + sidePad) &&
+                                        worldDownY in (tb.y - topPad)..(tb.y + tb.height + sidePad)
+                                } || state.imageElements.any { img ->
+                                    val pad = if (img.isSelected) with(density) { 26.dp.toPx() } / state.scale else 12f / state.scale
+                                    worldDownX in (img.x - pad)..(img.x + img.width + pad) &&
+                                        worldDownY in (img.y - pad)..(img.y + img.height + pad)
+                                }
+
+                                if (hitPlacedElement) {
+                                    // Allow finger tap/drag on TextBox or Image, unless user puts a 2nd finger down to pinch-zoom
+                                    while (true) {
+                                        val ev = awaitPointerEvent(pass = PointerEventPass.Initial)
+                                        val pressedTouches = ev.changes.filter { it.type == PointerType.Touch && it.pressed }
+                                        if (pressedTouches.isEmpty()) break
+                                        if (pressedTouches.size >= 2) {
+                                            val zoom = ev.calculateZoom()
+                                            val pan = ev.calculatePan()
+                                            val centroid = ev.calculateCentroid(useCurrent = false)
+                                            ev.changes.forEach { it.consume() }
+                                            if (centroid != Offset.Unspecified && !zoom.isNaN() && zoom > 0f) {
+                                                val minScale = if (state.canvasType == NoteCanvasType.PDF_DOCUMENT) 0.4f else 0.5f
+                                                val maxScale = if (state.canvasType == NoteCanvasType.PDF_DOCUMENT) 5.0f else 3.5f
+                                                val newScale = (state.scale * zoom).coerceIn(minScale, maxScale)
+                                                val effectiveZoom = newScale / state.scale
+                                                state.panX = centroid.x - (centroid.x - state.panX) * effectiveZoom + pan.x
+                                                state.panY = centroid.y - (centroid.y - state.panY) * effectiveZoom + pan.y
+                                                state.scale = newScale
+                                            }
+                                        }
+                                    }
+                                    return@awaitEachGesture
+                                }
+
                                 down.consume()
 
                                 var isTransforming = false
@@ -1213,7 +1366,7 @@ private fun NotePaneViewport(
                                 image = bmp,
                                 dstOffset = IntOffset(state.panX.roundToInt(), state.panY.roundToInt()),
                                 dstSize = IntSize(dstW.roundToInt().coerceAtLeast(1), dstH.roundToInt().coerceAtLeast(1)),
-                                filterQuality = FilterQuality.High
+                                filterQuality = FilterQuality.Medium
                             )
 
                             val tile = state.pdfTile
@@ -1229,7 +1382,7 @@ private fun NotePaneViewport(
                                         (tRight - tLeft).roundToInt().coerceAtLeast(1),
                                         (tBottom - tTop).roundToInt().coerceAtLeast(1)
                                     ),
-                                    filterQuality = FilterQuality.High
+                                    filterQuality = FilterQuality.Medium
                                 )
                             }
                         }
@@ -1271,9 +1424,11 @@ private fun NotePaneViewport(
                                 stroke
                             }
                         }
-                        state.strokes.addAll(processedStrokes)
-                        state.undoneStrokes.clear()
-                        state.saveActivePageData()
+                        if (processedStrokes.isNotEmpty()) {
+                            state.pushUndoSnapshot()
+                            state.strokes.addAll(processedStrokes)
+                            state.saveActivePageData()
+                        }
 
                         // Nebo-style Auto-Solve Math when user finishes writing '='
                         if (isAutoMathEnabled && activeTool == NoteTool.PEN) {
@@ -1291,6 +1446,7 @@ private fun NotePaneViewport(
                                             brush = snapshotBrush
                                         )
                                         if (answerStrokes.isNotEmpty()) {
+                                            state.pushUndoSnapshot()
                                             state.strokes.addAll(answerStrokes)
                                             state.saveActivePageData()
                                         }
@@ -1313,8 +1469,12 @@ private fun NotePaneViewport(
                 scaleProvider = { state.scale },
                 panXProvider = { state.panX },
                 panYProvider = { state.panY },
+                onEraseStart = { state.beginUndoTransaction() },
                 onErase = { worldX, worldY -> state.eraseNear(worldX, worldY, AppSettingsManager.eraserRadius, AppSettingsManager.eraserMode) },
-                onEraseEnd = { state.saveActivePageData() },
+                onEraseEnd = {
+                    state.commitUndoTransactionIfChanged()
+                    state.saveActivePageData()
+                },
                 modifier = Modifier.fillMaxSize().clipToBounds()
             )
 
@@ -1353,8 +1513,8 @@ private fun NotePaneViewport(
                                         end = end,
                                         brush = currentBrush
                                     )
+                                    state.pushUndoSnapshot()
                                     state.strokes.add(newStroke)
-                                    state.undoneStrokes.clear()
                                     state.saveActivePageData()
                                 }
                                 state.shapeDrawStart = null
@@ -1455,6 +1615,7 @@ private fun NotePaneViewport(
                                     )
                                     if (screenBounds.contains(screenPoint)) {
                                         val strokeIndices = curSel.selectedStrokes.map { state.strokes.indexOf(it) }
+                                        state.beginUndoTransaction()
 
                                         drag(down.id) { change ->
                                             val isChangeAllowed = change.type == PointerType.Stylus || change.type == PointerType.Eraser || (isFingerDrawing && change.type == PointerType.Touch)
@@ -1488,6 +1649,7 @@ private fun NotePaneViewport(
                                                 }
                                             }
                                         }
+                                        state.commitUndoTransactionIfChanged()
                                         state.saveActivePageData()
                                         return@awaitEachGesture
                                     } else {
@@ -1620,7 +1782,14 @@ private fun NotePaneViewport(
                                     horizontalArrangement = Arrangement.spacedBy(3.dp),
                                     modifier = Modifier
                                         .pointerInput(state.note.id, state.lassoSelection == null) {
-                                            detectDragGestures { change, dragAmount ->
+                                            detectDragGestures(
+                                                onDragStart = { state.beginUndoTransaction() },
+                                                onDragEnd = {
+                                                    state.commitUndoTransactionIfChanged()
+                                                    state.saveActivePageData()
+                                                },
+                                                onDragCancel = { state.commitUndoTransactionIfChanged() }
+                                            ) { change, dragAmount ->
                                                 change.consume()
                                                 val sel = state.lassoSelection ?: return@detectDragGestures
                                                 val dx = dragAmount.x / state.scale
@@ -1693,12 +1862,12 @@ private fun NotePaneViewport(
                                         val sel = state.lassoSelection ?: return@clickable
                                         val offsetDelta = 35f
                                         val newDuplicates = sel.selectedStrokes.map { ShapeRecognizer.translateStroke(it, offsetDelta, offsetDelta) }
+                                        state.pushUndoSnapshot()
                                         state.strokes.addAll(newDuplicates)
                                         sel.selectedStrokes.clear()
                                         sel.selectedStrokes.addAll(newDuplicates)
                                         val newBounds = sel.bounds.translate(Offset(offsetDelta, offsetDelta))
                                         state.lassoSelection = sel.copy(bounds = newBounds)
-                                        state.undoneStrokes.clear()
                                         state.saveActivePageData()
                                     }
                                 ) {
@@ -1717,6 +1886,7 @@ private fun NotePaneViewport(
                                     shape = RoundedCornerShape(8.dp),
                                     color = Color(0xFFFEE2E2),
                                     modifier = Modifier.clickable {
+                                        state.pushUndoSnapshot()
                                         state.strokes.removeAll(curSel.selectedStrokes)
                                         state.textBoxes.removeAll(curSel.selectedTextBoxes)
                                         state.imageElements.removeAll(curSel.selectedImages)
@@ -1755,16 +1925,18 @@ private fun NotePaneViewport(
                 DraggableImage(
                     image = img,
                     scale = state.scale,
-                    panX = state.panX,
-                    panY = state.panY,
+                    panXProvider = { state.panX },
+                    panYProvider = { state.panY },
                     onCommitMove = { newWorldX, newWorldY ->
                         if (index < state.imageElements.size) {
+                            state.pushUndoSnapshot()
                             state.imageElements[index] = state.imageElements[index].copy(x = newWorldX, y = newWorldY)
                             state.saveActivePageData()
                         }
                     },
                     onCommitResize = { newWorldW, newWorldH ->
                         if (index < state.imageElements.size) {
+                            state.pushUndoSnapshot()
                             state.imageElements[index] = state.imageElements[index].copy(width = newWorldW, height = newWorldH)
                             state.saveActivePageData()
                         }
@@ -1776,6 +1948,7 @@ private fun NotePaneViewport(
                         }
                     },
                     onDelete = {
+                        state.pushUndoSnapshot()
                         state.imageElements.remove(img)
                         state.saveActivePageData()
                     }
@@ -1787,17 +1960,21 @@ private fun NotePaneViewport(
                 DraggableTextBox(
                     box = boxElement,
                     scale = state.scale,
-                    panX = state.panX,
-                    panY = state.panY,
+                    panXProvider = { state.panX },
+                    panYProvider = { state.panY },
                     isDarkPaper = state.isDarkPaper,
                     onCommitMove = { newWorldX, newWorldY ->
                         if (index < state.textBoxes.size) {
+                            state.pushUndoSnapshot()
                             state.textBoxes[index] = state.textBoxes[index].copy(x = newWorldX, y = newWorldY)
+                            state.saveActivePageData()
                         }
                     },
                     onCommitResize = { newWorldW, newWorldH ->
                         if (index < state.textBoxes.size) {
+                            state.pushUndoSnapshot()
                             state.textBoxes[index] = state.textBoxes[index].copy(width = newWorldW, height = newWorldH)
+                            state.saveActivePageData()
                         }
                     },
                     onTextChange = { newText ->
@@ -1811,7 +1988,11 @@ private fun NotePaneViewport(
                             state.textBoxes[index] = state.textBoxes[index].copy(isSelected = true)
                         }
                     },
-                    onDelete = { state.textBoxes.remove(boxElement) }
+                    onDelete = {
+                        state.pushUndoSnapshot()
+                        state.textBoxes.remove(boxElement)
+                        state.saveActivePageData()
+                    }
                 )
             }
         }
@@ -1898,6 +2079,7 @@ private fun NotePaneViewport(
                                     brush = currentBrush
                                 )
                                 if (strokesOut.isNotEmpty()) {
+                                    state.pushUndoSnapshot()
                                     state.strokes.addAll(strokesOut)
                                     state.saveActivePageData()
                                 }
@@ -1983,6 +2165,7 @@ private fun NotePaneViewport(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(bottom = 16.dp)
+                    .rejectPalmAfterStylus(shouldRejectFloatingTouch)
             )
         }
 
@@ -2042,6 +2225,7 @@ private fun NotePaneViewport(
                     end = if (isLeftHanded) 14.dp else 0.dp,
                     bottom = 16.dp
                 )
+                .rejectPalmAfterStylus(shouldRejectFloatingTouch)
         )
     }
 }
@@ -2650,6 +2834,44 @@ private fun NoteActionsCapsule(
                         tint = Color(0xFFDC2626),
                         modifier = Modifier.size(17.dp)
                     )
+                }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Blocks accidental finger/palm touches on floating canvas HUD bars while the stylus
+ * is hovering, active, or within the post-lift palm-rejection cooldown window.
+ * Explicit Stylus/Eraser taps are never blocked.
+ */
+private fun Modifier.rejectPalmAfterStylus(
+    shouldRejectTouch: () -> Boolean
+): Modifier = this.pointerInput(shouldRejectTouch) {
+    awaitPointerEventScope {
+        while (true) {
+            val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+            val hasStylus = event.changes.any {
+                it.type == PointerType.Stylus || it.type == PointerType.Eraser
+            }
+            if (hasStylus) continue
+
+            val multiTouch = event.changes.count { it.type == PointerType.Touch && it.pressed } > 1
+            if (shouldRejectTouch() || multiTouch) {
+                var swallowed = false
+                for (change in event.changes) {
+                    if (change.type == PointerType.Touch) {
+                        change.consume()
+                        swallowed = true
+                    }
+                }
+                if (swallowed && event.changes.any { it.type == PointerType.Touch && it.pressed }) {
+                    while (true) {
+                        val next = awaitPointerEvent(pass = PointerEventPass.Initial)
+                        next.changes.forEach { if (it.type == PointerType.Touch) it.consume() }
+                        if (next.changes.none { it.type == PointerType.Touch && it.pressed }) break
+                    }
                 }
             }
         }

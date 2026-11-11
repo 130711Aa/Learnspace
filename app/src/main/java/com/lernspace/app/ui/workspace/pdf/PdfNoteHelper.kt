@@ -15,6 +15,7 @@ import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
 import android.text.StaticLayout
 import android.text.TextPaint
+import android.util.LruCache
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.core.content.FileProvider
 import androidx.ink.rendering.android.canvas.CanvasStrokeRenderer
@@ -36,6 +37,71 @@ data class PdfPageRenderResult(
 object PdfNoteHelper {
 
     private val pdfRendererLock = Any()
+
+    // Keep up to 24 MB of pre-rendered PDF pages in memory for instant Next/Prev flips without kswapd pressure
+    private val pageCache = object : LruCache<String, PdfPageRenderResult>(24 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: PdfPageRenderResult): Int {
+            return value.bitmap.allocationByteCount.coerceAtLeast(1)
+        }
+    }
+
+    private var cachedUriString: String? = null
+    private var cachedPfd: ParcelFileDescriptor? = null
+    private var cachedRenderer: PdfRenderer? = null
+
+    private fun closeCachedRendererLocked() {
+        try { cachedRenderer?.close() } catch (_: Exception) {}
+        try { cachedPfd?.close() } catch (_: Exception) {}
+        cachedRenderer = null
+        cachedPfd = null
+        cachedUriString = null
+    }
+
+    private fun getOrOpenRendererLocked(context: Context, uri: Uri): PdfRenderer? {
+        val uriStr = uri.toString()
+        if (cachedUriString == uriStr && cachedRenderer != null) {
+            return cachedRenderer
+        }
+        closeCachedRendererLocked()
+        val pfd = openPdfDescriptor(context, uri) ?: return null
+        return try {
+            val renderer = PdfRenderer(pfd)
+            cachedUriString = uriStr
+            cachedPfd = pfd
+            cachedRenderer = renderer
+            renderer
+        } catch (_: Exception) {
+            try { pfd.close() } catch (_: Exception) {}
+            null
+        }
+    }
+
+    fun invalidatePdfCache(uriString: String? = null) {
+        synchronized(pdfRendererLock) {
+            if (uriString == null || cachedUriString == uriString) {
+                closeCachedRendererLocked()
+            }
+            if (uriString == null) {
+                pageCache.evictAll()
+            } else {
+                val prefix = "$uriString#"
+                pageCache.snapshot().keys
+                    .filter { it.startsWith(prefix) }
+                    .forEach { pageCache.remove(it) }
+            }
+        }
+    }
+
+    fun getCachedPage(uri: Uri, pageIndex: Int, targetWidth: Int = 2400): PdfPageRenderResult? {
+        val cached = pageCache.get("${uri}#$pageIndex#$targetWidth")
+        return if (cached != null && !cached.bitmap.isRecycled) cached else null
+    }
+
+    fun preloadPage(context: Context, uri: Uri, pageIndex: Int, targetWidth: Int = 2400) {
+        if (pageIndex < 0) return
+        if (getCachedPage(uri, pageIndex, targetWidth) != null) return
+        renderPdfPageWithBounds(context, uri, pageIndex, targetWidth)
+    }
 
     private fun openPdfDescriptor(context: Context, uri: Uri): ParcelFileDescriptor? {
         return try {
@@ -72,19 +138,15 @@ object PdfNoteHelper {
 
     fun getPdfPageCount(context: Context, uri: Uri): Int {
         synchronized(pdfRendererLock) {
-            var pfd: ParcelFileDescriptor? = null
-            var renderer: PdfRenderer? = null
             return try {
-                pfd = openPdfDescriptor(context, uri)
-                if (pfd != null) {
-                    renderer = PdfRenderer(pfd)
-                    renderer.pageCount
-                } else 1
-            } catch (e: Exception) {
-                1
-            } finally {
-                try { renderer?.close() } catch (_: Exception) {}
-                try { pfd?.close() } catch (_: Exception) {}
+                getOrOpenRendererLocked(context, uri)?.pageCount ?: 1
+            } catch (_: Exception) {
+                closeCachedRendererLocked()
+                try {
+                    getOrOpenRendererLocked(context, uri)?.pageCount ?: 1
+                } catch (_: Exception) {
+                    1
+                }
             }
         }
     }
@@ -108,43 +170,52 @@ object PdfNoteHelper {
         pageIndex: Int,
         targetWidth: Int = 2400
     ): PdfPageRenderResult? {
+        val cacheKey = "${uri}#$pageIndex#$targetWidth"
+        pageCache.get(cacheKey)?.let { cached ->
+            if (!cached.bitmap.isRecycled) return cached
+        }
+
         synchronized(pdfRendererLock) {
-            var pfd: ParcelFileDescriptor? = null
-            var renderer: PdfRenderer? = null
-            var page: PdfRenderer.Page? = null
-            return try {
-                pfd = openPdfDescriptor(context, uri) ?: return null
-                renderer = PdfRenderer(pfd)
-                if (pageIndex < 0 || pageIndex >= renderer.pageCount) return null
-                page = renderer.openPage(pageIndex)
-
-                val pageWidth = page.width.toFloat().coerceAtLeast(1f)
-                val pageHeight = page.height.toFloat().coerceAtLeast(1f)
-                val aspect = pageHeight / pageWidth
-
-                val bmpWidth = targetWidth.coerceAtLeast(1)
-                val bmpHeight = (bmpWidth * aspect).roundToInt().coerceAtLeast(1)
-
-                val worldWidth = CanvasConstants.PAGE_WIDTH
-                val worldHeight = worldWidth * aspect
-
-                val bitmap = Bitmap.createBitmap(bmpWidth, bmpHeight, Bitmap.Config.ARGB_8888)
-                val canvas = Canvas(bitmap)
-                canvas.drawColor(android.graphics.Color.WHITE)
-
-                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                PdfPageRenderResult(
-                    bitmap = bitmap,
-                    worldWidth = worldWidth,
-                    worldHeight = worldHeight
-                )
-            } catch (e: Exception) {
-                null
-            } finally {
-                try { page?.close() } catch (_: Exception) {}
-                try { renderer?.close() } catch (_: Exception) {}
-                try { pfd?.close() } catch (_: Exception) {}
+            pageCache.get(cacheKey)?.let { cached ->
+                if (!cached.bitmap.isRecycled) return cached
             }
+            for (attempt in 0..1) {
+                var page: PdfRenderer.Page? = null
+                try {
+                    val renderer = getOrOpenRendererLocked(context, uri) ?: return null
+                    if (pageIndex < 0 || pageIndex >= renderer.pageCount) return null
+                    page = renderer.openPage(pageIndex)
+
+                    val pageWidth = page.width.toFloat().coerceAtLeast(1f)
+                    val pageHeight = page.height.toFloat().coerceAtLeast(1f)
+                    val aspect = pageHeight / pageWidth
+
+                    val bmpWidth = targetWidth.coerceAtLeast(1)
+                    val bmpHeight = (bmpWidth * aspect).roundToInt().coerceAtLeast(1)
+
+                    val worldWidth = CanvasConstants.PAGE_WIDTH
+                    val worldHeight = worldWidth * aspect
+
+                    val bitmap = Bitmap.createBitmap(bmpWidth, bmpHeight, Bitmap.Config.ARGB_8888)
+                    val canvas = Canvas(bitmap)
+                    canvas.drawColor(android.graphics.Color.WHITE)
+
+                    page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    val result = PdfPageRenderResult(
+                        bitmap = bitmap,
+                        worldWidth = worldWidth,
+                        worldHeight = worldHeight
+                    )
+                    pageCache.put(cacheKey, result)
+                    return result
+                } catch (_: Exception) {
+                    closeCachedRendererLocked()
+                    if (attempt == 1) return null
+                } finally {
+                    try { page?.close() } catch (_: Exception) {}
+                }
+            }
+            return null
         }
     }
 
@@ -164,48 +235,47 @@ object PdfNoteHelper {
         targetHeight: Int
     ): Bitmap? {
         synchronized(pdfRendererLock) {
-            var pfd: ParcelFileDescriptor? = null
-            var renderer: PdfRenderer? = null
-            var page: PdfRenderer.Page? = null
-            return try {
-                pfd = openPdfDescriptor(context, uri) ?: return null
-                renderer = PdfRenderer(pfd)
-                if (pageIndex < 0 || pageIndex >= renderer.pageCount) return null
-                page = renderer.openPage(pageIndex)
+            for (attempt in 0..1) {
+                var page: PdfRenderer.Page? = null
+                try {
+                    val renderer = getOrOpenRendererLocked(context, uri) ?: return null
+                    if (pageIndex < 0 || pageIndex >= renderer.pageCount) return null
+                    page = renderer.openPage(pageIndex)
 
-                val pageWidth = page.width.toFloat().coerceAtLeast(1f)
-                val pageHeight = page.height.toFloat().coerceAtLeast(1f)
-                val worldWidth = CanvasConstants.PAGE_WIDTH
-                val worldHeight = worldWidth * (pageHeight / pageWidth)
+                    val pageWidth = page.width.toFloat().coerceAtLeast(1f)
+                    val pageHeight = page.height.toFloat().coerceAtLeast(1f)
+                    val worldWidth = CanvasConstants.PAGE_WIDTH
+                    val worldHeight = worldWidth * (pageHeight / pageWidth)
 
-                val regionW = (worldRight - worldLeft).coerceAtLeast(1f)
-                val regionH = (worldBottom - worldTop).coerceAtLeast(1f)
-                val bmpW = targetWidth.coerceAtLeast(1)
-                val bmpH = targetHeight.coerceAtLeast(1)
+                    val regionW = (worldRight - worldLeft).coerceAtLeast(1f)
+                    val regionH = (worldBottom - worldTop).coerceAtLeast(1f)
+                    val bmpW = targetWidth.coerceAtLeast(1)
+                    val bmpH = targetHeight.coerceAtLeast(1)
 
-                val scaleX = bmpW.toFloat() / regionW
-                val scaleY = bmpH.toFloat() / regionH
+                    val scaleX = bmpW.toFloat() / regionW
+                    val scaleY = bmpH.toFloat() / regionH
 
-                val bitmap = Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.ARGB_8888)
-                val canvas = Canvas(bitmap)
-                canvas.drawColor(android.graphics.Color.WHITE)
+                    val bitmap = Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.ARGB_8888)
+                    val canvas = Canvas(bitmap)
+                    canvas.drawColor(android.graphics.Color.WHITE)
 
-                val matrix = Matrix().apply {
-                    postScale(worldWidth / pageWidth, worldHeight / pageHeight)
-                    postTranslate(-worldLeft, -worldTop)
-                    postScale(scaleX, scaleY)
+                    val matrix = Matrix().apply {
+                        postScale(worldWidth / pageWidth, worldHeight / pageHeight)
+                        postTranslate(-worldLeft, -worldTop)
+                        postScale(scaleX, scaleY)
+                    }
+
+                    val destClip = Rect(0, 0, bmpW, bmpH)
+                    page.render(bitmap, destClip, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    return bitmap
+                } catch (_: Exception) {
+                    closeCachedRendererLocked()
+                    if (attempt == 1) return null
+                } finally {
+                    try { page?.close() } catch (_: Exception) {}
                 }
-
-                val destClip = Rect(0, 0, bmpW, bmpH)
-                page.render(bitmap, destClip, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                bitmap
-            } catch (e: Exception) {
-                null
-            } finally {
-                try { page?.close() } catch (_: Exception) {}
-                try { renderer?.close() } catch (_: Exception) {}
-                try { pfd?.close() } catch (_: Exception) {}
             }
+            return null
         }
     }
 

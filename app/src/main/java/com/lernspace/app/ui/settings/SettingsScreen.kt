@@ -831,7 +831,7 @@ private fun AboutAndSystemSection() {
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text("Learnspace Tablet OS", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
-                        Text("Versi 1.2.0 (Production Release)", fontSize = 12.sp, color = LernspaceTextSecondary)
+                        Text("Versi 1.2.1 (Production Release)", fontSize = 12.sp, color = LernspaceTextSecondary)
                     }
 
                     Row(
@@ -874,7 +874,7 @@ private fun AboutAndSystemSection() {
                                 if (!isCheckingUpdate) {
                                     isCheckingUpdate = true
                                     scope.launch {
-                                        val result = UpdateManager.checkForUpdates("1.2.0")
+                                        val result = UpdateManager.checkForUpdates("1.2.1")
                                         isCheckingUpdate = false
                                         result.onSuccess { info ->
                                             if (info.hasUpdate) {

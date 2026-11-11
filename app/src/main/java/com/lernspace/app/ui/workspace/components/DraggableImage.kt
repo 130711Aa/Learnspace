@@ -35,8 +35,8 @@ import kotlin.math.roundToInt
 fun DraggableImage(
     image: ImageElement,
     scale: Float = 1f,
-    panX: Float = 0f,
-    panY: Float = 0f,
+    panXProvider: () -> Float = { 0f },
+    panYProvider: () -> Float = { 0f },
     onCommitMove: (Float, Float) -> Unit,
     onCommitResize: (Float, Float) -> Unit,
     onSelect: () -> Unit,
@@ -76,8 +76,8 @@ fun DraggableImage(
     Box(
         modifier = modifier
             .offset {
-                val screenX = worldX * scale + panX
-                val screenY = worldY * scale + panY
+                val screenX = worldX * scale + panXProvider()
+                val screenY = worldY * scale + panYProvider()
                 IntOffset(screenX.roundToInt(), screenY.roundToInt())
             }
             .requiredSize(width = screenWidthDp, height = screenHeightDp)

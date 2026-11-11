@@ -15,8 +15,11 @@ import com.lernspace.app.ui.workspace.model.NoteUiModel
 import com.lernspace.app.ui.workspace.model.PaperStyle
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.text.SimpleDateFormat
 import java.util.*
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Central Offline-First Synchronization Engine.
@@ -28,6 +31,8 @@ object AcademicDatabaseManager {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var db: LernspaceDatabase? = null
     private var storageManager: NoteStorageManager? = null
+    private val pendingNoteSaves = ConcurrentHashMap<String, Job>()
+    private val noteWriteMutexes = ConcurrentHashMap<String, Mutex>()
 
     fun init(database: LernspaceDatabase, context: Context) {
         db = database
@@ -101,12 +106,13 @@ object AcademicDatabaseManager {
             })
         }
 
-        // 4. Notes & Canvas Strokes
+        // 4. Notes & Canvas Strokes (decode off main thread in Dispatchers.IO!)
         val existingNotes = database.noteDao().getAllActiveNotes().firstOrNull() ?: emptyList()
-        withContext(Dispatchers.Main) {
-            AcademicWorkspaceState.notes.clear()
-            AcademicWorkspaceState.notes.addAll(existingNotes.map { entity ->
-                val loadedPages = storage.loadNotePages(entity.id) ?: listOf(NotePageData(pageIndex = 0))
+        val loadedNoteModels = withContext(Dispatchers.IO) {
+            existingNotes.map { entity ->
+                val loaded = storage.loadNoteWithMeta(entity.id)
+                val loadedPages = loaded?.pages ?: listOf(NotePageData(pageIndex = 0))
+                val isDark = loaded?.isDarkPaper ?: false
                 val paperStyle = try {
                     PaperStyle.valueOf(entity.paperStyle)
                 } catch (e: Exception) {
@@ -130,12 +136,16 @@ object AcademicDatabaseManager {
                         else -> NoteCanvasType.PAGED_NOTE
                     },
                     paperStyle = paperStyle,
-                    isDarkPaper = storageManager?.isDarkPaper(entity.id) ?: false,
+                    isDarkPaper = isDark,
                     pdfUri = entity.pdfUri,
                     pdfTotalPages = entity.pdfTotalPages,
                     pages = loadedPages.toMutableList()
                 )
-            })
+            }
+        }
+        withContext(Dispatchers.Main) {
+            AcademicWorkspaceState.notes.clear()
+            AcademicWorkspaceState.notes.addAll(loadedNoteModels)
         }
 
         // 5. Calendar Events & Weekly Classes
@@ -249,28 +259,60 @@ object AcademicDatabaseManager {
 
     // ── Persistent Operations (Async background writes) ───────────────────────
 
-    fun persistNote(note: NoteUiModel) {
+    fun persistNote(note: NoteUiModel, immediate: Boolean = false) {
         val database = db ?: return
         val storage = storageManager ?: return
 
-        scope.launch {
-            val entity = NoteEntity(
-                id = note.id,
-                title = note.title,
-                snippet = note.snippet,
-                subject = note.subject,
-                subjectId = note.subjectId,
-                topicId = note.topicId,
-                topicName = note.topicName,
-                isScratchpad = note.isScratchpad,
-                paperStyle = note.paperStyle.name,
-                pdfUri = note.pdfUri,
-                pdfTotalPages = note.pdfTotalPages,
-                updatedAt = System.currentTimeMillis()
+        // Take a thread-safe snapshot of mutable page lists on the calling thread before hopping to IO
+        val pagesSnapshot = note.pages.map { page ->
+            NotePageData(
+                pageIndex = page.pageIndex,
+                textBoxes = page.textBoxes.toMutableList(),
+                strokes = page.strokes.toMutableList(),
+                imageElements = page.imageElements.toMutableList()
             )
-            database.noteDao().insertNote(entity)
-            storage.saveNotePages(note.id, note.pages, note.isDarkPaper)
         }
+        val isDark = note.isDarkPaper
+        val entity = NoteEntity(
+            id = note.id,
+            title = note.title,
+            snippet = note.snippet,
+            subject = note.subject,
+            subjectId = note.subjectId,
+            topicId = note.topicId,
+            topicName = note.topicName,
+            isScratchpad = note.isScratchpad,
+            paperStyle = note.paperStyle.name,
+            pdfUri = note.pdfUri,
+            pdfTotalPages = note.pdfTotalPages,
+            updatedAt = System.currentTimeMillis()
+        )
+
+        pendingNoteSaves.remove(note.id)?.cancel()
+        val mutex = noteWriteMutexes.getOrPut(note.id) { Mutex() }
+        lateinit var launchedJob: Job
+        launchedJob = scope.launch {
+            try {
+                if (!immediate) {
+                    delay(900L)
+                }
+                mutex.withLock {
+                    database.noteDao().insertNote(entity)
+                    storage.saveNotePages(note.id, pagesSnapshot, isDark)
+                }
+            } finally {
+                pendingNoteSaves.remove(note.id, launchedJob)
+            }
+        }
+        pendingNoteSaves[note.id] = launchedJob
+    }
+
+    fun hasPendingSave(noteId: String): Boolean {
+        return pendingNoteSaves[noteId]?.isActive == true
+    }
+
+    suspend fun awaitPendingSave(noteId: String) {
+        pendingNoteSaves[noteId]?.join()
     }
 
     fun loadPagesForNote(noteId: String): List<NotePageData>? {
@@ -278,6 +320,7 @@ object AcademicDatabaseManager {
     }
 
     fun deleteNote(noteId: String) {
+        pendingNoteSaves.remove(noteId)?.cancel()
         val database = db ?: return
         val storage = storageManager ?: return
 

@@ -3,6 +3,8 @@ package com.lernspace.app.data.local
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.net.Uri
+import android.util.Base64
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asAndroidBitmap
@@ -10,22 +12,35 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.ink.brush.Brush
 import androidx.ink.brush.StockBrushes
 import androidx.ink.brush.compose.createWithComposeColor
+import androidx.ink.storage.StrokeInputBatchSerialization
 import androidx.ink.strokes.Stroke
 import com.lernspace.app.ui.workspace.model.ImageElement
 import com.lernspace.app.ui.workspace.model.NotePageData
 import com.lernspace.app.ui.workspace.model.TextBoxElement
 import com.lernspace.app.ui.workspace.shape.ShapeRecognizer
-import android.net.Uri
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.util.concurrent.ConcurrentHashMap
+
+data class LoadedNoteContent(
+    val pages: List<NotePageData>,
+    val isDarkPaper: Boolean
+)
 
 /**
  * High-performance local storage manager for note canvas contents
  * (AndroidX Ink Strokes, TextBoxes, and Images).
  */
 class NoteStorageManager(private val context: Context) {
+
+    private val noteLocks = ConcurrentHashMap<String, Any>()
+    private fun lockFor(noteId: String): Any = noteLocks.getOrPut(noteId) { Any() }
 
     private val notesDir: File
         get() = File(context.filesDir, "notes").apply { if (!exists()) mkdirs() }
@@ -139,6 +154,7 @@ class NoteStorageManager(private val context: Context) {
      * Saves all pages of a note into a compact JSON file.
      */
     fun saveNotePages(noteId: String, pages: List<NotePageData>, isDarkPaper: Boolean = false) {
+        synchronized(lockFor(noteId)) {
         try {
             val rootObj = JSONObject()
             rootObj.put("noteId", noteId)
@@ -191,24 +207,26 @@ class NoteStorageManager(private val context: Context) {
                 }
                 pageObj.put("images", imagesArray)
 
-                // 3. AndroidX Ink Strokes
+                // 3. AndroidX Ink Strokes (Compressed binary protobuf via androidx.ink:ink-storage)
                 val strokesArray = JSONArray()
+                val baos = ByteArrayOutputStream(512)
                 page.strokes.forEach { stroke ->
-                    val strokeObj = JSONObject()
-                    strokeObj.put("size", stroke.brush.size.toDouble())
-                    val colorInt = stroke.brush.colorIntArgb
-                    strokeObj.put("color", colorInt)
-
-                    val pointsArray = JSONArray()
-                    val points = ShapeRecognizer.extractPoints(stroke)
-                    points.forEach { pt ->
-                        val ptObj = JSONObject()
-                        ptObj.put("x", pt.x.toDouble())
-                        ptObj.put("y", pt.y.toDouble())
-                        pointsArray.put(ptObj)
+                    if (stroke.inputs.size > 0) {
+                        val strokeObj = JSONObject()
+                        strokeObj.put("size", stroke.brush.size.toDouble())
+                        strokeObj.put("color", stroke.brush.colorIntArgb)
+                        strokeObj.put(
+                            "brushFamily",
+                            if (stroke.brush.family == StockBrushes.highlighter()) "highlighter" else "pen"
+                        )
+                        baos.reset()
+                        StrokeInputBatchSerialization.encode(stroke.inputs, baos)
+                        strokeObj.put(
+                            "batchB64",
+                            Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+                        )
+                        strokesArray.put(strokeObj)
                     }
-                    strokeObj.put("points", pointsArray)
-                    strokesArray.put(strokeObj)
                 }
                 pageObj.put("strokes", strokesArray)
 
@@ -218,9 +236,44 @@ class NoteStorageManager(private val context: Context) {
             rootObj.put("pages", pagesArray)
 
             val noteFile = File(notesDir, "$noteId.json")
-            noteFile.writeText(rootObj.toString())
+            val tempFile = File(notesDir, "$noteId.json.tmp")
+            tempFile.writeText(rootObj.toString())
+            try {
+                Files.move(
+                    tempFile.toPath(),
+                    noteFile.toPath(),
+                    StandardCopyOption.REPLACE_EXISTING
+                )
+            } catch (_: Exception) {
+                if (noteFile.exists()) noteFile.delete()
+                if (!tempFile.renameTo(noteFile)) {
+                    tempFile.copyTo(noteFile, overwrite = true)
+                    tempFile.delete()
+                }
+            }
         } catch (e: Exception) {
             e.printStackTrace()
+        }
+        }
+    }
+
+    /**
+     * Loads both pages and metadata (e.g. isDarkPaper) in a single pass.
+     */
+    fun loadNoteWithMeta(noteId: String): LoadedNoteContent? {
+        synchronized(lockFor(noteId)) {
+            val noteFile = File(notesDir, "$noteId.json")
+            if (!noteFile.exists()) return null
+            return try {
+                val jsonText = noteFile.readText()
+                val rootObj = JSONObject(jsonText)
+                val isDark = rootObj.optBoolean("isDarkPaper", false)
+                val pages = parsePagesFromRoot(rootObj) ?: return null
+                LoadedNoteContent(pages = pages, isDarkPaper = isDark)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                null
+            }
         }
     }
 
@@ -228,12 +281,11 @@ class NoteStorageManager(private val context: Context) {
      * Loads and reconstructs all pages, strokes, text boxes, and images from disk.
      */
     fun loadNotePages(noteId: String): List<NotePageData>? {
-        val noteFile = File(notesDir, "$noteId.json")
-        if (!noteFile.exists()) return null
+        return loadNoteWithMeta(noteId)?.pages
+    }
 
+    private fun parsePagesFromRoot(rootObj: JSONObject): List<NotePageData>? {
         return try {
-            val jsonText = noteFile.readText()
-            val rootObj = JSONObject(jsonText)
             val pagesArray = rootObj.optJSONArray("pages") ?: return null
 
             val resultPages = mutableListOf<NotePageData>()
@@ -288,38 +340,57 @@ class NoteStorageManager(private val context: Context) {
                     }
                 }
 
-                // 3. AndroidX Ink Strokes
+                // 3. AndroidX Ink Strokes (Binary ink-storage with seamless legacy JSON fallback)
                 val strokesArray = pageObj.optJSONArray("strokes")
                 if (strokesArray != null) {
                     for (j in 0 until strokesArray.length()) {
                         val strokeObj = strokesArray.getJSONObject(j)
                         val size = strokeObj.optDouble("size", 4.0).toFloat()
                         val colorInt = strokeObj.optInt("color", 0xFF191C1E.toInt())
-                        val pointsArray = strokeObj.optJSONArray("points")
+                        val finalColor = if (colorInt != 0) colorInt else 0xFF191C1E.toInt()
+                        val familyName = strokeObj.optString("brushFamily", "pen")
+                        val family = if (familyName == "highlighter") {
+                            StockBrushes.highlighter()
+                        } else {
+                            StockBrushes.pressurePen()
+                        }
+                        val brush = Brush.createWithColorIntArgb(
+                            family = family,
+                            colorIntArgb = finalColor,
+                            size = size,
+                            epsilon = 0.1f
+                        )
 
-                        if (pointsArray != null && pointsArray.length() >= 2) {
-                            val points = mutableListOf<Offset>()
-                            for (k in 0 until pointsArray.length()) {
-                                val ptObj = pointsArray.getJSONObject(k)
-                                points.add(
-                                    Offset(
-                                        ptObj.optDouble("x").toFloat(),
-                                        ptObj.optDouble("y").toFloat()
-                                    )
-                                )
-                            }
+                        val batchB64 = strokeObj.optString("batchB64", "")
+                        if (batchB64.isNotEmpty()) {
                             try {
-                                val finalColor = if (colorInt != 0) colorInt else 0xFF191C1E.toInt()
-                                val brush = Brush.createWithColorIntArgb(
-                                    family = StockBrushes.pressurePen(),
-                                    colorIntArgb = finalColor,
-                                    size = size,
-                                    epsilon = 0.1f
-                                )
-                                val stroke = ShapeRecognizer.createStrokeFromPoints(points, brush)
-                                pageData.strokes.add(stroke)
+                                val bytes = Base64.decode(batchB64, Base64.NO_WRAP)
+                                val batch = StrokeInputBatchSerialization.decode(ByteArrayInputStream(bytes))
+                                if (batch.size > 0) {
+                                    pageData.strokes.add(Stroke(brush, batch))
+                                }
                             } catch (e: Exception) {
                                 e.printStackTrace()
+                            }
+                        } else {
+                            val pointsArray = strokeObj.optJSONArray("points")
+                            if (pointsArray != null && pointsArray.length() >= 2) {
+                                val points = mutableListOf<Offset>()
+                                for (k in 0 until pointsArray.length()) {
+                                    val ptObj = pointsArray.getJSONObject(k)
+                                    points.add(
+                                        Offset(
+                                            ptObj.optDouble("x").toFloat(),
+                                            ptObj.optDouble("y").toFloat()
+                                        )
+                                    )
+                                }
+                                try {
+                                    val stroke = ShapeRecognizer.createStrokeFromPoints(points, brush)
+                                    pageData.strokes.add(stroke)
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                }
                             }
                         }
                     }
