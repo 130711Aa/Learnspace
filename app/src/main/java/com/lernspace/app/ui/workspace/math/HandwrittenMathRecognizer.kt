@@ -28,6 +28,8 @@ import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
@@ -375,9 +377,14 @@ object HandwrittenMathRecognizer {
 
     /**
      * Dual-Engine Offline Math Recognition:
-     * 1) Bundled 100% Offline Vision OCR (CRNN deep learning model reading rendered ink visually)
-     * 2) Digital Ink Recognition (biased with math pre-context)
+     * 1) Digital Ink Recognition (stroke trajectories with math pre-context) — PRIMARY engine,
+     *    better for single handwritten letters/variables (a, b, x, y, z)
+     * 2) Bundled 100% Offline Vision OCR — SECONDARY engine, good for multi-digit numbers,
+     *    only used at depth==0 and filtered to avoid letter misreads (a→4, b→1)
      * 3) 2D Spatial Layout Parsing (stacked fractions & superscripts)
+     *
+     * Both engines run in PARALLEL at depth==0 to eliminate the freeze on '=' trigger.
+     * At depth>0 (sub-segments for fractions/superscripts), only Digital Ink is used.
      */
     private suspend fun recognizeMathLayoutCandidates(
         strokes: List<Stroke>,
@@ -387,13 +394,23 @@ object HandwrittenMathRecognizer {
         if (strokes.isEmpty()) return emptyList()
         val results = LinkedHashSet<String>()
 
-        // 1. Engine 1: Bundled 100% Offline Vision OCR (Reads visual stroke shapes directly from bitmap)
-        val visionCandidates = recognizeVisionText(strokes)
-        results.addAll(visionCandidates)
-
-        // 2. Engine 2: Digital Ink Recognition (Stroke trajectories with math pre-context)
-        val rawCandidates = recognizeRawInkCandidates(strokes, variables)
-        results.addAll(rawCandidates)
+        if (depth == 0) {
+            // Run Digital Ink and Vision OCR in parallel to avoid freeze
+            val (inkCandidates, visionCandidates) = coroutineScope {
+                val inkDeferred = async { recognizeRawInkCandidates(strokes, variables) }
+                val visionDeferred = async { recognizeVisionText(strokes, variables) }
+                inkDeferred.await() to visionDeferred.await()
+            }
+            // Digital Ink FIRST — it's more reliable for math variables (a, b, x, y, z)
+            results.addAll(inkCandidates)
+            // Vision OCR SECOND — good for multi-digit numbers, already filtered
+            results.addAll(visionCandidates)
+        } else {
+            // At depth>0 (fraction/superscript sub-segments): Digital Ink only, no Vision OCR
+            // Vision OCR on tiny sub-segments is slow and unreliable
+            val inkCandidates = recognizeRawInkCandidates(strokes, variables)
+            results.addAll(inkCandidates)
+        }
 
         // 3. Engine 3: 2D Spatial Parsing for stacked fractions & superscripts
         if (depth < 2) {
@@ -495,7 +512,7 @@ object HandwrittenMathRecognizer {
         return bitmap
     }
 
-    private suspend fun recognizeVisionText(strokes: List<Stroke>): List<String> {
+    private suspend fun recognizeVisionText(strokes: List<Stroke>, variables: Map<String, Double> = emptyMap()): List<String> {
         ensureVisionInitialized()
         val vr = visionRecognizer ?: return emptyList()
         val bmp = renderStrokesToBitmap(strokes) ?: return emptyList()
@@ -505,17 +522,18 @@ object HandwrittenMathRecognizer {
                 awaitTask(vr.process(image))
             } ?: return emptyList()
 
+            val lowerVars = variables.keys.map { it.lowercase() }.toSet()
             val results = LinkedHashSet<String>()
             val fullText = visionText.text.trim()
-            if (fullText.isNotEmpty()) {
+            if (fullText.isNotEmpty() && isVisionResultPlausible(fullText, lowerVars)) {
                 results.add(fullText)
             }
             for (block in visionText.textBlocks) {
                 val blockText = block.text.trim()
-                if (blockText.isNotEmpty()) results.add(blockText)
+                if (blockText.isNotEmpty() && isVisionResultPlausible(blockText, lowerVars)) results.add(blockText)
                 for (line in block.lines) {
                     val lineText = line.text.trim()
-                    if (lineText.isNotEmpty()) results.add(lineText)
+                    if (lineText.isNotEmpty() && isVisionResultPlausible(lineText, lowerVars)) results.add(lineText)
                 }
             }
             results.toList()
@@ -525,6 +543,32 @@ object HandwrittenMathRecognizer {
         } finally {
             if (!bmp.isRecycled) bmp.recycle()
         }
+    }
+
+    /**
+     * Filters Vision OCR results to only trust them when they are plausibly numeric/operator-heavy.
+     * Vision OCR (CRNN model) confuses handwritten lowercase letters with digits:
+     *   a → 4, b → 1 or 6, s → 5, z → 2, etc.
+     * We only trust Vision OCR when the result is predominantly digits/operators
+     * (letters make up <= 30% of non-whitespace chars), OR when every letter in
+     * the result is a known declared variable.
+     */
+    private fun isVisionResultPlausible(text: String, lowerVars: Set<String>): Boolean {
+        val stripped = text.filter { !it.isWhitespace() }
+        if (stripped.isEmpty()) return false
+        val letters = stripped.filter { it.isLetter() }
+        if (letters.isEmpty()) return true  // pure numbers/operators: always trust
+
+        // If all letters are known variables, trust it
+        if (letters.all { it.lowercaseChar().toString() in lowerVars }) return true
+
+        // If letter ratio is too high (>35%), Vision OCR is likely misreading variables
+        val letterRatio = letters.length.toFloat() / stripped.length
+        if (letterRatio > 0.35f) {
+            Log.d("MathVision", "Filtered out Vision OCR result (too many letters): '$text'")
+            return false
+        }
+        return true
     }
 
     private suspend fun recognizeBestSegmentText(
@@ -561,14 +605,14 @@ object HandwrittenMathRecognizer {
         val mathCtx = RecognitionContext.builder()
             .setPreContext("0123456789+-*/=()xyzabc")
             .build()
-        val mathResult = withContext(Dispatchers.IO) {
-            awaitTask(rec.recognize(ink, mathCtx))
-        }
-
         // Pass 2: Unbiased context
         val genCtx = RecognitionContext.builder().setPreContext("").build()
-        val genResult = withContext(Dispatchers.IO) {
-            awaitTask(rec.recognize(ink, genCtx))
+
+        // Run both Digital Ink passes in parallel
+        val (mathResult, genResult) = coroutineScope {
+            val mathDeferred = async(Dispatchers.IO) { awaitTask(rec.recognize(ink, mathCtx)) }
+            val genDeferred = async(Dispatchers.IO) { awaitTask(rec.recognize(ink, genCtx)) }
+            mathDeferred.await() to genDeferred.await()
         }
 
         val set = LinkedHashSet<String>()
