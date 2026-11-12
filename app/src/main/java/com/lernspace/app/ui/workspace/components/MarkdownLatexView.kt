@@ -1,6 +1,8 @@
 package com.lernspace.app.ui.workspace.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -26,88 +28,146 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.lernspace.app.ui.theme.*
 
 /**
- * Pure-Kotlin Markdown + LaTeX math formatter and Jetpack Compose renderer.
- * Supports Markdown headings, bold/italic, inline code, bullet & numbered lists,
- * inline LaTeX ($...$, \(...\)), and display LaTeX ($$...$$, \[...\]) with
- * stacked \frac{a}{b} fractions, superscripts, subscripts, roots, and physics/math symbols.
+ * Unified Markdown + LaTeX math engine and Jetpack Compose renderer.
+ * Features:
+ * - 2D stacked fractions (horizontal bar matching width)
+ * - Square roots with vinculum overline bar
+ * - Authentic math typography: italic variables (x, y, z), upright numbers (0-9), upright functions (sin, cos, ln)
+ * - Multi-line aligned equations and matrices
+ * - Flowing inline math inside sentences without card fragmentation
+ * - Seamless monochrome design matching Lernspace UI
  */
 object LatexMathFormatter {
 
-    private val SYMBOL_MAP = mapOf(
+    val SYMBOL_MAP = mapOf(
+        // Greek lowercase
         "alpha" to "α", "beta" to "β", "gamma" to "γ", "delta" to "δ",
         "epsilon" to "ε", "varepsilon" to "ε", "zeta" to "ζ", "eta" to "η",
         "theta" to "θ", "vartheta" to "ϑ", "iota" to "ι", "kappa" to "κ",
         "lambda" to "λ", "mu" to "μ", "nu" to "ν", "xi" to "ξ",
-        "pi" to "π", "rho" to "ρ", "sigma" to "σ", "tau" to "τ",
-        "upsilon" to "υ", "phi" to "φ", "varphi" to "ϕ", "chi" to "χ",
-        "psi" to "ψ", "omega" to "ω",
+        "pi" to "π", "varpi" to "ϖ", "rho" to "ρ", "varrho" to "ϱ",
+        "sigma" to "σ", "varsigma" to "ς", "tau" to "τ", "upsilon" to "υ",
+        "phi" to "φ", "varphi" to "ϕ", "chi" to "χ", "psi" to "ψ", "omega" to "ω",
+
+        // Greek uppercase
         "Gamma" to "Γ", "Delta" to "Δ", "Theta" to "Θ", "Lambda" to "Λ",
-        "Xi" to "Ξ", "Pi" to "Π", "Sigma" to "Σ", "Phi" to "Φ",
-        "Psi" to "Ψ", "Omega" to "Ω",
+        "Xi" to "Ξ", "Pi" to "Π", "Sigma" to "Σ", "Upsilon" to "Υ",
+        "Phi" to "Φ", "Psi" to "Ψ", "Omega" to "Ω",
+
+        // Operators & Relations
         "times" to " × ", "cdot" to " · ", "div" to " ÷ ", "pm" to " ± ", "mp" to " ∓ ",
-        "approx" to " ≈ ", "neq" to " ≠ ", "ne" to " ≠ ", "leq" to " ≤ ", "le" to " ≤ ",
-        "geq" to " ≥ ", "ge" to " ≥ ", "equiv" to " ≡ ", "propto" to " ∝ ", "sim" to " ∼ ",
-        "to" to " → ", "rightarrow" to " → ", "leftarrow" to " ← ",
+        "ast" to " * ", "star" to " ★ ", "bullet" to " • ",
+        "approx" to " ≈ ", "neq" to " ≠ ", "ne" to " ≠ ",
+        "leq" to " ≤ ", "le" to " ≤ ", "geq" to " ≥ ", "ge" to " ≥ ",
+        "equiv" to " ≡ ", "propto" to " ∝ ", "sim" to " ∼ ", "simeq" to " ≃ ", "cong" to " ≅ ",
+        "ll" to " ≪ ", "gg" to " ≫ ",
+
+        // Arrows
+        "to" to " → ", "rightarrow" to " → ", "leftarrow" to " ← ", "leftrightarrow" to " ↔ ",
         "Rightarrow" to " ⇒ ", "Leftarrow" to " ⇐ ", "Leftrightarrow" to " ⇔ ",
-        "implies" to " ⇒ ", "iff" to " ⇔ ",
+        "implies" to " ⇒ ", "iff" to " ⇔ ", "uparrow" to " ↑ ", "downarrow" to " ↓ ",
+        "nearrow" to " ↗ ", "searrow" to " ↘ ", "nwarrow" to " ↖ ", "swarrow" to " ↙ ",
+
+        // Logic & Sets
+        "in" to " ∈ ", "notin" to " ∉ ", "ni" to " ∋ ",
+        "subset" to " ⊂ ", "subseteq" to " ⊆ ", "supset" to " ⊃ ", "supseteq" to " ⊇ ",
+        "cup" to " ∪ ", "cap" to " ∩ ", "setminus" to " \\ ",
+        "emptyset" to "∅", "varnothing" to "∅",
+        "forall" to "∀", "exists" to "∃", "nexists" to "∄",
+        "land" to " ∧ ", "wedge" to " ∧ ", "lor" to " ∨ ", "vee" to " ∨ ",
+        "neg" to "¬", "lnot" to "¬",
+        "therefore" to "∴", "because" to "∵",
+
+        // Calculus, Geometry & Primes
         "infty" to "∞", "partial" to "∂", "nabla" to "∇",
-        "int" to "∫", "iint" to "∬", "oint" to "∮", "sum" to "∑", "prod" to "∏",
+        "int" to "∫", "iint" to "∬", "iiint" to "∭", "oint" to "∮",
+        "sum" to "∑", "prod" to "∏", "coprod" to "∐",
         "circ" to "°", "degree" to "°", "angle" to "∠", "perp" to "⊥", "parallel" to "∥",
-        "therefore" to "∴", "because" to "∵", "in" to " ∈ ", "notin" to " ∉ ",
-        "subset" to " ⊂ ", "subseteq" to " ⊆ ", "cup" to " ∪ ", "cap" to " ∩ ",
-        "forall" to "∀", "exists" to "∃", "ldots" to "…", "cdots" to "⋯",
-        "quad" to "  ", "qquad" to "    ", "," to " ", ";" to " ", " " to " ",
+        "triangle" to "△", "prime" to "′",
+
+        // Dots & Ellipses
+        "ldots" to "…", "cdots" to "⋯", "dots" to "…", "vdots" to "⋮", "ddots" to "⋱",
+
+        // Standard Functions
         "sin" to "sin", "cos" to "cos", "tan" to "tan", "cot" to "cot",
-        "sec" to "sec", "csc" to "csc", "log" to "log", "ln" to "ln",
-        "lim" to "lim", "max" to "max", "min" to "min", "exp" to "exp",
-        "%" to "%", "$" to "$", "{" to "{", "}" to "}"
+        "sec" to "sec", "csc" to "csc", "arcsin" to "arcsin", "arccos" to "arccos", "arctan" to "arctan",
+        "sinh" to "sinh", "cosh" to "cosh", "tanh" to "tanh",
+        "log" to "log", "ln" to "ln", "exp" to "exp",
+        "lim" to "lim", "max" to "max", "min" to "min", "det" to "det",
+        "gcd" to "gcd", "lcm" to "lcm", "mod" to "mod", "deg" to "deg",
+
+        // Delimiters & Spacing
+        "quad" to "  ", "qquad" to "    ", "enspace" to " ", "thinspace" to " ",
+        "," to " ", ";" to " ", ":" to " ", "!" to "", " " to " ",
+        "%" to "%", "$" to "$", "{" to "{", "}" to "}", "&" to "&", "_" to "_"
     )
 
-    private val UNICODE_SUP = mapOf(
+    val MATH_FUNCTIONS = setOf(
+        "sin", "cos", "tan", "cot", "sec", "csc",
+        "arcsin", "arccos", "arctan", "sinh", "cosh", "tanh",
+        "log", "ln", "exp", "lim", "max", "min", "det", "gcd", "lcm", "mod", "deg"
+    )
+
+    val UNICODE_FRACTIONS = mapOf(
+        "1/2" to "½", "1/3" to "⅓", "2/3" to "⅔",
+        "1/4" to "¼", "3/4" to "¾",
+        "1/5" to "⅕", "2/5" to "⅖", "3/5" to "⅗", "4/5" to "⅘",
+        "1/6" to "⅙", "5/6" to "⅚",
+        "1/8" to "⅛", "3/8" to "⅜", "5/8" to "⅝", "7/8" to "⅞"
+    )
+
+    val UNICODE_SUP = mapOf(
         '0' to '⁰', '1' to '¹', '2' to '²', '3' to '³', '4' to '⁴',
         '5' to '⁵', '6' to '⁶', '7' to '⁷', '8' to '⁸', '9' to '⁹',
         '+' to '⁺', '-' to '⁻', '=' to '⁼', '(' to '⁽', ')' to '⁾',
-        'n' to 'ⁿ', 'i' to 'ⁱ'
+        'n' to 'ⁿ', 'i' to 'ⁱ', 'a' to 'ᵃ', 'b' to 'ᵇ', 'c' to 'ᶜ',
+        'x' to 'ˣ', 'y' to 'ʸ', 'k' to 'ᵏ', 'm' to 'ᵐ', 't' to 'ᵗ'
     )
 
-    private val UNICODE_SUB = mapOf(
+    val UNICODE_SUB = mapOf(
         '0' to '₀', '1' to '₁', '2' to '₂', '3' to '₃', '4' to '₄',
         '5' to '₅', '6' to '₆', '7' to '₇', '8' to '₈', '9' to '₉',
         '+' to '₊', '-' to '₋', '=' to '₌', '(' to '₍', ')' to '₎',
-        'a' to 'ₐ', 'e' to 'ₑ', 'i' to 'ᵢ', 'o' to 'ₒ', 'x' to 'ₓ'
+        'a' to 'ₐ', 'e' to 'ₑ', 'i' to 'ᵢ', 'o' to 'ₒ', 'x' to 'ₓ',
+        'k' to 'ₖ', 'm' to 'ₘ', 'n' to 'ₙ', 'p' to 'ₚ', 't' to 'ₜ'
     )
 
     fun readBracedGroup(src: String, startIdx: Int): Pair<String, Int>? {
-        if (startIdx >= src.length || src[startIdx] != '{') return null
-        var depth = 0
         var i = startIdx
+        while (i < src.length && src[i] == ' ') i++
+        if (i >= src.length || src[i] != '{') return null
+        var depth = 0
+        val contentStart = i + 1
         while (i < src.length) {
             when (src[i]) {
                 '{' -> depth++
                 '}' -> {
                     depth--
                     if (depth == 0) {
-                        return src.substring(startIdx + 1, i) to (i + 1)
+                        return src.substring(contentStart, i) to (i + 1)
                     }
                 }
             }
             i++
         }
-        return src.substring(startIdx + 1) to src.length
+        return src.substring(contentStart) to src.length
     }
 
-    private fun readBracketGroup(src: String, startIdx: Int): Pair<String, Int>? {
-        if (startIdx >= src.length || src[startIdx] != '[') return null
-        var depth = 0
+    fun readBracketGroup(src: String, startIdx: Int): Pair<String, Int>? {
         var i = startIdx
+        while (i < src.length && src[i] == ' ') i++
+        if (i >= src.length || src[i] != '[') return null
+        var depth = 0
+        val contentStart = i + 1
         while (i < src.length) {
             when (src[i]) {
                 '[' -> depth++
                 ']' -> {
                     depth--
-                    if (depth == 0) return src.substring(startIdx + 1, i) to (i + 1)
+                    if (depth == 0) return src.substring(contentStart, i) to (i + 1)
                 }
             }
             i++
@@ -115,7 +175,7 @@ object LatexMathFormatter {
         return null
     }
 
-    private fun readTokenOrBraced(src: String, startIdx: Int): Pair<String, Int> {
+    fun readTokenOrBraced(src: String, startIdx: Int): Pair<String, Int> {
         var i = startIdx
         while (i < src.length && src[i] == ' ') i++
         if (i >= src.length) return "" to i
@@ -149,7 +209,7 @@ object LatexMathFormatter {
         builder.pop()
     }
 
-    private fun appendLatexInner(
+    fun appendLatexInner(
         builder: AnnotatedString.Builder,
         expr: String,
         baseFontSize: TextUnit,
@@ -158,8 +218,8 @@ object LatexMathFormatter {
         var i = 0
         while (i < expr.length) {
             val ch = expr[i]
-            when (ch) {
-                '\\' -> {
+            when {
+                ch == '\\' -> {
                     if (i + 1 < expr.length && expr[i + 1] == '\\') {
                         builder.append('\n')
                         i += 2
@@ -175,43 +235,87 @@ object LatexMathFormatter {
                     while (j < expr.length && expr[j].isLetter()) j++
                     val cmd = expr.substring(i + 1, j)
                     when (cmd) {
-                        "left", "right", "displaystyle", "limits" -> {
+                        "displaystyle", "limits", "nolimits" -> {
                             i = j
                         }
-                        "text", "mathrm", "textbf", "mathbf", "mathit", "operatorname" -> {
-                            val grp = if (j < expr.length && expr[j] == '{') readBracedGroup(expr, j) else null
+                        "left", "right" -> {
+                            var k = j
+                            while (k < expr.length && expr[k] == ' ') k++
+                            if (k < expr.length && expr[k] == '.') {
+                                i = k + 1
+                            } else {
+                                i = j
+                            }
+                        }
+                        "begin", "end" -> {
+                            val grp = readBracedGroup(expr, j)
+                            i = grp?.second ?: j
+                        }
+                        "text", "mathrm" -> {
+                            val grp = readBracedGroup(expr, j)
                             if (grp != null) {
-                                if (cmd == "textbf" || cmd == "mathbf") {
-                                    builder.pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
-                                    builder.append(grp.first)
-                                    builder.pop()
-                                } else {
-                                    builder.append(grp.first)
-                                }
+                                builder.pushStyle(SpanStyle(fontStyle = FontStyle.Normal, fontFamily = FontFamily.Default))
+                                builder.append(grp.first)
+                                builder.pop()
+                                i = grp.second
+                            } else {
+                                i = j
+                            }
+                        }
+                        "textbf", "mathbf" -> {
+                            val grp = readBracedGroup(expr, j)
+                            if (grp != null) {
+                                builder.pushStyle(SpanStyle(fontWeight = FontWeight.Bold, fontStyle = FontStyle.Normal))
+                                builder.append(grp.first)
+                                builder.pop()
+                                i = grp.second
+                            } else {
+                                i = j
+                            }
+                        }
+                        "mathit" -> {
+                            val grp = readBracedGroup(expr, j)
+                            if (grp != null) {
+                                builder.pushStyle(SpanStyle(fontStyle = FontStyle.Italic))
+                                builder.append(grp.first)
+                                builder.pop()
+                                i = grp.second
+                            } else {
+                                i = j
+                            }
+                        }
+                        "mathbb" -> {
+                            val grp = readBracedGroup(expr, j)
+                            if (grp != null) {
+                                val bbMap = mapOf('R' to "ℝ", 'N' to "ℕ", 'Z' to "ℤ", 'Q' to "ℚ", 'C' to "ℂ", 'P' to "ℙ")
+                                val mapped = grp.first.map { bbMap[it] ?: it.toString() }.joinToString("")
+                                builder.append(mapped)
                                 i = grp.second
                             } else {
                                 i = j
                             }
                         }
                         "frac", "dfrac", "tfrac" -> {
-                            var k = j
-                            while (k < expr.length && expr[k] == ' ') k++
-                            val num = readBracedGroup(expr, k)
-                            val den = num?.let {
-                                var d = it.second
-                                while (d < expr.length && expr[d] == ' ') d++
-                                readBracedGroup(expr, d)
-                            }
-                            if (num != null && den != null) {
-                                val wrapNum = num.first.length > 1 && !num.first.all { it.isLetterOrDigit() }
-                                val wrapDen = den.first.length > 1 && !den.first.all { it.isLetterOrDigit() }
-                                if (wrapNum) builder.append('(')
-                                appendLatexInner(builder, num.first, baseFontSize, scaleFactor)
-                                if (wrapNum) builder.append(')')
-                                builder.append('/')
-                                if (wrapDen) builder.append('(')
-                                appendLatexInner(builder, den.first, baseFontSize, scaleFactor)
-                                if (wrapDen) builder.append(')')
+                            val num = readTokenOrBraced(expr, j)
+                            val den = readTokenOrBraced(expr, num.second)
+                            if (num.first.isNotEmpty() && den.first.isNotEmpty()) {
+                                val numClean = num.first.trim()
+                                val denClean = den.first.trim()
+                                val fracKey = "$numClean/$denClean"
+                                val unicodeGlyph = UNICODE_FRACTIONS[fracKey]
+                                if (unicodeGlyph != null) {
+                                    builder.append(unicodeGlyph)
+                                } else if (numClean.length <= 3 && denClean.length <= 3 &&
+                                    numClean.all { it.isDigit() } && denClean.all { it.isDigit() }
+                                ) {
+                                    val supNum = numClean.map { UNICODE_SUP[it] ?: it }.joinToString("")
+                                    val subDen = denClean.map { UNICODE_SUB[it] ?: it }.joinToString("")
+                                    builder.append("$supNum⁄$subDen")
+                                } else {
+                                    appendLatexInner(builder, numClean, baseFontSize, scaleFactor)
+                                    builder.append(" / ")
+                                    appendLatexInner(builder, denClean, baseFontSize, scaleFactor)
+                                }
                                 i = den.second
                             } else {
                                 i = j
@@ -219,25 +323,20 @@ object LatexMathFormatter {
                         }
                         "sqrt" -> {
                             var k = j
-                            while (k < expr.length && expr[k] == ' ') k++
                             val rootOrder = readBracketGroup(expr, k)
                             if (rootOrder != null) {
-                                builder.pushStyle(
-                                    SpanStyle(
-                                        fontSize = baseFontSize * (scaleFactor * 0.68f),
-                                        baselineShift = BaselineShift.Superscript
-                                    )
-                                )
-                                builder.append(rootOrder.first)
-                                builder.pop()
+                                val orderSup = rootOrder.first.map { UNICODE_SUP[it] ?: it }.joinToString("")
+                                builder.append(orderSup)
                                 k = rootOrder.second
                             }
-                            while (k < expr.length && expr[k] == ' ') k++
-                            val inner = readBracedGroup(expr, k)
-                            if (inner != null) {
-                                builder.append("√(")
-                                appendLatexInner(builder, inner.first, baseFontSize, scaleFactor)
-                                builder.append(')')
+                            val inner = readTokenOrBraced(expr, k)
+                            if (inner.first.isNotEmpty()) {
+                                val trimmedInner = inner.first.trim()
+                                builder.append("√")
+                                val needsParens = trimmedInner.contains('+') || trimmedInner.contains('-') || trimmedInner.contains(' ')
+                                if (needsParens) builder.append('(')
+                                appendLatexInner(builder, trimmedInner, baseFontSize, scaleFactor)
+                                if (needsParens) builder.append(')')
                                 i = inner.second
                             } else {
                                 builder.append('√')
@@ -245,8 +344,8 @@ object LatexMathFormatter {
                             }
                         }
                         "vec" -> {
-                            val grp = if (j < expr.length && expr[j] == '{') readBracedGroup(expr, j) else null
-                            if (grp != null) {
+                            val grp = readTokenOrBraced(expr, j)
+                            if (grp.first.isNotEmpty()) {
                                 appendLatexInner(builder, grp.first, baseFontSize, scaleFactor)
                                 builder.append('\u20D7')
                                 i = grp.second
@@ -255,8 +354,8 @@ object LatexMathFormatter {
                             }
                         }
                         "bar", "overline" -> {
-                            val grp = if (j < expr.length && expr[j] == '{') readBracedGroup(expr, j) else null
-                            if (grp != null) {
+                            val grp = readTokenOrBraced(expr, j)
+                            if (grp.first.isNotEmpty()) {
                                 appendLatexInner(builder, grp.first, baseFontSize, scaleFactor)
                                 builder.append('\u0304')
                                 i = grp.second
@@ -265,8 +364,8 @@ object LatexMathFormatter {
                             }
                         }
                         "hat" -> {
-                            val grp = if (j < expr.length && expr[j] == '{') readBracedGroup(expr, j) else null
-                            if (grp != null) {
+                            val grp = readTokenOrBraced(expr, j)
+                            if (grp.first.isNotEmpty()) {
                                 appendLatexInner(builder, grp.first, baseFontSize, scaleFactor)
                                 builder.append('\u0302')
                                 i = grp.second
@@ -278,6 +377,11 @@ object LatexMathFormatter {
                             val mapped = SYMBOL_MAP[cmd]
                             if (mapped != null) {
                                 builder.append(mapped)
+                            } else if (cmd in MATH_FUNCTIONS) {
+                                builder.pushStyle(SpanStyle(fontStyle = FontStyle.Normal, fontFamily = FontFamily.Default))
+                                builder.append(cmd)
+                                builder.pop()
+                                builder.append(" ")
                             } else if (cmd.isNotEmpty()) {
                                 builder.append(cmd)
                             }
@@ -285,37 +389,49 @@ object LatexMathFormatter {
                         }
                     }
                 }
-                '^' -> {
+                ch == '^' -> {
                     val (expText, nextIdx) = readTokenOrBraced(expr, i + 1)
                     if (expText == "\\circ" || expText == "circ") {
                         builder.append('°')
                     } else if (expText.isNotEmpty()) {
-                        builder.pushStyle(
-                            SpanStyle(
-                                fontSize = baseFontSize * (scaleFactor * 0.72f),
-                                baselineShift = BaselineShift.Superscript
+                        val allUnicodeSup = expText.all { it in UNICODE_SUP }
+                        if (allUnicodeSup) {
+                            val supStr = expText.map { UNICODE_SUP[it] ?: it }.joinToString("")
+                            builder.append(supStr)
+                        } else {
+                            builder.pushStyle(
+                                SpanStyle(
+                                    fontSize = baseFontSize * (scaleFactor * 0.72f),
+                                    baselineShift = BaselineShift.Superscript
+                                )
                             )
-                        )
-                        appendLatexInner(builder, expText, baseFontSize, scaleFactor * 0.78f)
-                        builder.pop()
+                            appendLatexInner(builder, expText, baseFontSize, scaleFactor * 0.78f)
+                            builder.pop()
+                        }
                     }
                     i = nextIdx
                 }
-                '_' -> {
+                ch == '_' -> {
                     val (subText, nextIdx) = readTokenOrBraced(expr, i + 1)
                     if (subText.isNotEmpty()) {
-                        builder.pushStyle(
-                            SpanStyle(
-                                fontSize = baseFontSize * (scaleFactor * 0.72f),
-                                baselineShift = BaselineShift.Subscript
+                        val allUnicodeSub = subText.all { it in UNICODE_SUB }
+                        if (allUnicodeSub) {
+                            val subStr = subText.map { UNICODE_SUB[it] ?: it }.joinToString("")
+                            builder.append(subStr)
+                        } else {
+                            builder.pushStyle(
+                                SpanStyle(
+                                    fontSize = baseFontSize * (scaleFactor * 0.72f),
+                                    baselineShift = BaselineShift.Subscript
+                                )
                             )
-                        )
-                        appendLatexInner(builder, subText, baseFontSize, scaleFactor * 0.78f)
-                        builder.pop()
+                            appendLatexInner(builder, subText, baseFontSize, scaleFactor * 0.78f)
+                            builder.pop()
+                        }
                     }
                     i = nextIdx
                 }
-                '{' -> {
+                ch == '{' -> {
                     val grp = readBracedGroup(expr, i)
                     if (grp != null) {
                         appendLatexInner(builder, grp.first, baseFontSize, scaleFactor)
@@ -324,10 +440,51 @@ object LatexMathFormatter {
                         i++
                     }
                 }
-                '}' -> i++
-                '*' -> {
+                ch == '}' -> i++
+                ch == '&' -> {
+                    builder.append(" ")
+                    i++
+                }
+                ch == '*' -> {
                     builder.append(" · ")
                     i++
+                }
+                ch == '-' -> {
+                    // Use standard math minus sign
+                    val prevIsSpace = i > 0 && expr[i - 1].isWhitespace()
+                    val nextIsSpace = i + 1 < expr.length && expr[i + 1].isWhitespace()
+                    if (prevIsSpace && nextIsSpace) {
+                        builder.append(" − ")
+                    } else {
+                        builder.append("−")
+                    }
+                    i++
+                }
+                ch.isDigit() -> {
+                    // Numbers in math are upright
+                    builder.pushStyle(SpanStyle(fontStyle = FontStyle.Normal))
+                    builder.append(ch)
+                    builder.pop()
+                    i++
+                }
+                ch.isLetter() -> {
+                    // Check if starts a math function like sin, cos, tan, log, ln, lim
+                    var k = i
+                    while (k < expr.length && expr[k].isLetter()) k++
+                    val word = expr.substring(i, k)
+                    if (word in MATH_FUNCTIONS) {
+                        builder.pushStyle(SpanStyle(fontStyle = FontStyle.Normal, fontFamily = FontFamily.Default))
+                        builder.append(word)
+                        builder.pop()
+                        builder.append(" ")
+                        i = k
+                    } else {
+                        // Standard math variable: single letter in italic serif
+                        builder.pushStyle(SpanStyle(fontStyle = FontStyle.Italic, fontFamily = FontFamily.Serif))
+                        builder.append(ch)
+                        builder.pop()
+                        i++
+                    }
                 }
                 else -> {
                     builder.append(ch)
@@ -338,8 +495,8 @@ object LatexMathFormatter {
     }
 
     /**
-     * Parses inline Markdown (**bold**, *italic*, `code`) and inline LaTeX ($...$, \(...\))
-     * into a styled AnnotatedString.
+     * Parses inline Markdown (**bold**, *italic*, `code`) and inline/display LaTeX
+     * ($$...$$, \[...\], $...$, \(...\), and bare \commands) into a styled AnnotatedString.
      */
     fun formatInlineMarkdownAndLatex(
         raw: String,
@@ -350,7 +507,27 @@ object LatexMathFormatter {
     ): AnnotatedString = buildAnnotatedString {
         var i = 0
         while (i < raw.length) {
-            // 1) Display/inline \( ... \)
+            // 1) Display $$ ... $$ inside inline text
+            if (raw.startsWith("$$", i)) {
+                val close = raw.indexOf("$$", i + 2)
+                if (close > i + 2) {
+                    appendLatexMath(this, raw.substring(i + 2, close), baseFontSize, mathColor)
+                    i = close + 2
+                    continue
+                }
+            }
+
+            // 2) Display \[ ... \] inside inline text
+            if (raw.startsWith("\\[", i)) {
+                val close = raw.indexOf("\\]", i + 2)
+                if (close > i + 2) {
+                    appendLatexMath(this, raw.substring(i + 2, close), baseFontSize, mathColor)
+                    i = close + 2
+                    continue
+                }
+            }
+
+            // 3) Inline \( ... \)
             if (raw.startsWith("\\(", i)) {
                 val close = raw.indexOf("\\)", i + 2)
                 if (close > i + 2) {
@@ -359,7 +536,8 @@ object LatexMathFormatter {
                     continue
                 }
             }
-            // 2) Inline $ ... $ (single $)
+
+            // 4) Single $ ... $ (inline LaTeX)
             if (raw[i] == '$' && (i + 1 >= raw.length || raw[i + 1] != '$')) {
                 val close = raw.indexOf('$', i + 1)
                 if (close > i + 1 && !raw.substring(i + 1, close).contains('\n')) {
@@ -368,7 +546,34 @@ object LatexMathFormatter {
                     continue
                 }
             }
-            // 3) Inline `code`
+
+            // 5) Bare LaTeX command without $ (e.g. \frac{1}{2}, \sqrt{3}, \times, \alpha)
+            if (raw[i] == '\\' && i + 1 < raw.length && raw[i + 1].isLetter()) {
+                var k = i + 1
+                while (k < raw.length && raw[k].isLetter()) k++
+                val word = raw.substring(i + 1, k)
+                val isMathCmd = word in SYMBOL_MAP || word in MATH_FUNCTIONS ||
+                        word in setOf("frac", "dfrac", "tfrac", "sqrt", "binom", "mathbb", "text", "mathrm", "vec", "hat", "bar", "overline")
+                if (isMathCmd) {
+                    var end = k
+                    var braceDepth = 0
+                    while (end < raw.length) {
+                        val c = raw[end]
+                        if (c == '{') braceDepth++
+                        else if (c == '}') braceDepth = maxOf(0, braceDepth - 1)
+                        else if (braceDepth == 0 && (c == '\n' || c == '$' || c == '`')) break
+                        end++
+                    }
+                    val mathSnippet = raw.substring(i, end).trim()
+                    if (mathSnippet.isNotEmpty()) {
+                        appendLatexMath(this, mathSnippet, baseFontSize, mathColor)
+                        i = end
+                        continue
+                    }
+                }
+            }
+
+            // 6) Inline `code`
             if (raw[i] == '`') {
                 val close = raw.indexOf('`', i + 1)
                 if (close > i + 1) {
@@ -385,7 +590,8 @@ object LatexMathFormatter {
                     continue
                 }
             }
-            // 4) Bold **...**
+
+            // 7) Bold **...**
             if (raw.startsWith("**", i)) {
                 val close = raw.indexOf("**", i + 2)
                 if (close > i + 2) {
@@ -399,7 +605,8 @@ object LatexMathFormatter {
                     continue
                 }
             }
-            // 5) Italic *...* (only when not spacing asterisk)
+
+            // 8) Italic *...*
             if (raw[i] == '*' && i + 1 < raw.length && raw[i + 1] != ' ') {
                 val close = raw.indexOf('*', i + 1)
                 if (close > i + 1 && raw[close - 1] != ' ') {
@@ -413,6 +620,7 @@ object LatexMathFormatter {
                     continue
                 }
             }
+
             append(raw[i])
             i++
         }
@@ -467,6 +675,122 @@ object LatexMathFormatter {
     }
 }
 
+/**
+ * Checks if a LaTeX snippet requires 2D rendering (fractions, square roots, binom, matrix).
+ */
+fun has2DMath(latex: String): Boolean {
+    val l = latex.lowercase()
+    return l.contains("\\frac") || l.contains("\\dfrac") || l.contains("\\tfrac") ||
+            l.contains("\\sqrt") || l.contains("\\binom") || l.contains("\\begin") ||
+            l.contains("\\pmatrix") || l.contains("\\bmatrix")
+}
+
+sealed class LineSegment {
+    data class Text(val content: String) : LineSegment()
+    data class Math(val latex: String) : LineSegment()
+}
+
+/**
+ * Parses a single line into alternating text and math segments.
+ */
+fun parseLineSegments(line: String): List<LineSegment> {
+    val segments = mutableListOf<LineSegment>()
+    var i = 0
+    val textBuf = StringBuilder()
+
+    fun flushText() {
+        if (textBuf.isNotEmpty()) {
+            segments.add(LineSegment.Text(textBuf.toString()))
+            textBuf.clear()
+        }
+    }
+
+    while (i < line.length) {
+        // 1) $$ ... $$
+        if (line.startsWith("$$", i)) {
+            val close = line.indexOf("$$", i + 2)
+            if (close > i + 2) {
+                flushText()
+                val math = line.substring(i + 2, close).trim()
+                if (math.isNotEmpty()) segments.add(LineSegment.Math(math))
+                i = close + 2
+                continue
+            }
+        }
+
+        // 2) \[ ... \]
+        if (line.startsWith("\\[", i)) {
+            val close = line.indexOf("\\]", i + 2)
+            if (close > i + 2) {
+                flushText()
+                val math = line.substring(i + 2, close).trim()
+                if (math.isNotEmpty()) segments.add(LineSegment.Math(math))
+                i = close + 2
+                continue
+            }
+        }
+
+        // 3) \( ... \)
+        if (line.startsWith("\\(", i)) {
+            val close = line.indexOf("\\)", i + 2)
+            if (close > i + 2) {
+                flushText()
+                val math = line.substring(i + 2, close).trim()
+                if (math.isNotEmpty()) segments.add(LineSegment.Math(math))
+                i = close + 2
+                continue
+            }
+        }
+
+        // 4) $ ... $ (inline math)
+        if (line[i] == '$' && (i + 1 >= line.length || line[i + 1] != '$')) {
+            val close = line.indexOf('$', i + 1)
+            if (close > i + 1 && !line.substring(i + 1, close).contains('\n')) {
+                flushText()
+                val math = line.substring(i + 1, close).trim()
+                if (math.isNotEmpty()) segments.add(LineSegment.Math(math))
+                i = close + 1
+                continue
+            }
+        }
+
+        // 5) Bare 2D math commands like \frac{...}{...}, \sqrt{...}, \binom{...}{...}
+        if (line.startsWith("\\frac", i) || line.startsWith("\\dfrac", i) ||
+            line.startsWith("\\tfrac", i) || line.startsWith("\\sqrt", i) ||
+            line.startsWith("\\binom", i) || line.startsWith("\\begin{", i)
+        ) {
+            var end = i
+            var braceDepth = 0
+            while (end < line.length) {
+                val c = line[end]
+                if (c == '{') braceDepth++
+                else if (c == '}') braceDepth = maxOf(0, braceDepth - 1)
+                else if (braceDepth == 0 && (c == ' ' || c == '\n' || c == '$' || c == '`')) {
+                    // Check if directly followed by another braced group (e.g. \frac{a}{b})
+                    var next = end
+                    while (next < line.length && line[next] == ' ') next++
+                    if (next < line.length && line[next] == '{') {
+                        end = next
+                        continue
+                    }
+                    break
+                }
+                end++
+            }
+            flushText()
+            val math = line.substring(i, end).trim()
+            if (math.isNotEmpty()) segments.add(LineSegment.Math(math))
+            i = end
+            continue
+        }
+
+        textBuf.append(line[i])
+        i++
+    }
+    flushText()
+    return segments
+}
+
 private sealed class MdBlock {
     data class Heading(val level: Int, val text: String) : MdBlock()
     data class Paragraph(val text: String) : MdBlock()
@@ -505,7 +829,7 @@ private fun parseMarkdownLatexBlocks(input: String): List<MdBlock> {
             continue
         }
 
-        // Display math block: $$...$$ or \[...\]
+        // Standalone Multiline Display math block ($$...$$ or \[...\])
         if (trimmed.startsWith("$$") || trimmed.startsWith("\\[")) {
             val isBracket = trimmed.startsWith("\\[")
             val openTok = if (isBracket) "\\[" else "$$"
@@ -525,13 +849,13 @@ private fun parseMarkdownLatexBlocks(input: String): List<MdBlock> {
                     if (endIdx >= 0) {
                         val before = t.substring(0, endIdx).trim()
                         if (before.isNotEmpty()) {
-                            if (sb.isNotEmpty()) sb.append(' ')
+                            if (sb.isNotEmpty()) sb.append('\n')
                             sb.append(before)
                         }
                         i++
                         break
                     } else {
-                        if (sb.isNotEmpty() && t.isNotEmpty()) sb.append(' ')
+                        if (sb.isNotEmpty() && t.isNotEmpty()) sb.append('\n')
                         sb.append(t)
                         i++
                     }
@@ -577,7 +901,14 @@ private fun parseMarkdownLatexBlocks(input: String): List<MdBlock> {
             continue
         }
 
-        // Normal paragraph line (merge consecutive plain lines into one paragraph unless next is special block)
+        // Standalone pure math line (e.g. starts with \frac, \sqrt, or is $...$)
+        if (trimmed.startsWith("$") && trimmed.endsWith("$") && trimmed.length > 2 && trimmed.indexOf('$', 1) == trimmed.length - 1) {
+            blocks.add(MdBlock.DisplayMath(trimmed.removeSurrounding("$").trim()))
+            i++
+            continue
+        }
+
+        // Normal paragraph line
         val paraSb = StringBuilder(trimmed)
         i++
         while (i < lines.size) {
@@ -600,27 +931,56 @@ private fun parseMarkdownLatexBlocks(input: String): List<MdBlock> {
 private sealed class DisplayMathSegment {
     data class Text(val latex: String) : DisplayMathSegment()
     data class Fraction(val num: String, val den: String) : DisplayMathSegment()
+    data class Sqrt(val order: String?, val inner: String) : DisplayMathSegment()
+    data class Binom(val n: String, val k: String) : DisplayMathSegment()
+    data class Matrix(val bracket: Char?, val rows: List<List<String>>) : DisplayMathSegment()
 }
 
-private fun splitTopLevelFractions(latex: String): List<DisplayMathSegment> {
+private fun splitDisplaySegments(latex: String): List<DisplayMathSegment> {
     val segments = mutableListOf<DisplayMathSegment>()
     val textBuf = StringBuilder()
     var i = 0
     while (i < latex.length) {
+        // 1) Matrices: \begin{pmatrix}, \begin{bmatrix}, \begin{matrix}
+        if (latex.startsWith("\\begin{pmatrix}", i) || latex.startsWith("\\begin{bmatrix}", i) || latex.startsWith("\\begin{matrix}", i)) {
+            val env = when {
+                latex.startsWith("\\begin{pmatrix}", i) -> "pmatrix"
+                latex.startsWith("\\begin{bmatrix}", i) -> "bmatrix"
+                else -> "matrix"
+            }
+            val openTag = "\\begin{$env}"
+            val closeTag = "\\end{$env}"
+            val endIdx = latex.indexOf(closeTag, i + openTag.length)
+            if (endIdx > 0) {
+                val matrixContent = latex.substring(i + openTag.length, endIdx).trim()
+                val rowStrings = matrixContent.split(Regex("""\\\\|\n""")).map { it.trim() }.filter { it.isNotEmpty() }
+                val matrixRows = rowStrings.map { row ->
+                    row.split('&').map { it.trim() }
+                }
+                if (textBuf.isNotEmpty()) {
+                    segments.add(DisplayMathSegment.Text(textBuf.toString()))
+                    textBuf.clear()
+                }
+                val bracket = when (env) {
+                    "pmatrix" -> '('
+                    "bmatrix" -> '['
+                    else -> null
+                }
+                segments.add(DisplayMathSegment.Matrix(bracket, matrixRows))
+                i = endIdx + closeTag.length
+                continue
+            }
+        }
+
+        // 2) Fractions: \frac, \dfrac, \tfrac
         if (latex.startsWith("\\frac", i) || latex.startsWith("\\dfrac", i) || latex.startsWith("\\tfrac", i)) {
             val cmdLen = when {
                 latex.startsWith("\\dfrac", i) || latex.startsWith("\\tfrac", i) -> 6
                 else -> 5
             }
-            var k = i + cmdLen
-            while (k < latex.length && latex[k] == ' ') k++
-            val num = LatexMathFormatter.readBracedGroup(latex, k)
-            val den = num?.let {
-                var d = it.second
-                while (d < latex.length && latex[d] == ' ') d++
-                LatexMathFormatter.readBracedGroup(latex, d)
-            }
-            if (num != null && den != null) {
+            val num = LatexMathFormatter.readTokenOrBraced(latex, i + cmdLen)
+            val den = LatexMathFormatter.readTokenOrBraced(latex, num.second)
+            if (num.first.isNotEmpty() && den.first.isNotEmpty()) {
                 if (textBuf.isNotEmpty()) {
                     segments.add(DisplayMathSegment.Text(textBuf.toString()))
                     textBuf.clear()
@@ -630,6 +990,41 @@ private fun splitTopLevelFractions(latex: String): List<DisplayMathSegment> {
                 continue
             }
         }
+
+        // 3) Binomial coefficient: \binom{n}{k}
+        if (latex.startsWith("\\binom", i)) {
+            val num = LatexMathFormatter.readTokenOrBraced(latex, i + 6)
+            val den = LatexMathFormatter.readTokenOrBraced(latex, num.second)
+            if (num.first.isNotEmpty() && den.first.isNotEmpty()) {
+                if (textBuf.isNotEmpty()) {
+                    segments.add(DisplayMathSegment.Text(textBuf.toString()))
+                    textBuf.clear()
+                }
+                segments.add(DisplayMathSegment.Binom(num.first.trim(), den.first.trim()))
+                i = den.second
+                continue
+            }
+        }
+
+        // 4) Square roots: \sqrt
+        if (latex.startsWith("\\sqrt", i)) {
+            var k = i + 5
+            val rootOrder = LatexMathFormatter.readBracketGroup(latex, k)
+            if (rootOrder != null) {
+                k = rootOrder.second
+            }
+            val inner = LatexMathFormatter.readTokenOrBraced(latex, k)
+            if (inner.first.isNotEmpty()) {
+                if (textBuf.isNotEmpty()) {
+                    segments.add(DisplayMathSegment.Text(textBuf.toString()))
+                    textBuf.clear()
+                }
+                segments.add(DisplayMathSegment.Sqrt(rootOrder?.first?.trim(), inner.first.trim()))
+                i = inner.second
+                continue
+            }
+        }
+
         textBuf.append(latex[i])
         i++
     }
@@ -638,13 +1033,57 @@ private fun splitTopLevelFractions(latex: String): List<DisplayMathSegment> {
 }
 
 @Composable
-private fun LatexDisplayExpression(
+fun LatexDisplayExpression(
     latex: String,
     fontSize: TextUnit,
     mathColor: Color,
     depth: Int = 0
 ) {
-    val segments = remember(latex) { splitTopLevelFractions(latex) }
+    // Strip environment wrappers and clean alignment characters
+    val cleaned = remember(latex) {
+        latex.replace(Regex("""\\(begin|end)\{[a-zA-Z*]+\}"""), "")
+            .replace("&=", "=")
+            .replace("&", " ")
+            .trim()
+    }
+
+    // Split multi-line equations (\\ or \n)
+    val lines = remember(cleaned) {
+        cleaned.split(Regex("""\\\\|\n""")).map { it.trim() }.filter { it.isNotEmpty() }
+    }
+
+    if (lines.size > 1) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            for (line in lines) {
+                LatexDisplayLine(
+                    line = line,
+                    fontSize = fontSize,
+                    mathColor = mathColor,
+                    depth = depth
+                )
+            }
+        }
+    } else if (lines.isNotEmpty()) {
+        LatexDisplayLine(
+            line = lines[0],
+            fontSize = fontSize,
+            mathColor = mathColor,
+            depth = depth
+        )
+    }
+}
+
+@Composable
+fun LatexDisplayLine(
+    line: String,
+    fontSize: TextUnit,
+    mathColor: Color,
+    depth: Int
+) {
+    val segments = remember(line) { splitDisplaySegments(line) }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(2.dp)
@@ -664,50 +1103,135 @@ private fun LatexDisplayExpression(
                     )
                 }
                 is DisplayMathSegment.Fraction -> {
-                    if (depth >= 2) {
-                        val fallback = remember(seg, fontSize, mathColor) {
-                            buildAnnotatedString {
-                                LatexMathFormatter.appendLatexMath(
-                                    this, "\\frac{${seg.num}}{${seg.den}}", fontSize, mathColor
-                                )
-                            }
-                        }
-                        Text(text = fallback, fontSize = fontSize, color = mathColor)
-                    } else {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier
-                                .padding(horizontal = 4.dp)
-                                .width(IntrinsicSize.Max)
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .padding(horizontal = 3.dp)
+                            .width(IntrinsicSize.Max)
+                    ) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.padding(horizontal = 3.dp, vertical = 1.dp)
                         ) {
-                            Box(
-                                contentAlignment = Alignment.Center,
-                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                            ) {
-                                LatexDisplayExpression(
-                                    latex = seg.num,
-                                    fontSize = fontSize * 0.88f,
-                                    mathColor = mathColor,
-                                    depth = depth + 1
-                                )
-                            }
+                            LatexDisplayExpression(
+                                latex = seg.num,
+                                fontSize = fontSize * 0.90f,
+                                mathColor = mathColor,
+                                depth = depth + 1
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(1.3.dp)
+                                .background(mathColor.copy(alpha = 0.90f))
+                        )
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.padding(horizontal = 3.dp, vertical = 1.dp)
+                        ) {
+                            LatexDisplayExpression(
+                                latex = seg.den,
+                                fontSize = fontSize * 0.90f,
+                                mathColor = mathColor,
+                                depth = depth + 1
+                            )
+                        }
+                    }
+                }
+                is DisplayMathSegment.Sqrt -> {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(0.dp)
+                    ) {
+                        if (!seg.order.isNullOrBlank()) {
+                            Text(
+                                text = seg.order,
+                                fontSize = fontSize * 0.65f,
+                                color = mathColor,
+                                modifier = Modifier.padding(bottom = 6.dp)
+                            )
+                        }
+                        Text(
+                            text = "√",
+                            fontSize = fontSize * 1.18f,
+                            fontWeight = FontWeight.Light,
+                            color = mathColor
+                        )
+                        Column(
+                            modifier = Modifier
+                                .width(IntrinsicSize.Max)
+                                .padding(top = 1.dp)
+                        ) {
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(1.5.dp)
-                                    .background(mathColor.copy(alpha = 0.85f))
+                                    .height(1.2.dp)
+                                    .background(mathColor.copy(alpha = 0.90f))
                             )
                             Box(
-                                contentAlignment = Alignment.Center,
-                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                modifier = Modifier.padding(horizontal = 2.dp, vertical = 1.dp)
                             ) {
                                 LatexDisplayExpression(
-                                    latex = seg.den,
-                                    fontSize = fontSize * 0.88f,
+                                    latex = seg.inner,
+                                    fontSize = fontSize * 0.92f,
                                     mathColor = mathColor,
                                     depth = depth + 1
                                 )
                             }
+                        }
+                    }
+                }
+                is DisplayMathSegment.Binom -> {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(1.dp)
+                    ) {
+                        Text("(", fontSize = fontSize * 1.35f, fontWeight = FontWeight.Light, color = mathColor)
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(horizontal = 2.dp).width(IntrinsicSize.Max)
+                        ) {
+                            LatexDisplayExpression(seg.n, fontSize * 0.88f, mathColor, depth + 1)
+                            Spacer(modifier = Modifier.height(2.dp))
+                            LatexDisplayExpression(seg.k, fontSize * 0.88f, mathColor, depth + 1)
+                        }
+                        Text(")", fontSize = fontSize * 1.35f, fontWeight = FontWeight.Light, color = mathColor)
+                    }
+                }
+                is DisplayMathSegment.Matrix -> {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        val bracketScale = 1.15f + 0.32f * seg.rows.size
+                        if (seg.bracket == '(') {
+                            Text("(", fontSize = fontSize * bracketScale, fontWeight = FontWeight.Light, color = mathColor)
+                        } else if (seg.bracket == '[') {
+                            Text("[", fontSize = fontSize * bracketScale, fontWeight = FontWeight.Light, color = mathColor)
+                        }
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.padding(horizontal = 4.dp)
+                        ) {
+                            for (row in seg.rows) {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    for (cell in row) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            LatexDisplayExpression(cell, fontSize * 0.90f, mathColor, depth + 1)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if (seg.bracket == '(') {
+                            Text(")", fontSize = fontSize * bracketScale, fontWeight = FontWeight.Light, color = mathColor)
+                        } else if (seg.bracket == '[') {
+                            Text("]", fontSize = fontSize * bracketScale, fontWeight = FontWeight.Light, color = mathColor)
                         }
                     }
                 }
@@ -717,15 +1241,109 @@ private fun LatexDisplayExpression(
 }
 
 /**
- * Renders formatted Markdown + LaTeX math (including stacked fractions) cleanly in Compose.
+ * Renders line segments (alternating text and math) with 2D stacked math where needed.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun RenderLineSegments(
+    segments: List<LineSegment>,
+    baseFontSize: TextUnit,
+    textColor: Color,
+    accentColor: Color,
+    textAlign: TextAlign = TextAlign.Start,
+    modifier: Modifier = Modifier
+) {
+    if (segments.isEmpty()) return
+
+    // Case 1: Pure single math segment (or standalone formula)
+    if (segments.size == 1 && segments[0] is LineSegment.Math) {
+        val math = (segments[0] as LineSegment.Math).latex
+        Box(
+            modifier = modifier.fillMaxWidth(),
+            contentAlignment = when (textAlign) {
+                TextAlign.Center -> Alignment.Center
+                TextAlign.End -> Alignment.CenterEnd
+                else -> Alignment.CenterStart
+            }
+        ) {
+            LatexDisplayExpression(
+                latex = math,
+                fontSize = baseFontSize * 1.05f,
+                mathColor = textColor
+            )
+        }
+        return
+    }
+
+    // Case 2: Check if any segment has 2D math (fractions, roots, binom, matrix)
+    val has2D = segments.any { it is LineSegment.Math && has2DMath(it.latex) }
+
+    if (has2D) {
+        FlowRow(
+            modifier = modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.Center,
+            horizontalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
+            for (seg in segments) {
+                when (seg) {
+                    is LineSegment.Text -> {
+                        val formatted = remember(seg.content, baseFontSize, textColor) {
+                            LatexMathFormatter.formatInlineMarkdownAndLatex(
+                                seg.content, baseFontSize, textColor, textColor
+                            )
+                        }
+                        Text(
+                            text = formatted,
+                            fontSize = baseFontSize,
+                            color = textColor,
+                            lineHeight = (baseFontSize.value * 1.45f).sp
+                        )
+                    }
+                    is LineSegment.Math -> {
+                        LatexDisplayLine(
+                            line = seg.latex,
+                            fontSize = baseFontSize,
+                            mathColor = textColor,
+                            depth = 0
+                        )
+                    }
+                }
+            }
+        }
+    } else {
+        // Plain text with inline math: single Compose Text for fast, smooth text wrapping
+        val fullRaw = segments.joinToString("") { seg ->
+            when (seg) {
+                is LineSegment.Text -> seg.content
+                is LineSegment.Math -> "$${seg.latex}$"
+            }
+        }
+        val formatted = remember(fullRaw, baseFontSize, textColor) {
+            LatexMathFormatter.formatInlineMarkdownAndLatex(
+                fullRaw, baseFontSize, textColor, textColor
+            )
+        }
+        Text(
+            text = formatted,
+            fontSize = baseFontSize,
+            lineHeight = (baseFontSize.value * 1.48f).sp,
+            color = textColor,
+            textAlign = textAlign,
+            modifier = modifier.fillMaxWidth()
+        )
+    }
+}
+
+/**
+ * Renders formatted Markdown + LaTeX math cleanly and consistently in Jetpack Compose.
  */
 @Composable
 fun MarkdownLatexContent(
     markdown: String,
     baseFontSize: TextUnit = 14.sp,
     lineHeight: TextUnit = (baseFontSize.value * 1.48f).sp,
-    textColor: Color = Color(0xFF0F172A),
-    accentColor: Color = Color(0xFF2563EB),
+    textColor: Color = LernspaceTextPrimary,
+    accentColor: Color = LernspaceDark,
     isDarkSurface: Boolean = false,
     defaultBold: Boolean = false,
     defaultItalic: Boolean = false,
@@ -735,10 +1353,9 @@ fun MarkdownLatexContent(
     val blocks = remember(markdown) { parseMarkdownLatexBlocks(markdown) }
     val density = LocalDensity.current
     val emDp = with(density) { baseFontSize.toDp() }
-    val blockGap = (emDp * 0.40f).coerceIn(2.dp, 14.dp)
-    val mathColor = if (isDarkSurface) Color(0xFFE2E8F0) else Color(0xFF1E293B)
-    val mathCardBg = if (isDarkSurface) Color(0xFF0F172A).copy(alpha = 0.65f) else Color(0xFFEFF6FF)
-    val codeBg = if (isDarkSurface) Color(0xFF334155) else Color(0xFFE2E8F0).copy(alpha = 0.7f)
+    val blockGap = (emDp * 0.38f).coerceIn(2.dp, 12.dp)
+    val mathColor = textColor
+    val codeBg = LernspaceSurfaceLow
 
     val baseStyle = TextStyle(
         color = textColor,
@@ -761,70 +1378,66 @@ fun MarkdownLatexContent(
                         2 -> 1.14f
                         else -> 1.06f
                     }
-                    val formatted = remember(block.text, baseFontSize, textColor, isDarkSurface) {
-                        LatexMathFormatter.formatInlineMarkdownAndLatex(
-                            block.text, baseFontSize * scale, accentColor, mathColor, codeBg
-                        )
-                    }
-                    Text(
-                        text = formatted,
-                        style = baseStyle.copy(
-                            fontSize = baseFontSize * scale,
-                            lineHeight = (baseFontSize.value * scale * 1.35f).sp,
-                            fontWeight = FontWeight.Bold,
-                            color = accentColor
-                        ),
-                        modifier = Modifier.fillMaxWidth().padding(top = 2.dp)
+                    val segments = remember(block.text) { parseLineSegments(block.text) }
+                    RenderLineSegments(
+                        segments = segments,
+                        baseFontSize = baseFontSize * scale,
+                        textColor = accentColor,
+                        accentColor = accentColor,
+                        textAlign = textAlign,
+                        modifier = Modifier.padding(top = 2.dp)
                     )
                 }
                 is MdBlock.Paragraph -> {
-                    val formatted = remember(block.text, baseFontSize, textColor, isDarkSurface) {
-                        LatexMathFormatter.formatInlineMarkdownAndLatex(
-                            block.text, baseFontSize, textColor, mathColor, codeBg
-                        )
-                    }
-                    Text(
-                        text = formatted,
-                        style = baseStyle,
-                        modifier = Modifier.fillMaxWidth()
+                    val segments = remember(block.text) { parseLineSegments(block.text) }
+                    RenderLineSegments(
+                        segments = segments,
+                        baseFontSize = baseFontSize,
+                        textColor = textColor,
+                        accentColor = accentColor,
+                        textAlign = textAlign
                     )
                 }
                 is MdBlock.Bullet -> {
-                    val formatted = remember(block.text, baseFontSize, textColor, isDarkSurface) {
-                        LatexMathFormatter.formatInlineMarkdownAndLatex(
-                            block.text, baseFontSize, textColor, mathColor, codeBg
-                        )
-                    }
+                    val segments = remember(block.text) { parseLineSegments(block.text) }
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(start = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.Top
                     ) {
                         Text(text = "•", style = baseStyle.copy(fontWeight = FontWeight.Bold, color = accentColor))
-                        Text(text = formatted, style = baseStyle, modifier = Modifier.weight(1f))
+                        Box(modifier = Modifier.weight(1f)) {
+                            RenderLineSegments(
+                                segments = segments,
+                                baseFontSize = baseFontSize,
+                                textColor = textColor,
+                                accentColor = accentColor,
+                                textAlign = textAlign
+                            )
+                        }
                     }
                 }
                 is MdBlock.Numbered -> {
-                    val formatted = remember(block.text, baseFontSize, textColor, isDarkSurface) {
-                        LatexMathFormatter.formatInlineMarkdownAndLatex(
-                            block.text, baseFontSize, textColor, mathColor, codeBg
-                        )
-                    }
+                    val segments = remember(block.text) { parseLineSegments(block.text) }
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(start = 2.dp),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.Top
                     ) {
                         Text(text = block.number, style = baseStyle.copy(fontWeight = FontWeight.Bold, color = accentColor))
-                        Text(text = formatted, style = baseStyle, modifier = Modifier.weight(1f))
+                        Box(modifier = Modifier.weight(1f)) {
+                            RenderLineSegments(
+                                segments = segments,
+                                baseFontSize = baseFontSize,
+                                textColor = textColor,
+                                accentColor = accentColor,
+                                textAlign = textAlign
+                            )
+                        }
                     }
                 }
                 is MdBlock.Quote -> {
-                    val formatted = remember(block.text, baseFontSize, textColor, isDarkSurface) {
-                        LatexMathFormatter.formatInlineMarkdownAndLatex(
-                            block.text, baseFontSize, textColor, mathColor, codeBg
-                        )
-                    }
+                    val segments = remember(block.text) { parseLineSegments(block.text) }
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -839,25 +1452,29 @@ fun MarkdownLatexContent(
                                 .background(accentColor, RoundedCornerShape(2.dp))
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text(text = formatted, style = baseStyle.copy(fontStyle = FontStyle.Italic))
+                        Box(modifier = Modifier.weight(1f)) {
+                            RenderLineSegments(
+                                segments = segments,
+                                baseFontSize = baseFontSize,
+                                textColor = textColor,
+                                accentColor = accentColor,
+                                textAlign = textAlign
+                            )
+                        }
                     }
                 }
                 is MdBlock.DisplayMath -> {
+                    // Clean, centered display formula without heavy bordered card boxes
                     Box(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape((emDp * 0.6f).coerceIn(4.dp, 14.dp)))
-                            .background(mathCardBg)
                             .horizontalScroll(rememberScrollState())
-                            .padding(
-                                horizontal = (emDp * 0.75f).coerceIn(4.dp, 18.dp),
-                                vertical = (emDp * 0.45f).coerceIn(3.dp, 12.dp)
-                            )
+                            .padding(vertical = 4.dp, horizontal = 6.dp)
                     ) {
                         LatexDisplayExpression(
                             latex = block.latex,
-                            fontSize = baseFontSize * 1.12f,
+                            fontSize = baseFontSize * 1.15f,
                             mathColor = mathColor
                         )
                     }
@@ -868,6 +1485,7 @@ fun MarkdownLatexContent(
                             .fillMaxWidth()
                             .clip(RoundedCornerShape((emDp * 0.5f).coerceIn(4.dp, 12.dp)))
                             .background(codeBg)
+                            .border(BorderStroke(1.dp, LernspaceBorder), RoundedCornerShape((emDp * 0.5f).coerceIn(4.dp, 12.dp)))
                             .horizontalScroll(rememberScrollState())
                             .padding((emDp * 0.65f).coerceIn(4.dp, 14.dp))
                     ) {
@@ -881,7 +1499,7 @@ fun MarkdownLatexContent(
                 }
                 is MdBlock.Divider -> {
                     HorizontalDivider(
-                        color = textColor.copy(alpha = 0.16f),
+                        color = LernspaceBorder,
                         modifier = Modifier.padding(vertical = 2.dp)
                     )
                 }

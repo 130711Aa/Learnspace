@@ -12,6 +12,7 @@ import com.lernspace.app.ui.home.HomeViewModel
 import com.lernspace.app.ui.insights.InsightsScreen
 import com.lernspace.app.ui.learning.LearningScreen
 import com.lernspace.app.ui.planner.PlannerScreen
+import com.lernspace.app.ui.quiz.QuizScreen
 import com.lernspace.app.ui.settings.SettingsScreen
 import com.lernspace.app.ui.workspace.WorkspaceScreen
 
@@ -117,6 +118,17 @@ fun LernspaceTabHost(
                     .keepAliveTab(currentRoute == Screen.Flashcards.route)
             ) {
                 FlashcardsScreen()
+            }
+        }
+
+        // Tab 6: Quiz
+        if (visitedTabs.contains(Screen.Quiz.route)) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .keepAliveTab(currentRoute == Screen.Quiz.route)
+            ) {
+                QuizScreen()
             }
         }
 

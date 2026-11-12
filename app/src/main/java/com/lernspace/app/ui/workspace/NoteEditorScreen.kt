@@ -94,9 +94,6 @@ import com.lernspace.app.ui.workspace.components.NoteFloatingToolbar
 import com.lernspace.app.ui.workspace.components.PaperBackground
 import com.lernspace.app.ui.workspace.lasso.LassoHelper
 import com.lernspace.app.ui.workspace.lasso.LassoSelectionState
-import com.lernspace.app.ui.workspace.math.HandwrittenMathRecognizer
-import com.lernspace.app.ui.workspace.math.MathRecognitionOutcome
-import com.lernspace.app.ui.workspace.math.StrokeVectorFont
 import com.lernspace.app.ui.workspace.model.*
 import com.lernspace.app.ui.workspace.pdf.PdfNoteHelper
 import com.lernspace.app.ui.workspace.shape.ShapeRecognizer
@@ -703,13 +700,6 @@ fun NoteEditorScreen(
     var highlighterThickness by remember { mutableFloatStateOf(24f) }      // 24 px default for Highlighter
     var selectedShapeType by remember { mutableStateOf(GeometricShapeType.RECTANGLE) }
     var isExporting by remember { mutableStateOf(false) }
-    var isAutoMathEnabled by remember { mutableStateOf(true) }
-
-    LaunchedEffect(isAutoMathEnabled) {
-        if (isAutoMathEnabled) {
-            HandwrittenMathRecognizer.checkOrDownloadInkModel()
-        }
-    }
 
     val activeColor = when (activeTool) {
         NoteTool.HIGHLIGHTER -> highlighterColor
@@ -836,7 +826,6 @@ fun NoteEditorScreen(
                     selectedColor = activeColor,
                     selectedThickness = activeThickness,
                     selectedShapeType = selectedShapeType,
-                    isAutoMathEnabled = isAutoMathEnabled,
                     onActivate = { activeNoteId = primaryState.note.id },
                     modifier = Modifier
                         .fillMaxSize()
@@ -865,7 +854,6 @@ fun NoteEditorScreen(
                                 selectedColor = activeColor,
                                 selectedThickness = activeThickness,
                                 selectedShapeType = selectedShapeType,
-                                isAutoMathEnabled = isAutoMathEnabled,
                                 onActivate = { activeNoteId = leftState.note.id },
                                 modifier = Modifier
                                     .fillMaxSize()
@@ -902,7 +890,6 @@ fun NoteEditorScreen(
                                 selectedColor = activeColor,
                                 selectedThickness = activeThickness,
                                 selectedShapeType = selectedShapeType,
-                                isAutoMathEnabled = isAutoMathEnabled,
                                 onActivate = { activeNoteId = rightState.note.id },
                                 modifier = Modifier
                                     .fillMaxSize()
@@ -983,8 +970,6 @@ fun NoteEditorScreen(
             isExporting = isExporting,
             isDarkPaper = activeState.isDarkPaper,
             onToggleDarkPaper = { activeState.toggleDarkPaper() },
-            isAutoMathEnabled = isAutoMathEnabled,
-            onToggleAutoMath = { isAutoMathEnabled = !isAutoMathEnabled },
             onBack = { handleBack() },
             modifier = Modifier
                 .align(Alignment.TopCenter)
@@ -1048,6 +1033,13 @@ fun NoteEditorScreen(
 // ─────────────────────────────────────────────────────────────────────────────
 // COMPONENT: NotePaneViewport (Clean Full-Height Canvas Viewport)
 // ─────────────────────────────────────────────────────────────────────────────
+private enum class LassoAiMode(val label: String) {
+    SOLVE("Selesaikan"),
+    CHECK("Cek Jawaban"),
+    PRACTICE("Soal Serupa"),
+    TRANSCRIBE("Rapikan")
+}
+
 @Composable
 private fun NotePaneViewport(
     state: NotePaneState,
@@ -1057,7 +1049,6 @@ private fun NotePaneViewport(
     selectedColor: Color,
     selectedThickness: Float,
     selectedShapeType: GeometricShapeType,
-    isAutoMathEnabled: Boolean = true,
     onActivate: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -1067,16 +1058,15 @@ private fun NotePaneViewport(
     val coroutineScope = rememberCoroutineScope()
     var showDeletePageDialog by remember { mutableStateOf(false) }
     var viewportSize by remember { mutableStateOf(IntSize.Zero) }
-    var mathToastOutcome by remember { mutableStateOf<MathRecognitionOutcome?>(null) }
-    var lassoMathOutcome by remember { mutableStateOf<MathRecognitionOutcome?>(null) }
-    var lassoMathNoResult by remember { mutableStateOf(false) }
     var showLassoAiDialog by remember { mutableStateOf(false) }
     var isAskingLassoAi by remember { mutableStateOf(false) }
     var lassoAiResponse by remember { mutableStateOf<String?>(null) }
     var lassoAiError by remember { mutableStateOf<String?>(null) }
     var lassoAiCustomPrompt by remember { mutableStateOf("") }
+    var lassoAiMode by remember { mutableStateOf(LassoAiMode.SOLVE) }
 
-    val triggerLassoAi: (LassoSelectionState, String) -> Unit = { sel, customQuestion ->
+    val triggerLassoAi: (LassoSelectionState, String, LassoAiMode) -> Unit = { sel, customQuestion, mode ->
+        lassoAiMode = mode
         showLassoAiDialog = true
         lassoAiResponse = null
         lassoAiError = null
@@ -1100,7 +1090,7 @@ private fun NotePaneViewport(
                             HandwrittenNoteRecognizer.renderStrokesToBitmap(
                                 strokes = strokesSnapshot,
                                 renderer = rendererSnapshot,
-                                maxDim = 1280,
+                                maxDim = 720,
                                 backgroundColor = darkPaperBg
                             )?.let {
                                 sendBitmaps.add(it)
@@ -1111,8 +1101,8 @@ private fun NotePaneViewport(
                             runCatching {
                                 val src = imgBmp.asAndroidBitmap()
                                 val maxSide = maxOf(src.width, src.height).coerceAtLeast(1)
-                                if (maxSide > 1280) {
-                                    val scale = 1280f / maxSide
+                                if (maxSide > 720) {
+                                    val scale = 720f / maxSide
                                     val w = (src.width * scale).roundToInt().coerceAtLeast(1)
                                     val h = (src.height * scale).roundToInt().coerceAtLeast(1)
                                     val scaled = android.graphics.Bitmap.createScaledBitmap(src, w, h, true)
@@ -1125,18 +1115,43 @@ private fun NotePaneViewport(
                         }
                     }
 
-                    val sysPrompt = """
-                        Kamu adalah tutor belajar AI yang cerdas, ramah, dan teliti dalam Bahasa Indonesia.
-                        Bacalah soal, persamaan, diagram, gambar, atau catatan tulisan tangan yang dilingkari pengguna.
-                        Berikan penjelasan atau solusi langkah demi langkah yang rapi, terstruktur, dan mudah dipahami.
-                        Gunakan format Markdown yang bersih (heading ### singkat, poin-poin, **tebal** untuk hasil penting) serta format LaTeX standar untuk rumus matematika/fisika/kimia: gunakan ${'$'}...${'$'} untuk rumus sebaris dan ${'$'}${'$'}...${'$'}${'$'} untuk persamaan utama (misalnya \frac{a}{b}, \sqrt{x}, x^2, \times, \Delta).
-                    """.trimIndent()
+                    val sysPrompt = when (mode) {
+                        LassoAiMode.SOLVE -> """
+                            Jawab langsung ke inti penyelesaian dalam Bahasa Indonesia tanpa sapaan, tanpa kata pengantar/penutup, dan tanpa heading panjang.
+                            - Jika input berupa soal/hitungan: tulis langkah demi langkah secara ringkas, di setiap langkah sisipkan penjelasan singkat (1 frasa/kalimat pendek tentang apa yang dilakukan) sebelum rumus perhitungannya, lalu akhiri dengan **Hasil:** dan jawaban akhirnya.
+                            - Jika input berupa konsep/diagram/catatan: jawab langsung dengan poin-poin singkat yang jelas.
+                            - Gunakan LaTeX standar (${'$'}...${'$'} untuk sebaris, ${'$'}${'$'}...${'$'}${'$'} untuk persamaan utama) dan Markdown bersih.
+                        """.trimIndent()
+                        LassoAiMode.CHECK -> """
+                            Kamu adalah pemeriksa jawaban yang teliti dalam Bahasa Indonesia. Jawab langsung tanpa sapaan atau basa-basi.
+                            - Periksa soal dan langkah pengerjaan yang ditulis pengguna pada gambar/catatan.
+                            - Nyatakan langsung apakah **Benar** atau **Perlu Diperbaiki**.
+                            - Jika ada kesalahan, tunjukkan tepat di langkah mana kelirunya, jelaskan singkat alasannya, lalu tulis perbaikan langkah & **Hasil:** yang benar.
+                            - Gunakan LaTeX standar (${'$'}...${'$'} dan ${'$'}${'$'}...${'$'}${'$'}) dan Markdown bersih.
+                        """.trimIndent()
+                        LassoAiMode.PRACTICE -> """
+                            Buat 2 soal latihan serupa dalam Bahasa Indonesia berdasarkan materi/soal yang dilingkari, tanpa sapaan atau basa-basi.
+                            - Pertahankan topik dan tingkat kesulitan yang setara dengan variasi angka/kasus baru.
+                            - Cantumkan bagian **Kunci Jawaban:** ringkas di bagian paling bawah.
+                            - Gunakan LaTeX standar (${'$'}...${'$'} dan ${'$'}${'$'}...${'$'}${'$'}) dan Markdown bersih.
+                        """.trimIndent()
+                        LassoAiMode.TRANSCRIBE -> """
+                            Transkrip dan rapikan tulisan tangan/catatan pada gambar menjadi catatan digital yang bersih dalam Bahasa Indonesia, tanpa sapaan atau komentar tambahan.
+                            - Pertahankan seluruh isi, poin, dan rumus secara akurat.
+                            - Ubah rumus matematika/fisika/kimia ke format LaTeX standar (${'$'}...${'$'} untuk sebaris, ${'$'}${'$'}...${'$'}${'$'} untuk persamaan utama) dan rapikan struktur dengan Markdown bersih.
+                        """.trimIndent()
+                    }
 
                     val userPrompt = buildString {
                         if (customQuestion.isNotBlank()) {
-                            append("Pertanyaan pengguna: ").append(customQuestion.trim()).append("\n\n")
+                            append("Permintaan tambahan: ").append(customQuestion.trim()).append("\n\n")
                         } else {
-                            append("Tolong baca dan jelaskan atau selesaikan materi/soal yang dilingkari pada gambar ini langkah demi langkah.\n\n")
+                            when (mode) {
+                                LassoAiMode.SOLVE -> append("Selesaikan atau jawab langsung konten yang dilingkari ini:\n\n")
+                                LassoAiMode.CHECK -> append("Periksa langkah dan jawaban yang ditulis pada area yang dilingkari ini:\n\n")
+                                LassoAiMode.PRACTICE -> append("Buatkan 2 soal latihan serupa beserta kunci jawaban ringkas dari konten yang dilingkari ini:\n\n")
+                                LassoAiMode.TRANSCRIBE -> append("Rapikan dan transkrip konten yang dilingkari ini menjadi catatan Markdown + LaTeX:\n\n")
+                            }
                         }
                         if (textSnippets.isNotEmpty()) {
                             append("Teks kotak catatan yang ikut terseleksi:\n")
@@ -1146,10 +1161,14 @@ private fun NotePaneViewport(
                         }
                     }
 
-                    val result = if (sendBitmaps.isNotEmpty()) {
-                        GeminiApiClient.generateTextFromImages(sysPrompt, userPrompt, sendBitmaps)
-                    } else {
-                        GeminiApiClient.generateText(sysPrompt, userPrompt)
+                    val thinkingBudget = if (mode == LassoAiMode.TRANSCRIBE) 0 else 256
+                    val result = GeminiApiClient.streamGenerateTextFromImages(
+                        systemPrompt = sysPrompt,
+                        userPrompt = userPrompt,
+                        imageBitmaps = sendBitmaps,
+                        thinkingBudget = thinkingBudget
+                    ) { partial ->
+                        lassoAiResponse = partial
                     }
 
                     result.fold(
@@ -1165,13 +1184,6 @@ private fun NotePaneViewport(
                     isAskingLassoAi = false
                 }
             }
-        }
-    }
-
-    LaunchedEffect(mathToastOutcome) {
-        if (mathToastOutcome != null) {
-            delay(3600L)
-            mathToastOutcome = null
         }
     }
 
@@ -1571,45 +1583,6 @@ private fun NotePaneViewport(
                             state.strokes.addAll(processedStrokes)
                             state.saveActivePageData()
                         }
-
-                        // Nebo-style Auto-Solve Math when user finishes writing '='
-                        if (isAutoMathEnabled && activeTool == NoteTool.PEN) {
-                            val eqMatch = HandwrittenMathRecognizer.detectEqualsTrigger(state.strokes)
-                            if (eqMatch != null) {
-                                val snapshotBrush = currentBrush
-                                val allStrokesSnapshot = state.strokes.toList()
-                                val excludeSet = eqMatch.equationStrokes.toSet() + eqMatch.equalsStrokes.toSet()
-                                coroutineScope.launch {
-                                    val pageVars = HandwrittenMathRecognizer.extractVariableDeclarations(
-                                        allStrokes = allStrokesSnapshot,
-                                        excludeStrokes = excludeSet,
-                                        beforeBottomY = eqMatch.answerTopY + kotlin.math.max(220f, eqMatch.charHeight * 5f)
-                                    )
-                                    val outcome = HandwrittenMathRecognizer.recognizeAndSolve(
-                                        strokes = eqMatch.equationStrokes,
-                                        externalVariables = pageVars
-                                    )
-                                    if (outcome != null) {
-                                        val answerStrokes = StrokeVectorFont.createStrokesForText(
-                                            text = outcome.solveResult.formattedAnswer,
-                                            startX = eqMatch.answerStartX,
-                                            topY = eqMatch.answerTopY,
-                                            charHeight = eqMatch.charHeight,
-                                            brush = snapshotBrush
-                                        )
-                                        if (answerStrokes.isNotEmpty()) {
-                                            state.pushUndoSnapshot()
-                                            state.strokes.addAll(answerStrokes)
-                                            state.saveActivePageData()
-                                        }
-                                        try {
-                                            view.performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM)
-                                        } catch (_: Exception) {}
-                                        mathToastOutcome = outcome
-                                    }
-                                }
-                            }
-                        }
                     }
                 },
                 isEraserMode = activeTool == NoteTool.ERASER && isActive,
@@ -1909,7 +1882,7 @@ private fun NotePaneViewport(
                                     val sRight = sel.bounds.right * state.scale + state.panX
                                     val sWidth = maxOf(40f, sRight - sLeft)
                                     IntOffset(
-                                        x = (sLeft + sWidth / 2f - 140.dp.toPx()).roundToInt().coerceAtLeast(16),
+                                        x = (sLeft + sWidth / 2f - 190.dp.toPx()).roundToInt().coerceAtLeast(16),
                                         y = (sTop - 52.dp.toPx()).roundToInt().coerceAtLeast(70)
                                     )
                                 } else {
@@ -1917,18 +1890,20 @@ private fun NotePaneViewport(
                                 }
                             }
                     ) {
+                        val hasAiContent = curSel.selectedStrokes.isNotEmpty() || curSel.selectedTextBoxes.isNotEmpty() || curSel.selectedImages.isNotEmpty()
                         Surface(
                             shape = RoundedCornerShape(20.dp),
-                            color = Color.White,
+                            color = LernspaceSurfaceCard,
                             shadowElevation = 8.dp,
-                            border = BorderStroke(1.5.dp, Color(0xFFE2E8F0))
+                            border = BorderStroke(1.dp, LernspaceBorder),
+                            modifier = Modifier.widthIn(max = 420.dp)
                         ) {
                             Row(
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                // Geser
+                                // Geser (pinned left, tidak ikut horizontalScroll agar drag mulus)
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(3.dp),
@@ -1971,60 +1946,76 @@ private fun NotePaneViewport(
                                         }
                                         .padding(horizontal = 4.dp, vertical = 2.dp)
                                 ) {
-                                    Icon(Icons.Filled.OpenWith, contentDescription = "Geser", tint = AccentBlue, modifier = Modifier.size(16.dp))
-                                    Text("Geser", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = AccentBlue)
+                                    Icon(Icons.Filled.OpenWith, contentDescription = "Geser", tint = LernspaceTextPrimary, modifier = Modifier.size(15.dp))
+                                    Text("Geser", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = LernspaceTextPrimary)
                                 }
 
-                                VerticalDivider(modifier = Modifier.height(16.dp), color = Color(0xFFE2E8F0))
+                                VerticalDivider(modifier = Modifier.height(16.dp), color = LernspaceBorder)
 
-                                // Solve Math (Lasso -> Offline Math Solver with variable & layout awareness)
-                                if (curSel.selectedStrokes.isNotEmpty()) {
-                                    Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = Color(0xFFDBEAFE),
-                                        modifier = Modifier.clickable {
-                                            val selStrokes = curSel.selectedStrokes.toList()
-                                            val allStrokesSnapshot = state.strokes.toList()
-                                            val selSet = selStrokes.toSet()
-                                            val selBottomY = curSel.bounds.bottom
-                                            lassoMathNoResult = false
-                                            coroutineScope.launch {
-                                                val pageVars = HandwrittenMathRecognizer.extractVariableDeclarations(
-                                                    allStrokes = allStrokesSnapshot,
-                                                    excludeStrokes = selSet,
-                                                    beforeBottomY = selBottomY + 60f
-                                                )
-                                                val outcome = HandwrittenMathRecognizer.recognizeAndSolve(
-                                                    strokes = selStrokes,
-                                                    externalVariables = pageVars
-                                                )
-                                                if (outcome != null) {
-                                                    lassoMathOutcome = outcome
-                                                } else {
-                                                    lassoMathNoResult = true
-                                                }
+                                // Bagian tengah scrollable 1 baris
+                                Row(
+                                    modifier = Modifier
+                                        .weight(1f, fill = false)
+                                        .horizontalScroll(rememberScrollState()),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    if (hasAiContent) {
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = LernspaceDark,
+                                            modifier = Modifier.clickable {
+                                                lassoAiCustomPrompt = ""
+                                                triggerLassoAi(curSel, "", LassoAiMode.SOLVE)
+                                            }
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                            ) {
+                                                Icon(Icons.Filled.AutoAwesome, contentDescription = "Tanya AI", tint = LernspaceSurfaceCard, modifier = Modifier.size(13.dp))
+                                                Text("Tanya AI", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = LernspaceSurfaceCard)
                                             }
                                         }
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(3.dp)
-                                        ) {
-                                            Icon(Icons.Filled.Calculate, contentDescription = "Solve", tint = AccentBlue, modifier = Modifier.size(13.dp))
-                                            Text("Solve", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = AccentBlue)
+
+                                        LassoAiMode.entries.forEach { mode ->
+                                            Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = LernspaceSurfaceLow,
+                                                border = BorderStroke(1.dp, LernspaceBorder),
+                                                modifier = Modifier.clickable {
+                                                    lassoAiCustomPrompt = ""
+                                                    triggerLassoAi(curSel, "", mode)
+                                                }
+                                            ) {
+                                                Text(
+                                                    text = mode.label,
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Medium,
+                                                    color = LernspaceTextPrimary,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                                )
+                                            }
                                         }
                                     }
-                                }
 
-                                // Tanya AI (Lasso -> Gemini Vision Explainer)
-                                if (curSel.selectedStrokes.isNotEmpty() || curSel.selectedTextBoxes.isNotEmpty() || curSel.selectedImages.isNotEmpty()) {
+                                    // Duplikat
                                     Surface(
                                         shape = RoundedCornerShape(8.dp),
-                                        color = Color(0xFFF3E8FF),
+                                        color = LernspaceSurfaceLow,
+                                        border = BorderStroke(1.dp, LernspaceBorder),
                                         modifier = Modifier.clickable {
-                                            lassoAiCustomPrompt = ""
-                                            triggerLassoAi(curSel, "")
+                                            val sel = state.lassoSelection ?: return@clickable
+                                            val offsetDelta = 35f
+                                            val newDuplicates = sel.selectedStrokes.map { ShapeRecognizer.translateStroke(it, offsetDelta, offsetDelta) }
+                                            state.pushUndoSnapshot()
+                                            state.strokes.addAll(newDuplicates)
+                                            sel.selectedStrokes.clear()
+                                            sel.selectedStrokes.addAll(newDuplicates)
+                                            val newBounds = sel.bounds.translate(Offset(offsetDelta, offsetDelta))
+                                            state.lassoSelection = sel.copy(bounds = newBounds)
+                                            state.saveActivePageData()
                                         }
                                     ) {
                                         Row(
@@ -2032,70 +2023,45 @@ private fun NotePaneViewport(
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(3.dp)
                                         ) {
-                                            Icon(Icons.Filled.AutoAwesome, contentDescription = "Tanya AI", tint = Color(0xFF7C3AED), modifier = Modifier.size(13.dp))
-                                            Text("Tanya AI", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF7C3AED))
+                                            Icon(Icons.Filled.ContentCopy, contentDescription = "Duplikat", tint = LernspaceTextPrimary, modifier = Modifier.size(13.dp))
+                                            Text("Duplikat", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = LernspaceTextPrimary)
+                                        }
+                                    }
+
+                                    // Hapus
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = LernspaceSurfaceLow,
+                                        border = BorderStroke(1.dp, LernspaceBorder),
+                                        modifier = Modifier.clickable {
+                                            state.pushUndoSnapshot()
+                                            state.strokes.removeAll(curSel.selectedStrokes)
+                                            state.textBoxes.removeAll(curSel.selectedTextBoxes)
+                                            state.imageElements.removeAll(curSel.selectedImages)
+                                            state.lassoSelection = null
+                                            state.saveActivePageData()
+                                        }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                        ) {
+                                            Icon(Icons.Filled.Delete, contentDescription = "Hapus", tint = LernspaceTextPrimary, modifier = Modifier.size(13.dp))
+                                            Text("Hapus", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = LernspaceTextPrimary)
                                         }
                                     }
                                 }
 
-                                // Duplikat
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = Color(0xFFF1F5F9),
-                                    modifier = Modifier.clickable {
-                                        val sel = state.lassoSelection ?: return@clickable
-                                        val offsetDelta = 35f
-                                        val newDuplicates = sel.selectedStrokes.map { ShapeRecognizer.translateStroke(it, offsetDelta, offsetDelta) }
-                                        state.pushUndoSnapshot()
-                                        state.strokes.addAll(newDuplicates)
-                                        sel.selectedStrokes.clear()
-                                        sel.selectedStrokes.addAll(newDuplicates)
-                                        val newBounds = sel.bounds.translate(Offset(offsetDelta, offsetDelta))
-                                        state.lassoSelection = sel.copy(bounds = newBounds)
-                                        state.saveActivePageData()
-                                    }
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(3.dp)
-                                    ) {
-                                        Icon(Icons.Filled.ContentCopy, contentDescription = "Duplikat", tint = LernspaceDark, modifier = Modifier.size(13.dp))
-                                        Text("Duplikat", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = LernspaceDark)
-                                    }
-                                }
-
-                                // Hapus
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = Color(0xFFFEE2E2),
-                                    modifier = Modifier.clickable {
-                                        state.pushUndoSnapshot()
-                                        state.strokes.removeAll(curSel.selectedStrokes)
-                                        state.textBoxes.removeAll(curSel.selectedTextBoxes)
-                                        state.imageElements.removeAll(curSel.selectedImages)
-                                        state.lassoSelection = null
-                                        state.saveActivePageData()
-                                    }
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(3.dp)
-                                    ) {
-                                        Icon(Icons.Filled.Delete, contentDescription = "Hapus", tint = Color(0xFFDC2626), modifier = Modifier.size(13.dp))
-                                        Text("Hapus", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFDC2626))
-                                    }
-                                }
-
-                                // Selesai
+                                // Selesai (pinned right)
                                 Surface(
                                     shape = CircleShape,
-                                    color = Color(0xFFF1F5F9),
+                                    color = LernspaceSurfaceLow,
+                                    border = BorderStroke(1.dp, LernspaceBorder),
                                     modifier = Modifier.size(26.dp).clickable { state.lassoSelection = null }
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
-                                        Icon(Icons.Filled.Close, contentDescription = "Selesai", tint = Color(0xFF64748B), modifier = Modifier.size(14.dp))
+                                        Icon(Icons.Filled.Close, contentDescription = "Selesai", tint = LernspaceTextSecondary, modifier = Modifier.size(14.dp))
                                     }
                                 }
                             }
@@ -2385,122 +2351,6 @@ private fun NotePaneViewport(
             }
         }
 
-        // Auto-Math Solve Toast Pill (positioned cleanly above bottom navigator so toolbar never covers it)
-        if (mathToastOutcome != null) {
-            val outcome = mathToastOutcome!!
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = LernspaceDark.copy(alpha = 0.94f),
-                shadowElevation = 6.dp,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 82.dp)
-                    .zIndex(12f)
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(Icons.Filled.Calculate, null, tint = Color(0xFF60A5FA), modifier = Modifier.size(16.dp))
-                    Text(
-                        text = "${outcome.solveResult.normalizedExpression} = ${outcome.solveResult.formattedAnswer}",
-                        color = Color.White,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-        }
-
-        // Lasso Math Solve Result Dialog
-        if (lassoMathOutcome != null || lassoMathNoResult) {
-            AlertDialog(
-                onDismissRequest = {
-                    lassoMathOutcome = null
-                    lassoMathNoResult = false
-                },
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Icon(Icons.Filled.Calculate, null, tint = AccentBlue)
-                        Text(
-                            text = if (lassoMathOutcome != null) "Hasil Math Solver" else "Ekspresi Tidak Terbaca",
-                            fontWeight = FontWeight.Bold,
-                            color = LernspaceDark
-                        )
-                    }
-                },
-                text = {
-                    if (lassoMathOutcome != null) {
-                        val out = lassoMathOutcome!!
-                        val res = out.solveResult
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("Terbaca: ${res.normalizedExpression}", fontSize = 13.sp, color = LernspaceTextSecondary)
-                            if (out.activeVariables.isNotEmpty()) {
-                                val varSummary = out.activeVariables.entries.joinToString(", ") { (k, v) ->
-                                    "$k = ${com.lernspace.app.ui.workspace.math.MathExpressionEvaluator.formatNumber(v)}"
-                                }
-                                Text("Variabel: $varSummary", fontSize = 12.sp, color = Color(0xFF0F766E))
-                            }
-                            Text("Hasil: ${res.formattedAnswer}", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = AccentBlue)
-                        }
-                    } else {
-                        Text(
-                            text = if (HandwrittenMathRecognizer.isInkModelDownloaded)
-                                "Pastikan angka dan operator (+, -, ×, ÷, =) tertulis cukup jelas di dalam seleksi."
-                            else
-                                "Model tulisan tangan offline sedang diunduh di background, atau tulis angka & operator lebih jelas.",
-                            fontSize = 13.sp,
-                            color = LernspaceTextSecondary
-                        )
-                    }
-                },
-                confirmButton = {
-                    val outcome = lassoMathOutcome
-                    val sel = state.lassoSelection
-                    if (outcome != null && sel != null) {
-                        Button(
-                            onClick = {
-                                val charH = sel.bounds.height.coerceIn(38f, 84f)
-                                val hasEq = outcome.recognizedText.contains('=')
-                                val textToWrite = if (hasEq) "  ${outcome.solveResult.formattedAnswer}" else " = ${outcome.solveResult.formattedAnswer}"
-                                val startX = sel.bounds.right + 16f
-                                val topY = sel.bounds.center.y - charH * 0.5f
-                                val strokesOut = StrokeVectorFont.createStrokesForText(
-                                    text = textToWrite,
-                                    startX = startX,
-                                    topY = topY,
-                                    charHeight = charH,
-                                    brush = currentBrush
-                                )
-                                if (strokesOut.isNotEmpty()) {
-                                    state.pushUndoSnapshot()
-                                    state.strokes.addAll(strokesOut)
-                                    state.saveActivePageData()
-                                }
-                                lassoMathOutcome = null
-                                state.lassoSelection = null
-                            },
-                            shape = RoundedCornerShape(8.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)
-                        ) {
-                            Text("Tulis ke Kanvas")
-                        }
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = {
-                        lassoMathOutcome = null
-                        lassoMathNoResult = false
-                    }) {
-                        Text("Tutup")
-                    }
-                },
-                shape = RoundedCornerShape(16.dp),
-                containerColor = Color.White
-            )
-        }
-
         // Lasso Tanya AI (Gemini Vision) Result Dialog
         if (showLassoAiDialog) {
             AlertDialog(
@@ -2509,14 +2359,40 @@ private fun NotePaneViewport(
                 },
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = Color(0xFF7C3AED))
-                        Text("Tanya AI (${GeminiApiClient.selectedModelId})", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = LernspaceDark)
+                        Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = LernspaceDark)
+                        Text("${lassoAiMode.label} (${GeminiApiClient.selectedModelId})", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = LernspaceDark)
                     }
                 },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         val curSel = state.lassoSelection
                         if (curSel != null && GeminiApiClient.isConfigured()) {
+                            // Quick Action Chips inside dialog (monokrom sesuai tema)
+                            Row(
+                                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                LassoAiMode.entries.forEach { mode ->
+                                    val isSelectedMode = mode == lassoAiMode
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = if (isSelectedMode) LernspaceDark else LernspaceSurfaceLow,
+                                        border = BorderStroke(1.dp, if (isSelectedMode) LernspaceDark else LernspaceBorder),
+                                        modifier = Modifier.clickable(enabled = !isAskingLassoAi) {
+                                            triggerLassoAi(curSel, lassoAiCustomPrompt, mode)
+                                        }
+                                    ) {
+                                        Text(
+                                            text = mode.label,
+                                            fontSize = 11.sp,
+                                            fontWeight = if (isSelectedMode) FontWeight.SemiBold else FontWeight.Medium,
+                                            color = if (isSelectedMode) LernspaceSurfaceCard else LernspaceTextPrimary,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                        )
+                                    }
+                                }
+                            }
+
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -2526,61 +2402,71 @@ private fun NotePaneViewport(
                                     onValueChange = { lassoAiCustomPrompt = it },
                                     placeholder = { Text("Tanya spesifik (opsional)...", fontSize = 12.sp) },
                                     singleLine = true,
-                                    textStyle = TextStyle(fontSize = 13.sp, color = LernspaceDark),
+                                    textStyle = TextStyle(fontSize = 13.sp, color = LernspaceTextPrimary),
                                     modifier = Modifier.weight(1f)
                                 )
                                 FilledIconButton(
                                     onClick = {
                                         if (!isAskingLassoAi) {
-                                            triggerLassoAi(curSel, lassoAiCustomPrompt)
+                                            triggerLassoAi(curSel, lassoAiCustomPrompt, lassoAiMode)
                                         }
                                     },
                                     enabled = !isAskingLassoAi,
-                                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color(0xFF7C3AED))
+                                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = LernspaceDark)
                                 ) {
-                                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Kirim", tint = Color.White, modifier = Modifier.size(18.dp))
+                                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Kirim", tint = LernspaceSurfaceCard, modifier = Modifier.size(18.dp))
                                 }
                             }
                         }
 
                         when {
-                            isAskingLassoAi -> {
+                            isAskingLassoAi && lassoAiResponse.isNullOrBlank() -> {
                                 Row(
                                     modifier = Modifier.fillMaxWidth().padding(vertical = 18.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                                 ) {
-                                    CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.5.dp, color = Color(0xFF7C3AED))
+                                    CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.5.dp, color = LernspaceDark)
                                     Text("Gemini sedang membaca area yang dilingkari...", fontSize = 13.sp, color = LernspaceTextSecondary)
                                 }
                             }
-                            lassoAiError != null -> {
-                                Surface(shape = RoundedCornerShape(10.dp), color = Color(0xFFFEF2F2)) {
+                            lassoAiError != null && lassoAiResponse.isNullOrBlank() -> {
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = LernspaceSurfaceLow,
+                                    border = BorderStroke(1.dp, LernspaceBorder)
+                                ) {
                                     Text(
                                         text = lassoAiError ?: "",
                                         fontSize = 13.sp,
-                                        color = Color(0xFFB91C1C),
+                                        color = LernspaceTextPrimary,
                                         modifier = Modifier.padding(12.dp)
                                     )
                                 }
                             }
-                            lassoAiResponse != null -> {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .heightIn(max = 360.dp)
-                                        .verticalScroll(rememberScrollState())
-                                        .background(Color(0xFFF8FAFC), RoundedCornerShape(10.dp))
-                                        .padding(12.dp)
+                            !lassoAiResponse.isNullOrBlank() -> {
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = LernspaceSurfaceLow,
+                                    border = BorderStroke(1.dp, LernspaceBorder),
+                                    modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    MarkdownLatexContent(
-                                        markdown = lassoAiResponse ?: "",
-                                        baseFontSize = 13.5.sp,
-                                        textColor = LernspaceDark,
-                                        accentColor = Color(0xFF6D28D9),
-                                        isDarkSurface = false,
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(max = 360.dp)
+                                            .verticalScroll(rememberScrollState())
+                                            .padding(12.dp)
+                                    ) {
+                                        MarkdownLatexContent(
+                                            markdown = lassoAiResponse ?: "",
+                                            baseFontSize = 13.5.sp,
+                                            textColor = LernspaceTextPrimary,
+                                            accentColor = LernspaceDark,
+                                            isDarkSurface = LocalIsDarkTheme.current,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -2615,7 +2501,10 @@ private fun NotePaneViewport(
                                 state.lassoSelection = null
                             },
                             shape = RoundedCornerShape(8.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED))
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = LernspaceDark,
+                                contentColor = LernspaceSurfaceCard
+                            )
                         ) {
                             Text("Sisipkan ke Kanvas")
                         }
@@ -2626,11 +2515,11 @@ private fun NotePaneViewport(
                         onClick = { showLassoAiDialog = false },
                         enabled = !isAskingLassoAi
                     ) {
-                        Text("Tutup")
+                        Text("Tutup", color = LernspaceTextSecondary)
                     }
                 },
                 shape = RoundedCornerShape(16.dp),
-                containerColor = Color.White
+                containerColor = LernspaceSurfaceCard
             )
         }
 
@@ -2874,8 +2763,6 @@ private fun UnifiedNoteTopBar(
     isExporting: Boolean,
     isDarkPaper: Boolean = false,
     onToggleDarkPaper: () -> Unit = {},
-    isAutoMathEnabled: Boolean = true,
-    onToggleAutoMath: () -> Unit = {},
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -2942,8 +2829,6 @@ private fun UnifiedNoteTopBar(
             onSelectEraserRadius = { AppSettingsManager.updateEraserRadius(it) },
             eraserMode = AppSettingsManager.eraserMode,
             onSelectEraserMode = { AppSettingsManager.updateEraserMode(it) },
-            isAutoMathEnabled = isAutoMathEnabled,
-            onToggleAutoMath = onToggleAutoMath,
             onPickImage = onPickImage
         )
 

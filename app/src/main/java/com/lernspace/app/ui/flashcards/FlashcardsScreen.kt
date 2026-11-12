@@ -1,5 +1,7 @@
-package com.lernspace.app.ui.flashcards
+﻿package com.lernspace.app.ui.flashcards
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -39,10 +41,13 @@ import com.lernspace.app.core.ai.HandwrittenNoteRecognizer
 import com.lernspace.app.core.ai.HybridStudyAiRouter
 import com.lernspace.app.core.ai.LocalSlmManager
 import com.lernspace.app.core.ai.SlmModelSpec
+import com.lernspace.app.core.document.DocumentTextExtractor
+import com.lernspace.app.core.document.ExtractedDocumentResult
 import com.lernspace.app.data.repository.*
 import com.lernspace.app.ui.learning.SubjectUi
 import com.lernspace.app.ui.learning.TopicUi
 import com.lernspace.app.ui.theme.*
+import com.lernspace.app.ui.workspace.components.MarkdownLatexContent
 import com.lernspace.app.ui.workspace.model.NoteUiModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -113,7 +118,7 @@ fun FlashcardsScreen() {
             .padding(vertical = 4.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // ── Top Header Bar ────────────────────────────────────────────────────
+        // â”€â”€ Top Header Bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -162,13 +167,14 @@ fun FlashcardsScreen() {
                 OutlinedButton(
                     onClick = { showSlmGenerateDialog = true },
                     shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, LernspaceBorder),
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Filled.AutoAwesome,
                         contentDescription = null,
                         modifier = Modifier.size(17.dp),
-                        tint = AccentBlue
+                        tint = LernspaceDark
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text("Generate dari Catatan", fontWeight = FontWeight.SemiBold, color = LernspaceDark)
@@ -187,7 +193,7 @@ fun FlashcardsScreen() {
             }
         }
 
-        // ── Search & Filter Row ───────────────────────────────────────────────
+        // â”€â”€ Search & Filter Row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -264,14 +270,14 @@ fun FlashcardsScreen() {
             }
         }
 
-        // ── Main 2-Column Tablet Viewport ─────────────────────────────────────
+        // â”€â”€ Main 2-Column Tablet Viewport â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f),
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // ── Left Column: Deck List ────────────────────────────────────────
+            // â”€â”€ Left Column: Deck List â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             Surface(
                 modifier = Modifier
                     .weight(0.78f)
@@ -369,7 +375,7 @@ fun FlashcardsScreen() {
                 }
             }
 
-            // ── Right Column: Selected Deck Detail & Cards ────────────────────
+            // â”€â”€ Right Column: Selected Deck Detail & Cards â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             Surface(
                 modifier = Modifier
                     .weight(1.22f)
@@ -630,7 +636,7 @@ fun FlashcardsScreen() {
         }
     }
 
-    // ── Fullscreen Flip-Card Review Session ───────────────────────────────────
+    // â”€â”€ Fullscreen Flip-Card Review Session â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (studyDeck != null && studyCards.isNotEmpty()) {
         FlashcardStudyDialog(
             deck = studyDeck!!,
@@ -645,7 +651,7 @@ fun FlashcardsScreen() {
         )
     }
 
-    // ── Create Deck Dialog ────────────────────────────────────────────────────
+    // â”€â”€ Create Deck Dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (showCreateDeckDialog) {
         CreateFlashcardDeckDialog(
             subjects = subjects,
@@ -669,7 +675,7 @@ fun FlashcardsScreen() {
         )
     }
 
-    // ── Add / Edit Card Dialog ────────────────────────────────────────────────
+    // â”€â”€ Add / Edit Card Dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (showAddCardDialog && activeDeck != null) {
         AddEditFlashcardDialog(
             existingCard = null,
@@ -701,7 +707,7 @@ fun FlashcardsScreen() {
         )
     }
 
-    // ── SLM Generate From Notes / Topic / Text Dialog ─────────────────────────
+    // â”€â”€ SLM Generate From Notes / Topic / Text Dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (showSlmGenerateDialog) {
         GenerateFlashcardsFromNoteDialog(
             subjects = subjects,
@@ -843,7 +849,7 @@ private fun DeckListItem(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "$totalCards kartu • $masteredCards dikuasai",
+                    text = "$totalCards kartu â€¢ $masteredCards dikuasai",
                     fontSize = 11.sp,
                     color = LernspaceTextSecondary
                 )
@@ -928,11 +934,11 @@ private fun FlashcardRowItem(
             // Front
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("PERTANYAAN", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = LernspaceTextSecondary)
-                Text(
-                    text = card.front,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = LernspaceDark
+                MarkdownLatexContent(
+                    markdown = card.front,
+                    baseFontSize = 13.sp,
+                    textColor = LernspaceDark,
+                    modifier = Modifier.fillMaxWidth()
                 )
                 if (card.hint.isNotBlank()) {
                     Text(
@@ -948,10 +954,11 @@ private fun FlashcardRowItem(
             // Back
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("JAWABAN", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = LernspaceTextSecondary)
-                Text(
-                    text = card.back,
-                    fontSize = 13.sp,
-                    color = LernspaceTextPrimary
+                MarkdownLatexContent(
+                    markdown = card.back,
+                    baseFontSize = 13.sp,
+                    textColor = LernspaceTextPrimary,
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
 
@@ -1105,7 +1112,7 @@ private fun FlashcardStudyDialog(
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "$goodCount kartu diingat dengan baik • $againCount perlu diulang",
+                            text = "$goodCount kartu diingat dengan baik â€¢ $againCount perlu diulang",
                             style = MaterialTheme.typography.bodyMedium,
                             color = LernspaceTextSecondary
                         )
@@ -1186,12 +1193,14 @@ private fun FlashcardStudyDialog(
                                         horizontalAlignment = Alignment.CenterHorizontally,
                                         verticalArrangement = Arrangement.spacedBy(12.dp)
                                     ) {
-                                        Text(
-                                            text = currentCard.front,
-                                            style = MaterialTheme.typography.headlineMedium,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = LernspaceDark,
-                                            textAlign = TextAlign.Center
+                                        MarkdownLatexContent(
+                                            markdown = currentCard.front,
+                                            baseFontSize = 18.sp,
+                                            textColor = LernspaceDark,
+                                            accentColor = LernspaceDark,
+                                            defaultBold = true,
+                                            textAlign = TextAlign.Center,
+                                            modifier = Modifier.fillMaxWidth()
                                         )
                                         if (currentCard.hint.isNotBlank()) {
                                             if (showHint) {
@@ -1245,16 +1254,17 @@ private fun FlashcardStudyDialog(
                                         )
                                     }
 
-                                    Text(
-                                        text = currentCard.back,
-                                        style = MaterialTheme.typography.headlineSmall,
-                                        fontWeight = FontWeight.Medium,
-                                        color = LernspaceDark,
-                                        textAlign = TextAlign.Center
+                                    MarkdownLatexContent(
+                                        markdown = currentCard.back,
+                                        baseFontSize = 17.sp,
+                                        textColor = LernspaceDark,
+                                        accentColor = LernspaceDark,
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier.fillMaxWidth()
                                     )
 
                                     Text(
-                                        text = "Seberapa mudah kamu mengingatnya?",
+                                        text = "Apakah kamu mengingatnya?",
                                         fontSize = 12.sp,
                                         color = LernspaceTextSecondary
                                     )
@@ -1278,19 +1288,20 @@ private fun FlashcardStudyDialog(
                     } else {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             val ratings = listOf(
-                                Triple(FlashcardRating.AGAIN, Color(0xFFFEE2E2), Color(0xFFDC2626)),
-                                Triple(FlashcardRating.HARD, Color(0xFFFEF3C7), Color(0xFFD97706)),
-                                Triple(FlashcardRating.GOOD, Color(0xFFDBEAFE), Color(0xFF2563EB)),
-                                Triple(FlashcardRating.EASY, Color(0xFFD1FAE5), Color(0xFF059669))
+                                Triple(FlashcardRating.AGAIN, "Lupa", false),
+                                Triple(FlashcardRating.GOOD, "Ingat", true)
                             )
-                            ratings.forEach { (rating, bg, fg) ->
+                            ratings.forEach { (rating, label, isPrimary) ->
+                                val bg = if (isPrimary) LernspaceDark else LernspaceSurfaceLow
+                                val fg = if (isPrimary) LernspaceSurfaceCard else LernspaceTextPrimary
+                                val borderColor = if (isPrimary) LernspaceDark else LernspaceBorder
                                 Surface(
                                     shape = RoundedCornerShape(12.dp),
                                     color = bg,
-                                    border = BorderStroke(1.dp, fg.copy(alpha = 0.25f)),
+                                    border = BorderStroke(1.dp, borderColor),
                                     modifier = Modifier
                                         .weight(1f)
                                         .clip(RoundedCornerShape(12.dp))
@@ -1306,17 +1317,11 @@ private fun FlashcardStudyDialog(
                                             currentIndex++
                                         }
                                 ) {
-                                    Column(
-                                        modifier = Modifier.padding(vertical = 10.dp, horizontal = 8.dp),
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                                    Box(
+                                        modifier = Modifier.padding(vertical = 14.dp, horizontal = 12.dp),
+                                        contentAlignment = Alignment.Center
                                     ) {
-                                        Text(rating.label, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = fg)
-                                        Text(
-                                            text = previewIntervalLabel(currentCard, rating),
-                                            fontSize = 11.sp,
-                                            color = fg.copy(alpha = 0.85f)
-                                        )
+                                        Text(label, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = fg)
                                     }
                                 }
                             }
@@ -1580,8 +1585,39 @@ private fun GenerateFlashcardsFromNoteDialog(
     var manualMaterialText by remember { mutableStateOf("") }
     var cardCount by remember { mutableIntStateOf(6) }
 
-    var isGenerating by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
+    var attachedDocument by remember { mutableStateOf<ExtractedDocumentResult?>(null) }
+    var isExtractingDoc by remember { mutableStateOf(false) }
+    var docExtractionStatus by remember { mutableStateOf("") }
+
+    val documentPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: android.net.Uri? ->
+        uri?.let { pickedUri ->
+            isExtractingDoc = true
+            docExtractionStatus = "Membuka dokumen..."
+            errorMsg = null
+            coroutineScope.launch {
+                val res = DocumentTextExtractor.extractTextFromUri(
+                    context = context,
+                    uri = pickedUri,
+                    onProgress = { cur, tot ->
+                        docExtractionStatus = "Membaca halaman $cur dari $tot..."
+                    }
+                )
+                res.onSuccess { doc ->
+                    attachedDocument = doc
+                    manualMaterialText = doc.text
+                    isExtractingDoc = false
+                }.onFailure { err ->
+                    isExtractingDoc = false
+                    errorMsg = "Gagal membaca dokumen: ${err.message}"
+                }
+            }
+        }
+    }
+
+    var isGenerating by remember { mutableStateOf(false) }
     val generatedCards = remember { mutableStateListOf<GeneratedFlashcard>() }
     val selectedFlags = remember { mutableStateListOf<Boolean>() }
 
@@ -1688,13 +1724,22 @@ private fun GenerateFlashcardsFromNoteDialog(
     val effectiveSourceText = when (sourceMode) {
         0 -> if (manualMaterialText.isNotBlank()) manualMaterialText else combinedNoteText
         1 -> if (manualMaterialText.isNotBlank()) manualMaterialText else topicMaterialText
-        else -> manualMaterialText
+        else -> {
+            val docText = attachedDocument?.text.orEmpty()
+            val manual = manualMaterialText.trim()
+            when {
+                docText.isNotBlank() && manual.isNotBlank() && docText != manual ->
+                    "$docText\n\nCatatan Tambahan:\n$manual"
+                manual.isNotBlank() -> manual
+                else -> docText
+            }
+        }
     }
 
     val effectiveTopicTitle = when (sourceMode) {
         0 -> selectedNote?.title ?: "Catatan Belajar"
         1 -> selectedTopic?.title ?: "Topik Belajar"
-        else -> targetDeck?.title ?: "Materi Belajar"
+        else -> attachedDocument?.fileName?.substringBeforeLast('.')?.takeIf { it.isNotBlank() } ?: (targetDeck?.title ?: "Materi Belajar")
     }
 
     // Rule-based fallback extractor (`Istilah : Penjelasan`) when SLM isn't downloaded
@@ -1709,7 +1754,7 @@ private fun GenerateFlashcardsFromNoteDialog(
                 }
                 if (sep != null) {
                     val parts = line.split(sep, limit = 2)
-                    val q = parts[0].trim().removePrefix("-").removePrefix("•").trim()
+                    val q = parts[0].trim().removePrefix("-").removePrefix("â€¢").trim()
                     val a = parts.getOrNull(1)?.trim() ?: ""
                     if (q.length >= 2 && a.length >= 2) GeneratedFlashcard(q, a) else null
                 } else null
@@ -1848,7 +1893,7 @@ private fun GenerateFlashcardsFromNoteDialog(
                     FilterChip(
                         selected = sourceMode == 2,
                         onClick = { sourceMode = 2 },
-                        label = { Text("Tempel Materi", fontSize = 11.sp) },
+                        label = { Text("Dokumen / Teks", fontSize = 11.sp) },
                         shape = RoundedCornerShape(8.dp)
                     )
                 }
@@ -2005,16 +2050,140 @@ private fun GenerateFlashcardsFromNoteDialog(
                     }
                 }
 
-                OutlinedTextField(
-                    value = if (sourceMode == 2 || effectiveSourceText.isBlank()) manualMaterialText else effectiveSourceText,
-                    onValueChange = { manualMaterialText = it },
-                    label = { Text("Teks Materi Sumber") },
-                    placeholder = { Text("Tempel ringkasan materi atau poin kuliah di sini...") },
-                    minLines = 3,
-                    maxLines = 5,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(8.dp)
-                )
+                if (sourceMode == 2) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (attachedDocument == null) {
+                            OutlinedButton(
+                                onClick = {
+                                    documentPickerLauncher.launch(
+                                        arrayOf(
+                                            "application/pdf",
+                                            "text/plain",
+                                            "text/markdown",
+                                            "image/*",
+                                            "*/*"
+                                        )
+                                    )
+                                },
+                                enabled = !isExtractingDoc,
+                                shape = RoundedCornerShape(8.dp),
+                                border = BorderStroke(1.dp, LernspaceBorder),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Filled.UploadFile, null, tint = LernspaceDark, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Pilih Dokumen (PDF, Teks, Gambar)",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = LernspaceDark
+                                )
+                            }
+                        } else {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = LernspaceSurfaceLow,
+                                border = BorderStroke(1.dp, LernspaceBorder),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    val icon = when {
+                                        attachedDocument!!.fileName.endsWith(".pdf", ignoreCase = true) -> Icons.Filled.PictureAsPdf
+                                        attachedDocument!!.mimeType.startsWith("image/") -> Icons.Filled.Image
+                                        else -> Icons.Filled.Description
+                                    }
+                                    Icon(icon, null, tint = LernspaceDark, modifier = Modifier.size(20.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = attachedDocument!!.fileName,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = LernspaceDark,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = if (attachedDocument!!.fileName.endsWith(".pdf", ignoreCase = true)) {
+                                                "${attachedDocument!!.pageCount} halaman • ${attachedDocument!!.wordCount} kata dimuat"
+                                            } else {
+                                                "${attachedDocument!!.wordCount} kata dimuat"
+                                            },
+                                            fontSize = 11.sp,
+                                            color = LernspaceTextSecondary
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            attachedDocument = null
+                                            manualMaterialText = ""
+                                        },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Icon(Icons.Filled.Close, "Hapus dokumen", tint = LernspaceTextSecondary, modifier = Modifier.size(14.dp))
+                                    }
+                                }
+                            }
+                        }
+
+                        if (isExtractingDoc) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 2.dp, color = LernspaceDark)
+                                Text(docExtractionStatus, fontSize = 11.sp, color = LernspaceTextSecondary)
+                            }
+                        }
+
+                        OutlinedTextField(
+                            value = manualMaterialText,
+                            onValueChange = { manualMaterialText = it },
+                            label = { Text(if (attachedDocument != null) "Teks Materi (dari dokumen)" else "Teks Materi Sumber") },
+                            placeholder = { Text(if (attachedDocument != null) "Bisa tambah atau edit materi di sini..." else "Tempel ringkasan materi atau pilih dokumen di atas...") },
+                            minLines = 3,
+                            maxLines = 5,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                    }
+                } else {
+                    val isReady = !isRecognizingInk && effectiveSourceText.trim().length >= 15
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = LernspaceSurfaceLow,
+                        border = BorderStroke(1.dp, LernspaceBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isReady) Icons.Filled.CheckCircle else Icons.Filled.Info,
+                                contentDescription = null,
+                                tint = if (isReady) LernspaceDark else LernspaceTextSecondary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = when {
+                                    isRecognizingInk -> "AI sedang membaca catatan..."
+                                    recognizedHandwritingText.isNotBlank() -> "AI sudah selesai membaca catatan"
+                                    isReady -> "Catatan teks siap digunakan AI"
+                                    else -> "Catatan belum memiliki cukup teks atau belum dibaca AI"
+                                },
+                                fontSize = 12.sp,
+                                fontWeight = if (isReady) FontWeight.Medium else FontWeight.Normal,
+                                color = if (isReady) LernspaceTextPrimary else LernspaceTextSecondary
+                            )
+                        }
+                    }
+                }
 
                 // Card count selector
                 Row(
@@ -2200,7 +2369,7 @@ private fun GenerateFlashcardsFromNoteDialog(
                                         else -> null
                                     }
                                     val subj = subjects.find { it.id == (note?.subjectId ?: top?.subjectId) }
-                                    val title = targetDeck?.title ?: "$effectiveTopicTitle — Flashcards"
+                                    val title = targetDeck?.title ?: "$effectiveTopicTitle â€” Flashcards"
                                     onImportGenerated(title, subj, top, note, chosenCards)
                                 },
                                 shape = RoundedCornerShape(8.dp),
@@ -2215,3 +2384,4 @@ private fun GenerateFlashcardsFromNoteDialog(
         }
     }
 }
+

@@ -32,6 +32,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalDensity
@@ -112,10 +114,14 @@ fun DraggableTextBox(
 
     val screenWidthDp = with(density) { (worldWidth * scale).toDp() }
     val screenHeightDp = with(density) { (worldHeight * scale).toDp() }
+    val worldWidthDp = with(density) { worldWidth.toDp() }
+    val worldHeightDp = with(density) { worldHeight.toDp() }
     val worldFontSize = box.fontSize.coerceIn(12f, 120f)
-    val dynamicFontSize = with(density) { ((worldFontSize * scale) / density.fontScale.coerceAtLeast(0.5f)).toSp() }
-    val dynamicLineHeight = with(density) { (((worldFontSize * 1.44f) * scale) / density.fontScale.coerceAtLeast(0.5f)).toSp() }
-    val constantTextPad = with(density) { (8f * scale).toDp().coerceIn(4.dp, 16.dp) }
+    // Keep text layout in unscaled world units and let GPU graphicsLayer scale/translate it.
+    // This prevents per-frame text re-measurement, line-wrap shifts, and subpixel jitter during zoom/pan.
+    val baseFontSize = with(density) { (worldFontSize / density.fontScale.coerceAtLeast(0.5f)).toSp() }
+    val baseLineHeight = with(density) { ((worldFontSize * 1.44f) / density.fontScale.coerceAtLeast(0.5f)).toSp() }
+    val baseTextPad = with(density) { 8f.toDp() }
     val viewScrollState = rememberScrollState()
     val editScrollState = rememberScrollState()
     val isScrollable = viewScrollState.maxValue > 0
@@ -128,29 +134,19 @@ fun DraggableTextBox(
         TextBoxAlign.RIGHT -> TextAlign.End
     }
 
-    // Outer Box reserves margin when selected for corner move/delete pills and edge resize handles,
-    // while keeping the TextBox body strictly at (worldX, worldY) with ZERO text jump on deselect.
-    Box(
-        modifier = modifier
-            .offset {
-                val padX = if (box.isSelected) sideMarginPx else 0f
-                val padY = if (box.isSelected) topMarginPx else 0f
-                val screenX = worldX * scale + panXProvider() - padX
-                val screenY = worldY * scale + panYProvider() - padY
-                IntOffset(screenX.roundToInt(), screenY.roundToInt())
-            }
-            .width(screenWidthDp + if (box.isSelected) sideMarginDp * 2 else 0.dp)
-            .height(screenHeightDp + if (box.isSelected) topMarginDp + sideMarginDp else 0.dp)
-    ) {
-        // Main TextBox Surface anchored strictly at (worldX, worldY) with exact worldWidth x worldHeight
+    Box(modifier = modifier) {
+        // Main TextBox Surface laid out in fixed world dimensions and transformed on GPU via graphicsLayer.
         Box(
             modifier = Modifier
-                .padding(
-                    start = if (box.isSelected) sideMarginDp else 0.dp,
-                    top = if (box.isSelected) topMarginDp else 0.dp
-                )
-                .width(screenWidthDp)
-                .height(screenHeightDp)
+                .graphicsLayer {
+                    transformOrigin = TransformOrigin(0f, 0f)
+                    scaleX = scale
+                    scaleY = scale
+                    translationX = worldX * scale + panXProvider()
+                    translationY = worldY * scale + panYProvider()
+                }
+                .width(worldWidthDp)
+                .height(worldHeightDp)
         ) {
             val boxBgColor = when {
                 box.isSelected -> if (isDarkPaper) Color(0xFF1E293B).copy(alpha = 0.95f) else Color.White.copy(alpha = 0.95f)
@@ -181,15 +177,15 @@ fun DraggableTextBox(
                     modifier = Modifier
                         .fillMaxSize()
                         .clipToBounds()
-                        .padding(constantTextPad)
+                        .padding(baseTextPad)
                 ) {
                     if (box.isSelected) {
                         if (textContent.isEmpty()) {
                             Text(
                                 text = "Ketik catatan...",
                                 color = Color(0xFF94A3B8),
-                                fontSize = dynamicFontSize,
-                                lineHeight = dynamicLineHeight,
+                                fontSize = baseFontSize,
+                                lineHeight = baseLineHeight,
                                 textAlign = resolvedAlign,
                                 modifier = Modifier.fillMaxWidth()
                             )
@@ -203,8 +199,8 @@ fun DraggableTextBox(
                             },
                             textStyle = TextStyle(
                                 color = resolvedTextColor,
-                                fontSize = dynamicFontSize,
-                                lineHeight = dynamicLineHeight,
+                                fontSize = baseFontSize,
+                                lineHeight = baseLineHeight,
                                 fontWeight = resolvedWeight,
                                 fontStyle = resolvedStyle,
                                 textAlign = resolvedAlign
@@ -228,8 +224,8 @@ fun DraggableTextBox(
                                 ) {
                                     MarkdownLatexContent(
                                         markdown = textContent,
-                                        baseFontSize = dynamicFontSize,
-                                        lineHeight = dynamicLineHeight,
+                                        baseFontSize = baseFontSize,
+                                        lineHeight = baseLineHeight,
                                         textColor = resolvedTextColor,
                                         accentColor = if (isDarkPaper) Color(0xFF60A5FA) else Color(0xFF2563EB),
                                         isDarkSurface = isDarkPaper,
@@ -254,8 +250,8 @@ fun DraggableTextBox(
                             Text(
                                 text = "Teks kosong",
                                 color = Color(0xFF94A3B8),
-                                fontSize = dynamicFontSize,
-                                lineHeight = dynamicLineHeight
+                                fontSize = baseFontSize,
+                                lineHeight = baseLineHeight
                             )
                         }
                     }
@@ -268,7 +264,7 @@ fun DraggableTextBox(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .pointerInput(box.id, scale) {
+                        .pointerInput(box.id) {
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false)
                                 var moved = false
@@ -280,12 +276,13 @@ fun DraggableTextBox(
                                 }
                                 if (dragChange != null && moved) {
                                     onSelect()
-                                    worldX += overSlop.x / scale
-                                    worldY += overSlop.y / scale
+                                    // Inside graphicsLayer(scaleX = scale, scaleY = scale), pointer deltas are already in world units.
+                                    worldX += overSlop.x
+                                    worldY += overSlop.y
                                     drag(dragChange.id) { change ->
                                         change.consume()
-                                        worldX += change.positionChange().x / scale
-                                        worldY += change.positionChange().y / scale
+                                        worldX += change.positionChange().x
+                                        worldY += change.positionChange().y
                                     }
                                     onCommitMove(worldX, worldY)
                                 } else {
@@ -297,8 +294,18 @@ fun DraggableTextBox(
             }
         }
 
-        // Floating Small Controls & Edge Resize Handles (Shown only when selected)
+        // Floating Small Controls & Edge Resize Handles (Shown only when selected, kept at constant screen size)
         if (box.isSelected) {
+            Box(
+                modifier = Modifier
+                    .offset {
+                        val screenX = worldX * scale + panXProvider() - sideMarginPx
+                        val screenY = worldY * scale + panYProvider() - topMarginPx
+                        IntOffset(screenX.roundToInt(), screenY.roundToInt())
+                    }
+                    .width(screenWidthDp + sideMarginDp * 2)
+                    .height(screenHeightDp + topMarginDp + sideMarginDp)
+            ) {
             // Left Border Drag Zone (drag along the left border edge to move)
             Box(
                 modifier = Modifier
@@ -464,6 +471,7 @@ fun DraggableTextBox(
                         .background(Color.White)
                         .border(2.5.dp, selectionColor, CircleShape)
                 )
+            }
             }
         }
     }
