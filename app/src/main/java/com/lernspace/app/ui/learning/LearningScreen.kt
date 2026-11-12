@@ -440,6 +440,9 @@ fun LearningScreen(
                                 }
                             }
                         } else {
+                            var topicForNewNote by remember { mutableStateOf<TopicUi?>(null) }
+                            var topicForLinkNote by remember { mutableStateOf<TopicUi?>(null) }
+
                             LazyColumn(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -454,12 +457,10 @@ fun LearningScreen(
                                         index = index,
                                         topic = topic,
                                         subjectColor = activeSubject.color,
-                                        attachedNote = topicNotes.firstOrNull(),
+                                        attachedNotes = topicNotes,
                                         onOpenNote = { note -> AcademicWorkspaceState.openNoteEditor(note) },
-                                        onCreateNote = {
-                                            val newNote = AcademicWorkspaceState.createNoteForTopic(activeSubject, topic)
-                                            AcademicWorkspaceState.openNoteEditor(newNote)
-                                        },
+                                        onCreateNote = { topicForNewNote = topic },
+                                        onLinkExistingNote = { topicForLinkNote = topic },
                                         onStatusChange = { newStatus ->
                                             AcademicWorkspaceState.updateTopicStatus(topic.id, newStatus)
                                         },
@@ -467,9 +468,49 @@ fun LearningScreen(
                                         onDelete = {
                                             topics.remove(topic)
                                             notes.removeAll { it.topicId == topic.id }
+                                            com.lernspace.app.data.local.AcademicDatabaseManager.deleteTopic(topic.id)
                                         }
                                     )
                                 }
+                            }
+
+                            topicForNewNote?.let { targetTopic ->
+                                com.lernspace.app.ui.workspace.components.CreateTopicNoteDialog(
+                                    subjectName = activeSubject.name,
+                                    topicTitle = targetTopic.title,
+                                    subjectColor = activeSubject.color,
+                                    onDismiss = { topicForNewNote = null },
+                                    onConfirm = { customTitle, paperStyle, canvasType, isDarkPaper ->
+                                        topicForNewNote = null
+                                        val newNote = AcademicWorkspaceState.createNoteForTopic(
+                                            subject = activeSubject,
+                                            topic = targetTopic,
+                                            paperStyle = paperStyle,
+                                            canvasType = canvasType,
+                                            isDarkPaper = isDarkPaper,
+                                            customTitle = customTitle
+                                        )
+                                        AcademicWorkspaceState.openNoteEditor(newNote)
+                                    }
+                                )
+                            }
+
+                            topicForLinkNote?.let { targetTopic ->
+                                com.lernspace.app.ui.workspace.components.LinkExistingNoteToTopicDialog(
+                                    subject = activeSubject,
+                                    topic = targetTopic,
+                                    allNotes = notes,
+                                    onDismiss = { topicForLinkNote = null },
+                                    onSelectNote = { pickedNote ->
+                                        topicForLinkNote = null
+                                        AcademicWorkspaceState.updateNoteLinkAndTitle(
+                                            noteId = pickedNote.id,
+                                            newTitle = pickedNote.title,
+                                            subject = activeSubject,
+                                            topic = targetTopic
+                                        )
+                                    }
+                                )
                             }
                         }
                     }
@@ -841,9 +882,10 @@ private fun TopicCardInteractive(
     index: Int,
     topic: TopicUi,
     subjectColor: Color,
-    attachedNote: NoteUiModel?,
+    attachedNotes: List<NoteUiModel>,
     onOpenNote: (NoteUiModel) -> Unit,
     onCreateNote: () -> Unit,
+    onLinkExistingNote: () -> Unit,
     onStatusChange: (TopicStatus) -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit
@@ -1004,59 +1046,90 @@ private fun TopicCardInteractive(
                 }
             }
 
-            // Row 2: Attached Lecture Note Integration Bar
+            // Row 2: Attached Lecture Note / PDF Integration Bar
             Surface(
                 shape = RoundedCornerShape(8.dp),
                 color = LernspaceSurfaceLow,
                 border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder.copy(alpha = 0.8f)),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                if (attachedNote != null) {
-                    // Note already exists for this topic
-                    Row(
+                if (attachedNotes.isNotEmpty()) {
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Description,
-                                contentDescription = null,
-                                tint = subjectColor,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = attachedNote.title,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = LernspaceDark,
-                                    maxLines = 1
-                                )
-                                Text(
-                                    text = attachedNote.snippet,
-                                    fontSize = 11.sp,
-                                    color = LernspaceTextSecondary,
-                                    maxLines = 1
-                                )
+                        attachedNotes.forEach { attachedNote ->
+                            val isPdf = attachedNote.canvasType == com.lernspace.app.ui.workspace.model.NoteCanvasType.PDF_DOCUMENT
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(
+                                        imageVector = if (isPdf) Icons.Filled.PictureAsPdf else Icons.Filled.Description,
+                                        contentDescription = null,
+                                        tint = if (isPdf) Color(0xFFDC2626) else subjectColor,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = attachedNote.title,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = LernspaceDark,
+                                            maxLines = 1
+                                        )
+                                        Text(
+                                            text = attachedNote.snippet,
+                                            fontSize = 11.sp,
+                                            color = LernspaceTextSecondary,
+                                            maxLines = 1
+                                        )
+                                    }
+                                }
+
+                                Button(
+                                    onClick = { onOpenNote(attachedNote) },
+                                    shape = RoundedCornerShape(6.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = subjectColor),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(Icons.Filled.Create, null, modifier = Modifier.size(13.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Open", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                }
                             }
                         }
 
-                        Button(
-                            onClick = { onOpenNote(attachedNote) },
-                            shape = RoundedCornerShape(6.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = subjectColor),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Filled.Create, null, modifier = Modifier.size(13.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Open Note", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            TextButton(
+                                onClick = onLinkExistingNote,
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                            ) {
+                                Icon(Icons.Filled.Link, null, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Tautkan Note/PDF", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                            TextButton(
+                                onClick = onCreateNote,
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                            ) {
+                                Icon(Icons.Filled.Add, null, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Buat Catatan", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            }
                         }
                     }
                 } else {
@@ -1070,7 +1143,8 @@ private fun TopicCardInteractive(
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.weight(1f)
                         ) {
                             Icon(
                                 imageVector = Icons.Filled.NoteAdd,
@@ -1079,20 +1153,31 @@ private fun TopicCardInteractive(
                                 modifier = Modifier.size(15.dp)
                             )
                             Text(
-                                text = "No lecture notes created for this chapter yet",
+                                text = "Belum ada catatan/PDF tertaut",
                                 fontSize = 12.sp,
                                 color = LernspaceTextSecondary
                             )
                         }
 
-                        OutlinedButton(
-                            onClick = onCreateNote,
-                            shape = RoundedCornerShape(6.dp),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp)
-                        ) {
-                            Icon(Icons.Filled.Add, null, modifier = Modifier.size(13.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Write Note", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            OutlinedButton(
+                                onClick = onLinkExistingNote,
+                                shape = RoundedCornerShape(6.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp)
+                            ) {
+                                Icon(Icons.Filled.Link, null, modifier = Modifier.size(13.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Tautkan", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                            OutlinedButton(
+                                onClick = onCreateNote,
+                                shape = RoundedCornerShape(6.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp)
+                            ) {
+                                Icon(Icons.Filled.Add, null, modifier = Modifier.size(13.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Buat Note", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            }
                         }
                     }
                 }

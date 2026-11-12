@@ -59,6 +59,7 @@ fun WorkspaceScreen(
     var selectedFilterKey by remember { mutableStateOf("ALL") } // "ALL", "SCRATCHPAD", or subjectId
     var searchQuery by remember { mutableStateOf("") }
     var showNewNoteDialog by remember { mutableStateOf(false) }
+    var noteToEditLink by remember { mutableStateOf<NoteUiModel?>(null) }
 
     // Direct PDF Import Launcher
     val importPdfLauncher = rememberLauncherForActivityResult(
@@ -339,6 +340,7 @@ fun WorkspaceScreen(
                         note = note,
                         subjectColor = subjectColor,
                         onOpen = { AcademicWorkspaceState.openNoteEditor(note) },
+                        onEditLink = { noteToEditLink = note },
                         onViewInSyllabus = {
                             if (note.subjectId != null) {
                                 onNavigateToSyllabus?.invoke(note.subjectId)
@@ -394,6 +396,24 @@ fun WorkspaceScreen(
             }
         )
     }
+
+    noteToEditLink?.let { targetNote ->
+        com.lernspace.app.ui.workspace.components.EditNoteLinkDialog(
+            note = targetNote,
+            subjects = subjects,
+            topics = topics,
+            onDismiss = { noteToEditLink = null },
+            onConfirm = { newTitle, selectedSubject, selectedTopic ->
+                noteToEditLink = null
+                AcademicWorkspaceState.updateNoteLinkAndTitle(
+                    noteId = targetNote.id,
+                    newTitle = newTitle,
+                    subject = selectedSubject,
+                    topic = selectedTopic
+                )
+            }
+        )
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -404,6 +424,7 @@ private fun WorkspaceNoteCard(
     note: NoteUiModel,
     subjectColor: Color,
     onOpen: () -> Unit,
+    onEditLink: () -> Unit,
     onViewInSyllabus: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -479,14 +500,22 @@ private fun WorkspaceNoteCard(
                             )
 
                             Box {
-                                IconButton(onClick = { showMenu = true }, modifier = Modifier.size(24.dp)) {
-                                    Icon(Icons.Filled.MoreVert, null, tint = LernspaceTextSecondary, modifier = Modifier.size(16.dp))
+                                IconButton(onClick = { showMenu = true }, modifier = Modifier.size(32.dp)) {
+                                    Icon(Icons.Filled.MoreVert, null, tint = LernspaceTextSecondary, modifier = Modifier.size(18.dp))
                                 }
 
                                 DropdownMenu(
                                     expanded = showMenu,
                                     onDismissRequest = { showMenu = false }
                                 ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Edit & Tautkan Silabus") },
+                                        leadingIcon = { Icon(Icons.Filled.Edit, null, tint = AccentBlue, modifier = Modifier.size(16.dp)) },
+                                        onClick = {
+                                            showMenu = false
+                                            onEditLink()
+                                        }
+                                    )
                                     if (note.topicId != null) {
                                         DropdownMenuItem(
                                             text = { Text("View in Syllabus") },

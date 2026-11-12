@@ -16,6 +16,7 @@ import androidx.ink.storage.StrokeInputBatchSerialization
 import androidx.ink.strokes.Stroke
 import com.lernspace.app.ui.workspace.model.ImageElement
 import com.lernspace.app.ui.workspace.model.NotePageData
+import com.lernspace.app.ui.workspace.model.TextBoxAlign
 import com.lernspace.app.ui.workspace.model.TextBoxElement
 import com.lernspace.app.ui.workspace.shape.ShapeRecognizer
 import org.json.JSONArray
@@ -177,6 +178,12 @@ class NoteStorageManager(private val context: Context) {
                         put("width", tb.width.toDouble())
                         put("height", tb.height.toDouble())
                         put("text", tb.text)
+                        put("fontSize", tb.fontSize.toDouble())
+                        if (tb.colorArgb != null) put("colorArgb", tb.colorArgb)
+                        put("isBold", tb.isBold)
+                        put("isItalic", tb.isItalic)
+                        put("textAlign", tb.textAlign.name)
+                        put("hasBackground", tb.hasBackground)
                     }
                     textBoxesArray.put(tbObj)
                 }
@@ -308,7 +315,15 @@ class NoteStorageManager(private val context: Context) {
                                 width = tbObj.optDouble("width", 260.0).toFloat(),
                                 height = tbObj.optDouble("height", 110.0).toFloat(),
                                 text = tbObj.optString("text", ""),
-                                isSelected = false
+                                isSelected = false,
+                                fontSize = tbObj.optDouble("fontSize", 28.0).toFloat().coerceIn(12f, 96f),
+                                colorArgb = if (tbObj.has("colorArgb")) tbObj.optInt("colorArgb") else null,
+                                isBold = tbObj.optBoolean("isBold", false),
+                                isItalic = tbObj.optBoolean("isItalic", false),
+                                textAlign = runCatching {
+                                    TextBoxAlign.valueOf(tbObj.optString("textAlign", "LEFT"))
+                                }.getOrDefault(TextBoxAlign.LEFT),
+                                hasBackground = tbObj.optBoolean("hasBackground", false)
                             )
                         )
                     }

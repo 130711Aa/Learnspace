@@ -379,19 +379,32 @@ object PdfNoteHelper {
                 // 4. Draw Text Boxes for this page
                 if (pageIdx < note.pages.size) {
                     val pageData = note.pages[pageIdx]
-                    val textPaint = TextPaint().apply {
-                        color = android.graphics.Color.parseColor("#0F172A")
-                        textSize = 28f
-                        isAntiAlias = true
-                    }
                     for (box in pageData.textBoxes) {
                         if (box.text.isNotBlank()) {
+                            val renderedText = com.lernspace.app.ui.workspace.components.LatexMathFormatter.toPlainReadableText(box.text)
+                            val styleFlag = when {
+                                box.isBold && box.isItalic -> android.graphics.Typeface.BOLD_ITALIC
+                                box.isBold -> android.graphics.Typeface.BOLD
+                                box.isItalic -> android.graphics.Typeface.ITALIC
+                                else -> android.graphics.Typeface.NORMAL
+                            }
+                            val textPaint = TextPaint().apply {
+                                color = box.colorArgb ?: if (note.isDarkPaper) android.graphics.Color.parseColor("#F8FAFC") else android.graphics.Color.parseColor("#0F172A")
+                                textSize = box.fontSize.coerceIn(12f, 96f)
+                                typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, styleFlag)
+                                isAntiAlias = true
+                            }
+                            val align = when (box.textAlign) {
+                                com.lernspace.app.ui.workspace.model.TextBoxAlign.CENTER -> android.text.Layout.Alignment.ALIGN_CENTER
+                                com.lernspace.app.ui.workspace.model.TextBoxAlign.RIGHT -> android.text.Layout.Alignment.ALIGN_OPPOSITE
+                                com.lernspace.app.ui.workspace.model.TextBoxAlign.LEFT -> android.text.Layout.Alignment.ALIGN_NORMAL
+                            }
                             canvas.save()
                             canvas.translate(box.x, box.y)
                             val layoutWidth = box.width.toInt().coerceAtLeast(100)
                             val staticLayout = StaticLayout.Builder.obtain(
-                                box.text, 0, box.text.length, textPaint, layoutWidth
-                            ).build()
+                                renderedText, 0, renderedText.length, textPaint, layoutWidth
+                            ).setAlignment(align).build()
                             staticLayout.draw(canvas)
                             canvas.restore()
                         }

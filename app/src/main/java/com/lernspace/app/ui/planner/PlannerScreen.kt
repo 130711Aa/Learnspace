@@ -225,6 +225,8 @@ fun PlannerScreen(
         }
 
         // ── Main Viewport Switcher (Fills 100% of remaining vertical space!) ───
+        var pendingTopicNote by remember { mutableStateOf<Triple<com.lernspace.app.ui.learning.SubjectUi, TopicUi, String>?>(null) }
+
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -258,8 +260,7 @@ fun PlannerScreen(
                             val subj = subjects.find { it.id == subjectId }
                             val top = topics.find { it.id == topicId }
                             if (subj != null && top != null) {
-                                val newNote = AcademicWorkspaceState.createNoteForTopic(subj, top)
-                                AcademicWorkspaceState.openNoteEditor(newNote)
+                                pendingTopicNote = Triple(subj, top, top.title)
                             } else {
                                 val newNote = AcademicWorkspaceState.createScratchpad(topicTitle)
                                 AcademicWorkspaceState.openNoteEditor(newNote)
@@ -331,8 +332,7 @@ fun PlannerScreen(
                             val subj = subjects.find { it.id == subjectId }
                             val top = topics.find { it.id == topicId }
                             if (subj != null && top != null) {
-                                val newNote = AcademicWorkspaceState.createNoteForTopic(subj, top)
-                                AcademicWorkspaceState.openNoteEditor(newNote)
+                                pendingTopicNote = Triple(subj, top, top.title)
                             } else {
                                 val newNote = AcademicWorkspaceState.createScratchpad(topicTitle)
                                 AcademicWorkspaceState.openNoteEditor(newNote)
@@ -352,6 +352,27 @@ fun PlannerScreen(
                     }
                 )
             }
+        }
+
+        pendingTopicNote?.let { (subj, top, defaultTitle) ->
+            com.lernspace.app.ui.workspace.components.CreateTopicNoteDialog(
+                subjectName = subj.name,
+                topicTitle = defaultTitle,
+                subjectColor = subj.color,
+                onDismiss = { pendingTopicNote = null },
+                onConfirm = { customTitle, paperStyle, canvasType, isDarkPaper ->
+                    pendingTopicNote = null
+                    val newNote = AcademicWorkspaceState.createNoteForTopic(
+                        subject = subj,
+                        topic = top,
+                        paperStyle = paperStyle,
+                        canvasType = canvasType,
+                        isDarkPaper = isDarkPaper,
+                        customTitle = customTitle
+                    )
+                    AcademicWorkspaceState.openNoteEditor(newNote)
+                }
+            )
         }
     }
 

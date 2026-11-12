@@ -257,10 +257,11 @@ object HandwrittenNoteRecognizer {
         }
     }
 
-    private fun renderStrokesToBitmap(
+    fun renderStrokesToBitmap(
         strokes: List<Stroke>,
         renderer: CanvasStrokeRenderer,
-        maxDim: Int = 1280
+        maxDim: Int = 1280,
+        backgroundColor: Int? = null
     ): Bitmap? {
         if (strokes.isEmpty()) return null
         var minX = Float.POSITIVE_INFINITY
@@ -279,7 +280,7 @@ object HandwrittenNoteRecognizer {
                 if (temp.y > maxY) maxY = temp.y
             }
         }
-        if (!minX.isFinite() || maxX <= minX && maxY <= minY) return null
+        if (!minX.isFinite() || (maxX <= minX && maxY <= minY)) return null
 
         val pad = 48f
         minX -= pad
@@ -293,9 +294,20 @@ object HandwrittenNoteRecognizer {
         val bmpW = (worldW * scale).roundToInt().coerceIn(64, maxDim)
         val bmpH = (worldH * scale).roundToInt().coerceIn(64, maxDim)
 
+        val resolvedBg = backgroundColor ?: run {
+            val avgLum = strokes.map { st ->
+                val c = st.brush.colorIntArgb
+                val r = Color.red(c)
+                val g = Color.green(c)
+                val b = Color.blue(c)
+                (0.299f * r + 0.587f * g + 0.114f * b) / 255f
+            }.average()
+            if (avgLum > 0.78) Color.rgb(30, 30, 38) else Color.WHITE
+        }
+
         val bitmap = Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
-        canvas.drawColor(Color.WHITE)
+        canvas.drawColor(resolvedBg)
 
         val matrix = Matrix().apply {
             postTranslate(-minX, -minY)

@@ -6,12 +6,15 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
+import com.lernspace.app.data.local.AppSettingsManager
 import com.lernspace.app.ui.learning.SubjectUi
 import com.lernspace.app.ui.learning.TopicStatus
 import com.lernspace.app.ui.learning.TopicUi
 import com.lernspace.app.ui.theme.AccentBlue
 import com.lernspace.app.ui.theme.AccentTeal
+import com.lernspace.app.ui.workspace.model.NoteCanvasType
 import com.lernspace.app.ui.workspace.model.NoteUiModel
+import com.lernspace.app.ui.workspace.model.PaperStyle
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -61,22 +64,58 @@ object AcademicWorkspaceState {
         return notes.filter { it.isScratchpad }
     }
 
-    fun createNoteForTopic(subject: SubjectUi, topic: TopicUi): NoteUiModel {
-        val dateFormat = SimpleDateFormat("MMM d, h:mm a", Locale.getDefault())
+    fun createNoteForTopic(
+        subject: SubjectUi,
+        topic: TopicUi,
+        paperStyle: PaperStyle = AppSettingsManager.defaultPaperStyle,
+        canvasType: NoteCanvasType = NoteCanvasType.PAGED_NOTE,
+        isDarkPaper: Boolean = false,
+        customTitle: String? = null
+    ): NoteUiModel {
+        val finalTitle = customTitle?.trim()?.takeIf { it.isNotEmpty() } ?: topic.title
         val newNote = NoteUiModel(
             id = UUID.randomUUID().toString(),
-            title = topic.title,
+            title = finalTitle,
             subject = subject.name,
             date = "Today, " + SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date()),
-            snippet = "Start handwriting or typing lecture notes for ${topic.title}...",
+            snippet = "Catatan ${paperStyle.displayName} untuk ${topic.title}...",
             subjectId = subject.id,
             topicId = topic.id,
             topicName = topic.title,
+            canvasType = canvasType,
+            paperStyle = paperStyle,
+            isDarkPaper = isDarkPaper,
             isScratchpad = false
         )
         notes.add(0, newNote)
         com.lernspace.app.data.local.AcademicDatabaseManager.persistNote(newNote)
         return newNote
+    }
+
+    fun updateNoteLinkAndTitle(
+        noteId: String,
+        newTitle: String,
+        subject: SubjectUi?,
+        topic: TopicUi?
+    ): NoteUiModel? {
+        val idx = notes.indexOfFirst { it.id == noteId }
+        if (idx == -1) return null
+        val old = notes[idx]
+        val isUnlinkedScratch = subject == null && old.canvasType == NoteCanvasType.INFINITE_SCRATCHPAD
+        val updated = old.copy(
+            title = newTitle.trim().ifBlank { old.title },
+            subject = subject?.name ?: if (old.canvasType == NoteCanvasType.INFINITE_SCRATCHPAD) "Quick Scratchpad" else "General Study",
+            subjectId = subject?.id,
+            topicId = if (subject != null) topic?.id else null,
+            topicName = if (subject != null) topic?.title else null,
+            isScratchpad = isUnlinkedScratch
+        )
+        notes[idx] = updated
+        if (activeEditingNote?.id == noteId) {
+            activeEditingNote = updated
+        }
+        com.lernspace.app.data.local.AcademicDatabaseManager.persistNote(updated, immediate = true)
+        return updated
     }
 
     fun createScratchpad(title: String = "Untitled Scratchpad"): NoteUiModel {

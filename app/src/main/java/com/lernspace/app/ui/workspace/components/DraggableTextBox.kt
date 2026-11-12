@@ -7,11 +7,14 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.OpenWith
@@ -22,6 +25,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -34,11 +38,14 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lernspace.app.ui.theme.LernspaceDark
+import com.lernspace.app.ui.workspace.model.TextBoxAlign
 import com.lernspace.app.ui.workspace.model.TextBoxElement
 import kotlin.math.roundToInt
 
@@ -105,9 +112,21 @@ fun DraggableTextBox(
 
     val screenWidthDp = with(density) { (worldWidth * scale).toDp() }
     val screenHeightDp = with(density) { (worldHeight * scale).toDp() }
-    val dynamicFontSize = with(density) { ((28f * scale) / density.fontScale.coerceAtLeast(0.5f)).toSp() }
-    val dynamicLineHeight = with(density) { ((40f * scale) / density.fontScale.coerceAtLeast(0.5f)).toSp() }
-    val constantTextPad = with(density) { (6f * scale).toDp().coerceIn(3.dp, 12.dp) }
+    val worldFontSize = box.fontSize.coerceIn(12f, 120f)
+    val dynamicFontSize = with(density) { ((worldFontSize * scale) / density.fontScale.coerceAtLeast(0.5f)).toSp() }
+    val dynamicLineHeight = with(density) { (((worldFontSize * 1.44f) * scale) / density.fontScale.coerceAtLeast(0.5f)).toSp() }
+    val constantTextPad = with(density) { (8f * scale).toDp().coerceIn(4.dp, 16.dp) }
+    val viewScrollState = rememberScrollState()
+    val editScrollState = rememberScrollState()
+    val isScrollable = viewScrollState.maxValue > 0
+    val resolvedTextColor = box.colorArgb?.let { Color(it) } ?: if (isDarkPaper) Color(0xFFF8FAFC) else LernspaceDark
+    val resolvedWeight = if (box.isBold) FontWeight.Bold else FontWeight.Normal
+    val resolvedStyle = if (box.isItalic) FontStyle.Italic else FontStyle.Normal
+    val resolvedAlign = when (box.textAlign) {
+        TextBoxAlign.LEFT -> TextAlign.Start
+        TextBoxAlign.CENTER -> TextAlign.Center
+        TextBoxAlign.RIGHT -> TextAlign.End
+    }
 
     // Outer Box reserves margin when selected for corner move/delete pills and edge resize handles,
     // while keeping the TextBox body strictly at (worldX, worldY) with ZERO text jump on deselect.
@@ -133,27 +152,35 @@ fun DraggableTextBox(
                 .width(screenWidthDp)
                 .height(screenHeightDp)
         ) {
+            val boxBgColor = when {
+                box.isSelected -> if (isDarkPaper) Color(0xFF1E293B).copy(alpha = 0.95f) else Color.White.copy(alpha = 0.95f)
+                box.hasBackground -> if (isDarkPaper) Color(0xFF1E293B).copy(alpha = 0.88f) else Color(0xFFF8FAFC).copy(alpha = 0.94f)
+                else -> Color.Transparent
+            }
+            val boxBorderModifier = when {
+                box.isSelected -> Modifier
+                    .shadow(2.dp, RoundedCornerShape(6.dp))
+                    .border(1.5.dp, selectionColor, RoundedCornerShape(6.dp))
+                box.hasBackground -> Modifier
+                    .shadow(1.dp, RoundedCornerShape(8.dp))
+                    .border(1.dp, if (isDarkPaper) Color(0xFF334155) else Color(0xFFE2E8F0), RoundedCornerShape(8.dp))
+                textContent.isEmpty() -> Modifier
+                    .border(1.dp, if (isDarkPaper) Color(0xFF334155) else Color(0xFFCBD5E1), RoundedCornerShape(6.dp))
+                else -> Modifier
+            }
+
             Surface(
                 modifier = Modifier
                     .fillMaxSize()
-                    .then(
-                        if (box.isSelected) {
-                            Modifier
-                                .shadow(2.dp, RoundedCornerShape(6.dp))
-                                .border(1.5.dp, selectionColor, RoundedCornerShape(6.dp))
-                        } else if (textContent.isEmpty()) {
-                            Modifier.border(1.dp, if (isDarkPaper) Color(0xFF334155) else Color(0xFFCBD5E1), RoundedCornerShape(6.dp))
-                        } else {
-                            Modifier
-                        }
-                    ),
-                color = if (box.isSelected) (if (isDarkPaper) Color(0xFF1E293B).copy(alpha = 0.94f) else Color.White.copy(alpha = 0.94f)) else Color.Transparent,
-                shape = RoundedCornerShape(6.dp)
+                    .then(boxBorderModifier),
+                color = boxBgColor,
+                shape = RoundedCornerShape(if (box.hasBackground && !box.isSelected) 8.dp else 6.dp)
             ) {
                 // Inner Text Display / Input Area with IDENTICAL padding in both states -> ZERO jump!
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
+                        .clipToBounds()
                         .padding(constantTextPad)
                 ) {
                     if (box.isSelected) {
@@ -162,7 +189,9 @@ fun DraggableTextBox(
                                 text = "Ketik catatan...",
                                 color = Color(0xFF94A3B8),
                                 fontSize = dynamicFontSize,
-                                lineHeight = dynamicLineHeight
+                                lineHeight = dynamicLineHeight,
+                                textAlign = resolvedAlign,
+                                modifier = Modifier.fillMaxWidth()
                             )
                         }
 
@@ -173,26 +202,54 @@ fun DraggableTextBox(
                                 onTextChange(newText)
                             },
                             textStyle = TextStyle(
-                                color = if (isDarkPaper) Color(0xFFF8FAFC) else LernspaceDark,
+                                color = resolvedTextColor,
                                 fontSize = dynamicFontSize,
-                                lineHeight = dynamicLineHeight
+                                lineHeight = dynamicLineHeight,
+                                fontWeight = resolvedWeight,
+                                fontStyle = resolvedStyle,
+                                textAlign = resolvedAlign
                             ),
                             cursorBrush = SolidColor(selectionColor),
                             modifier = Modifier
                                 .fillMaxSize()
+                                .verticalScroll(editScrollState)
                                 .focusRequester(focusRequester)
                         )
                     } else {
                         if (textContent.isNotEmpty()) {
-                            Text(
-                                text = textContent,
-                                style = TextStyle(
-                                    color = if (isDarkPaper) Color(0xFFF8FAFC) else LernspaceDark,
-                                    fontSize = dynamicFontSize,
-                                    lineHeight = dynamicLineHeight
-                                ),
-                                modifier = Modifier.fillMaxSize()
-                            )
+                            Box(modifier = Modifier.fillMaxSize()) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .verticalScroll(viewScrollState)
+                                        .pointerInput(box.id) {
+                                            detectTapGestures(onTap = { onSelect() })
+                                        }
+                                ) {
+                                    MarkdownLatexContent(
+                                        markdown = textContent,
+                                        baseFontSize = dynamicFontSize,
+                                        lineHeight = dynamicLineHeight,
+                                        textColor = resolvedTextColor,
+                                        accentColor = if (isDarkPaper) Color(0xFF60A5FA) else Color(0xFF2563EB),
+                                        isDarkSurface = isDarkPaper,
+                                        defaultBold = box.isBold,
+                                        defaultItalic = box.isItalic,
+                                        textAlign = resolvedAlign,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                                if (isScrollable) {
+                                    val thumbAlpha = if (viewScrollState.value < viewScrollState.maxValue) 0.45f else 0.18f
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.CenterEnd)
+                                            .width(3.dp)
+                                            .fillMaxHeight(0.35f)
+                                            .background(resolvedTextColor.copy(alpha = thumbAlpha), RoundedCornerShape(2.dp))
+                                    )
+                                }
+                            }
                         } else {
                             Text(
                                 text = "Teks kosong",
@@ -205,8 +262,9 @@ fun DraggableTextBox(
                 }
             }
 
-            // When unselected: tap selects, drag anywhere moves box directly!
-            if (!box.isSelected) {
+            // When unselected and content doesn't overflow: tap selects or drag anywhere moves immediately.
+            // When scrollable (content overflows): no overlay blocks verticalScroll; tapping Column selects cleanly.
+            if (!box.isSelected && !isScrollable) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()

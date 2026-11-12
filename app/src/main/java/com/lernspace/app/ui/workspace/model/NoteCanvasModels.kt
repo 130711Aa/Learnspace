@@ -55,14 +55,22 @@ object CanvasConstants {
     const val DOT_SPACING = 60f
 }
 
+enum class TextBoxAlign { LEFT, CENTER, RIGHT }
+
 data class TextBoxElement(
     val id: String = UUID.randomUUID().toString(),
     var x: Float,
     var y: Float,
-    var width: Float = 260f,  // width in dp
-    var height: Float = 110f, // height in dp
+    var width: Float = 260f,  // width in world px
+    var height: Float = 110f, // height in world px
     var text: String = "",
-    var isSelected: Boolean = true
+    var isSelected: Boolean = true,
+    var fontSize: Float = 28f,
+    var colorArgb: Int? = null,
+    var isBold: Boolean = false,
+    var isItalic: Boolean = false,
+    var textAlign: TextBoxAlign = TextBoxAlign.LEFT,
+    var hasBackground: Boolean = false
 )
 
 data class ImageElement(
