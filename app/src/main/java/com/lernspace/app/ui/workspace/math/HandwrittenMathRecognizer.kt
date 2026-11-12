@@ -1,5 +1,10 @@
 package com.lernspace.app.ui.workspace.math
 
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import android.util.Log
 import androidx.compose.runtime.getValue
@@ -10,6 +15,7 @@ import androidx.ink.strokes.Stroke
 import androidx.ink.strokes.StrokeInput
 import com.google.mlkit.common.model.DownloadConditions
 import com.google.mlkit.common.model.RemoteModelManager
+import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.digitalink.common.RecognitionResult
 import com.google.mlkit.vision.digitalink.recognition.DigitalInkRecognition
 import com.google.mlkit.vision.digitalink.recognition.DigitalInkRecognitionModel
@@ -18,6 +24,9 @@ import com.google.mlkit.vision.digitalink.recognition.DigitalInkRecognizer
 import com.google.mlkit.vision.digitalink.recognition.DigitalInkRecognizerOptions
 import com.google.mlkit.vision.digitalink.recognition.Ink
 import com.google.mlkit.vision.digitalink.recognition.RecognitionContext
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.TextRecognizer
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -52,13 +61,24 @@ object HandwrittenMathRecognizer {
     private var recognizer: DigitalInkRecognizer? = null
     private var modelIdentifier: DigitalInkRecognitionModelIdentifier? = null
     private var inkModel: DigitalInkRecognitionModel? = null
+    private var visionRecognizer: TextRecognizer? = null
 
     var isInkModelDownloaded by mutableStateOf(false)
         private set
     var isInkModelDownloading by mutableStateOf(false)
         private set
 
+    private fun ensureVisionInitialized() {
+        if (visionRecognizer != null) return
+        try {
+            visionRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+        } catch (e: Exception) {
+            Log.w("MathVision", "Vision OCR init failed: ${e.message}")
+        }
+    }
+
     private fun ensureInitialized() {
+        ensureVisionInitialized()
         if (recognizer != null) return
         try {
             val id = DigitalInkRecognitionModelIdentifier.fromLanguageTag("en-US")
@@ -302,25 +322,28 @@ object HandwrittenMathRecognizer {
         strokes: List<Stroke>,
         variables: Map<String, Double>
     ): MathRecognitionOutcome? {
-        val modelReady = ensureDigitalInkReady()
-        if (modelReady) {
-            val candidates = recognizeMathLayoutCandidates(strokes, variables)
-            Log.d("MathInk", "Candidates ($variables): $candidates")
-            for (text in candidates) {
-                if (MathExpressionEvaluator.isPlausibleMathExpression(text, variables)) {
-                    val solved = MathExpressionEvaluator.solve(text, variables)
-                    if (solved != null) {
-                        return MathRecognitionOutcome(text, solved, usedDigitalInk = true, activeVariables = variables)
-                    }
+        ensureVisionInitialized()
+        val inkReady = ensureDigitalInkReady()
+        val candidates = recognizeMathLayoutCandidates(strokes, variables)
+        Log.d("MathInk", "Candidates ($variables): $candidates")
+
+        // Pass 1: Direct candidates testing from Vision OCR & Digital Ink
+        for (text in candidates) {
+            if (MathExpressionEvaluator.isPlausibleMathExpression(text, variables)) {
+                val solved = MathExpressionEvaluator.solve(text, variables)
+                if (solved != null) {
+                    return MathRecognitionOutcome(text, solved, usedDigitalInk = inkReady || visionRecognizer != null, activeVariables = variables)
                 }
             }
-            for (text in candidates) {
-                val coerced = coerceHandwritingLookalikes(text, variables.keys)
-                if (MathExpressionEvaluator.isPlausibleMathExpression(coerced, variables)) {
-                    val solved = MathExpressionEvaluator.solve(coerced, variables)
-                    if (solved != null) {
-                        return MathRecognitionOutcome(coerced, solved, usedDigitalInk = true, activeVariables = variables)
-                    }
+        }
+
+        // Pass 2: Coerce lookalikes (e.g. S inside number -> 5, l -> 1, O -> 0)
+        for (text in candidates) {
+            val coerced = coerceHandwritingLookalikes(text, variables.keys)
+            if (coerced != text && MathExpressionEvaluator.isPlausibleMathExpression(coerced, variables)) {
+                val solved = MathExpressionEvaluator.solve(coerced, variables)
+                if (solved != null) {
+                    return MathRecognitionOutcome(coerced, solved, usedDigitalInk = inkReady || visionRecognizer != null, activeVariables = variables)
                 }
             }
         }
@@ -351,9 +374,10 @@ object HandwrittenMathRecognizer {
     }
 
     /**
-     * Combines direct ML Kit Digital Ink recognition with 2D spatial parsing
-     * (stacked fractions & superscript powers) so written fractions like a/b and
-     * powers like 2^3 or x^2 recognize reliably without mangling unbroken handwriting.
+     * Dual-Engine Offline Math Recognition:
+     * 1) Bundled 100% Offline Vision OCR (CRNN deep learning model reading rendered ink visually)
+     * 2) Digital Ink Recognition (biased with math pre-context)
+     * 3) 2D Spatial Layout Parsing (stacked fractions & superscripts)
      */
     private suspend fun recognizeMathLayoutCandidates(
         strokes: List<Stroke>,
@@ -363,12 +387,15 @@ object HandwrittenMathRecognizer {
         if (strokes.isEmpty()) return emptyList()
         val results = LinkedHashSet<String>()
 
-        // 1. Primary: Direct unbroken ML Kit candidates!
+        // 1. Engine 1: Bundled 100% Offline Vision OCR (Reads visual stroke shapes directly from bitmap)
+        val visionCandidates = recognizeVisionText(strokes)
+        results.addAll(visionCandidates)
+
+        // 2. Engine 2: Digital Ink Recognition (Stroke trajectories with math pre-context)
         val rawCandidates = recognizeRawInkCandidates(strokes, variables)
         results.addAll(rawCandidates)
 
-        // 2. If depth < 2, generate spatial parsing candidates (stacked fractions and superscripts)
-        // This augments the candidate list without overriding or corrupting raw unbroken handwriting.
+        // 3. Engine 3: 2D Spatial Parsing for stacked fractions & superscripts
         if (depth < 2) {
             val fracSegment = detectStackedFraction(strokes)
             if (fracSegment != null) {
@@ -411,6 +438,95 @@ object HandwrittenMathRecognizer {
         return results.toList()
     }
 
+    private fun renderStrokesToBitmap(strokes: List<Stroke>): Bitmap? {
+        val bounds = strokesBounds(strokes) ?: return null
+        val w = bounds.width()
+        val h = bounds.height()
+        if (w <= 0f || h <= 0f) return null
+
+        val pad = max(24f, max(w, h) * 0.12f)
+        val targetW = (w + pad * 2f).toInt().coerceIn(80, 1600)
+        val targetH = (h + pad * 2f).toInt().coerceIn(60, 1200)
+
+        val bitmap = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.WHITE)
+
+        val medianH = strokes.mapNotNull { strokeBounds(it)?.height() }
+            .filter { it > 10f }
+            .sorted()
+            .let { if (it.isNotEmpty()) it[it.size / 2] else 40f }
+        val strokeWidth = (medianH * 0.10f).coerceIn(4f, 14f)
+
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            this.strokeWidth = strokeWidth
+        }
+
+        val temp = StrokeInput()
+        for (st in strokes) {
+            val inputs = st.inputs
+            val count = inputs.size
+            if (count < 2) {
+                if (count == 1) {
+                    inputs.populate(0, temp)
+                    val px = temp.x - bounds.left + pad
+                    val py = temp.y - bounds.top + pad
+                    canvas.drawCircle(px, py, strokeWidth * 0.6f, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = Color.BLACK
+                        style = Paint.Style.FILL
+                    })
+                }
+                continue
+            }
+
+            val path = Path()
+            inputs.populate(0, temp)
+            path.moveTo(temp.x - bounds.left + pad, temp.y - bounds.top + pad)
+            for (i in 1 until count) {
+                inputs.populate(i, temp)
+                path.lineTo(temp.x - bounds.left + pad, temp.y - bounds.top + pad)
+            }
+            canvas.drawPath(path, paint)
+        }
+        return bitmap
+    }
+
+    private suspend fun recognizeVisionText(strokes: List<Stroke>): List<String> {
+        ensureVisionInitialized()
+        val vr = visionRecognizer ?: return emptyList()
+        val bmp = renderStrokesToBitmap(strokes) ?: return emptyList()
+        return try {
+            val image = InputImage.fromBitmap(bmp, 0)
+            val visionText = withContext(Dispatchers.IO) {
+                awaitTask(vr.process(image))
+            } ?: return emptyList()
+
+            val results = LinkedHashSet<String>()
+            val fullText = visionText.text.trim()
+            if (fullText.isNotEmpty()) {
+                results.add(fullText)
+            }
+            for (block in visionText.textBlocks) {
+                val blockText = block.text.trim()
+                if (blockText.isNotEmpty()) results.add(blockText)
+                for (line in block.lines) {
+                    val lineText = line.text.trim()
+                    if (lineText.isNotEmpty()) results.add(lineText)
+                }
+            }
+            results.toList()
+        } catch (e: Exception) {
+            Log.w("MathVision", "Vision process error: ${e.message}")
+            emptyList()
+        } finally {
+            if (!bmp.isRecycled) bmp.recycle()
+        }
+    }
+
     private suspend fun recognizeBestSegmentText(
         strokes: List<Stroke>,
         variables: Map<String, Double>,
@@ -440,13 +556,29 @@ object HandwrittenMathRecognizer {
     ): List<String> {
         val rec = recognizer ?: return emptyList()
         val ink = buildMlKitInk(strokes)
-        val ctx = RecognitionContext.builder()
-            .setPreContext("")
+
+        // Pass 1: Math/numeric biased context
+        val mathCtx = RecognitionContext.builder()
+            .setPreContext("0123456789+-*/=()xyzabc")
             .build()
-        val result = withContext(Dispatchers.IO) {
-            awaitTask(rec.recognize(ink, ctx))
-        } ?: return emptyList()
-        return result.candidates.mapNotNull { it.text.trim().takeIf { t -> t.isNotEmpty() } }
+        val mathResult = withContext(Dispatchers.IO) {
+            awaitTask(rec.recognize(ink, mathCtx))
+        }
+
+        // Pass 2: Unbiased context
+        val genCtx = RecognitionContext.builder().setPreContext("").build()
+        val genResult = withContext(Dispatchers.IO) {
+            awaitTask(rec.recognize(ink, genCtx))
+        }
+
+        val set = LinkedHashSet<String>()
+        mathResult?.candidates?.forEach { c ->
+            c.text.trim().takeIf { it.isNotEmpty() }?.let { set.add(it) }
+        }
+        genResult?.candidates?.forEach { c ->
+            c.text.trim().takeIf { it.isNotEmpty() }?.let { set.add(it) }
+        }
+        return set.toList()
     }
 
     private data class FractionSplit(
@@ -716,27 +848,13 @@ object HandwrittenMathRecognizer {
     }
 
     private fun lineLooksLikeAssignment(line: List<Stroke>): Boolean {
-        if (line.size !in 3..45) return false
+        if (line.size !in 2..50) return false
         val items = line.mapNotNull { st -> strokeBounds(st)?.let { st to it } }
         val bars = items.filter { isHorizontalBar(it.second) }
-        if (bars.size < 2) return false
-        for (i in bars.indices) {
-            for (j in i + 1 until bars.size) {
-                val b1 = bars[i].second
-                val b2 = bars[j].second
-                val wAvg = (b1.width() + b2.width()) * 0.5f
-                val vGap = abs(b1.centerY() - b2.centerY())
-                val xDiff = abs(b1.centerX() - b2.centerX())
-                if (vGap in 4f..max(65f, wAvg * 1.4f) && xDiff <= max(32f, wAvg * 0.8f)) {
-                    val eqLeft = min(b1.left, b2.left)
-                    val eqRight = max(b1.right, b2.right)
-                    val hasLeft = items.any { it.second.centerX() < eqLeft + wAvg * 0.2f }
-                    val hasRight = items.any { it.second.centerX() > eqRight - wAvg * 0.2f }
-                    if (hasLeft && hasRight) return true
-                }
-            }
-        }
-        return false
+        // If it has at least 1 horizontal bar, let Dual-Engine recognize it
+        if (bars.isNotEmpty()) return true
+        // Also allow lines with 3-30 strokes where '=' might be slightly slanted
+        return line.size in 3..30
     }
 
     private fun recognizeLayoutGeometricFallback(strokes: List<Stroke>): String? {

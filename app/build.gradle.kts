@@ -13,8 +13,8 @@ android {
         applicationId = "com.lernspace.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "1.2.2"
+        versionCode = 6
+        versionName = "1.2.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -90,8 +90,9 @@ dependencies {
     implementation("com.llamatik:library:0.12.0")
     implementation("com.facebook.fbjni:fbjni:0.7.0")
 
-    // On-Device Handwriting / Digital Ink Recognition (Offline after ~20MB model download)
+    // On-Device Handwriting / Digital Ink & Bundled Vision OCR (100% Offline)
     implementation("com.google.mlkit:digital-ink-recognition:19.0.0")
+    implementation("com.google.mlkit:text-recognition:16.0.0")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
