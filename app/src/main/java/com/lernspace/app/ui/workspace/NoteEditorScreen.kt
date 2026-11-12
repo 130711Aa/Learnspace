@@ -1583,7 +1583,7 @@ private fun NotePaneViewport(
                                     val pageVars = HandwrittenMathRecognizer.extractVariableDeclarations(
                                         allStrokes = allStrokesSnapshot,
                                         excludeStrokes = excludeSet,
-                                        beforeBottomY = eqMatch.answerTopY + eqMatch.charHeight * 2.5f
+                                        beforeBottomY = eqMatch.answerTopY + kotlin.math.max(220f, eqMatch.charHeight * 5f)
                                     )
                                     val outcome = HandwrittenMathRecognizer.recognizeAndSolve(
                                         strokes = eqMatch.equationStrokes,

@@ -237,8 +237,8 @@ object HandwrittenMathRecognizer {
     suspend fun recognizeAndSolve(
         strokes: List<Stroke>,
         externalVariables: Map<String, Double> = emptyMap()
-    ): MathRecognitionOutcome? {
-        if (strokes.isEmpty()) return null
+    ): MathRecognitionOutcome? = withContext(Dispatchers.Default) {
+        if (strokes.isEmpty()) return@withContext null
 
         val lines = groupStrokesIntoLines(strokes)
         if (lines.size >= 2) {
@@ -252,10 +252,10 @@ object HandwrittenMathRecognizer {
                 }
             }
             val lastOutcome = recognizeSingleLineAndSolve(lines.last(), mergedVars)
-            if (lastOutcome != null) return lastOutcome
+            if (lastOutcome != null) return@withContext lastOutcome
         }
 
-        return recognizeSingleLineAndSolve(strokes, externalVariables)
+        recognizeSingleLineAndSolve(strokes, externalVariables)
     }
 
     /**
@@ -266,9 +266,9 @@ object HandwrittenMathRecognizer {
         allStrokes: List<Stroke>,
         excludeStrokes: Set<Stroke> = emptySet(),
         beforeBottomY: Float? = null
-    ): Map<String, Double> {
+    ): Map<String, Double> = withContext(Dispatchers.Default) {
         val candidateStrokes = allStrokes.filter { it !in excludeStrokes }
-        if (candidateStrokes.size < 2) return emptyMap()
+        if (candidateStrokes.size < 2) return@withContext emptyMap()
 
         val lines = groupStrokesIntoLines(candidateStrokes)
         val vars = LinkedHashMap<String, Double>()
@@ -280,12 +280,13 @@ object HandwrittenMathRecognizer {
             val chunks = splitLineByWideHorizontalGaps(line)
             for (chunk in chunks) {
                 if (!lineLooksLikeAssignment(chunk)) continue
-                val candidates = recognizeMathLayoutCandidates(chunk, vars)
+                // Skip Vision OCR for variable extraction to keep '=' trigger fast and avoid letter misreads
+                val candidates = recognizeRawInkCandidates(chunk, vars)
                 extractAssignmentsFromCandidates(candidates, vars)
             }
         }
         Log.d("MathInk", "Extracted page variables: $vars")
-        return vars
+        vars
     }
 
     private fun extractAssignmentsFromCandidates(
@@ -349,6 +350,12 @@ object HandwrittenMathRecognizer {
                 }
             }
         }
+
+        // Only use 0-MB digit-only geometric fallback if ML Kit is unavailable or produced no algebraic expression
+        val hasAlgebraicCandidate = candidates.any { c ->
+            c.any { it.isLetter() } && c.any { it in "+-*/^=" }
+        }
+        if (inkReady && hasAlgebraicCandidate) return null
 
         // Fallback: 0-MB built-in geometric math recognizer (including spatial fractions/powers)
         val fallbackExpr = recognizeLayoutGeometricFallback(strokes) ?: return null
@@ -892,13 +899,27 @@ object HandwrittenMathRecognizer {
     }
 
     private fun lineLooksLikeAssignment(line: List<Stroke>): Boolean {
-        if (line.size !in 2..50) return false
+        if (line.size !in 3..35) return false
         val items = line.mapNotNull { st -> strokeBounds(st)?.let { st to it } }
         val bars = items.filter { isHorizontalBar(it.second) }
-        // If it has at least 1 horizontal bar, let Dual-Engine recognize it
-        if (bars.isNotEmpty()) return true
-        // Also allow lines with 3-30 strokes where '=' might be slightly slanted
-        return line.size in 3..30
+        if (bars.size < 2) return false
+        for (i in bars.indices) {
+            for (j in i + 1 until bars.size) {
+                val b1 = bars[i].second
+                val b2 = bars[j].second
+                val wAvg = (b1.width() + b2.width()) * 0.5f
+                val vGap = abs(b1.centerY() - b2.centerY())
+                val xDiff = abs(b1.centerX() - b2.centerX())
+                if (vGap in 4f..max(60f, wAvg * 1.3f) && xDiff <= max(24f, wAvg * 0.6f)) {
+                    val eqLeft = min(b1.left, b2.left)
+                    val eqRight = max(b1.right, b2.right)
+                    val hasLeft = items.any { it.second.centerX() < eqLeft }
+                    val hasRight = items.any { it.second.centerX() > eqRight }
+                    if (hasLeft && hasRight) return true
+                }
+            }
+        }
+        return false
     }
 
     private fun recognizeLayoutGeometricFallback(strokes: List<Stroke>): String? {
