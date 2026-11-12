@@ -50,6 +50,10 @@ object MathExpressionEvaluator {
         // Expand Unicode vulgar fractions and superscript runs before character replacements
         s = expandUnicodeMathChars(s)
 
+        // Handle assignment with := or colon
+        s = s.replace(":=", "=")
+        s = s.replace(Regex("""(?<=^[a-zA-Z])\s*:\s*(?=[-+0-9])"""), "=")
+
         s = s.replace('·', '*')
             .replace('∙', '*')
             .replace('÷', '/')
@@ -500,7 +504,7 @@ object MathExpressionEvaluator {
         if (abs(clean - roundedInt) < 1e-7 && abs(roundedInt) < 1e12) {
             return roundedInt.toLong().toString()
         }
-        return BigDecimal(clean)
+        return BigDecimal.valueOf(clean)
             .setScale(4, RoundingMode.HALF_UP)
             .stripTrailingZeros()
             .toPlainString()

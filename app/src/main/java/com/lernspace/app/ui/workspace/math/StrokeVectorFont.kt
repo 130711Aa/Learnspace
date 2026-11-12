@@ -177,7 +177,17 @@ object StrokeVectorFont {
             ),
             widthRatio = 0.56f
         ),
+        '*' to GlyphDef(
+            listOf(
+                line(0.20f, 0.54f, 0.80f, 0.54f),
+                line(0.30f, 0.26f, 0.70f, 0.82f),
+                line(0.30f, 0.82f, 0.70f, 0.26f)
+            ),
+            widthRatio = 0.44f
+        ),
         '/' to GlyphDef(listOf(line(0.78f, 0.08f, 0.22f, 0.95f)), widthRatio = 0.44f),
+        '<' to GlyphDef(listOf(chain(line(0.80f, 0.24f, 0.20f, 0.54f), line(0.20f, 0.54f, 0.80f, 0.84f))), widthRatio = 0.46f),
+        '>' to GlyphDef(listOf(chain(line(0.20f, 0.24f, 0.80f, 0.54f), line(0.80f, 0.54f, 0.20f, 0.84f))), widthRatio = 0.46f),
         '(' to GlyphDef(listOf(quad(0.68f, 0.05f, 0.24f, 0.52f, 0.68f, 0.98f, steps = 10)), widthRatio = 0.34f),
         ')' to GlyphDef(listOf(quad(0.32f, 0.05f, 0.76f, 0.52f, 0.32f, 0.98f, steps = 10)), widthRatio = 0.34f),
         '^' to GlyphDef(
@@ -397,7 +407,7 @@ object StrokeVectorFont {
         charHeight: Float,
         brush: Brush
     ): List<Stroke> {
-        val h = charHeight.coerceIn(38f, 180f)
+        val h = charHeight.coerceIn(24f, 160f)
         val result = mutableListOf<Stroke>()
         var cursorX = startX
 

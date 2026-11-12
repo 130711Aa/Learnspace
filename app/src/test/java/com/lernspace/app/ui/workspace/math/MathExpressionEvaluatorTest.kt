@@ -94,4 +94,44 @@ class MathExpressionEvaluatorTest {
         assertEquals("11", MathExpressionEvaluator.solve("x = 5, y = 3, x + 2y =")?.formattedAnswer)
         assertEquals("x = 7", MathExpressionEvaluator.solve("2x + 1 = 15", vars)?.formattedAnswer)
     }
+
+    @Test
+    fun handwritingLookalikeCoercionPreservesAlgebra() {
+        // Must never destroy algebraic variables 'x', 'z', 's'
+        assertEquals("2x + 4 = 10", HandwrittenMathRecognizer.coerceHandwritingLookalikes("2x + 4 = 10"))
+        assertEquals("z = 4", HandwrittenMathRecognizer.coerceHandwritingLookalikes("z = 4"))
+        assertEquals("s = 5", HandwrittenMathRecognizer.coerceHandwritingLookalikes("s = 5"))
+        assertEquals("2z + 1 = 9", HandwrittenMathRecognizer.coerceHandwritingLookalikes("2z + 1 = 9"))
+
+        // Corrects digit lookalikes inside numbers
+        assertEquals("105", HandwrittenMathRecognizer.coerceHandwritingLookalikes("1O5"))
+        assertEquals("12", HandwrittenMathRecognizer.coerceHandwritingLookalikes("l2"))
+        assertEquals("55", HandwrittenMathRecognizer.coerceHandwritingLookalikes("5S"))
+        assertEquals("3.14", HandwrittenMathRecognizer.coerceHandwritingLookalikes("3.l4"))
+    }
+
+    @Test
+    fun quadraticAndColonAssignments() {
+        assertEquals("x = -4; 4", MathExpressionEvaluator.solve("x^2 = 16")?.formattedAnswer)
+        assertEquals("x = 2; 3", MathExpressionEvaluator.solve("x^2 - 5x + 6 = 0")?.formattedAnswer)
+        assertEquals("x = 5", MathExpressionEvaluator.solve("2x = 10")?.formattedAnswer)
+
+        val colonAssign = MathExpressionEvaluator.parseVariableAssignment("x : 5")
+        assertNotNull(colonAssign)
+        assertEquals("x", colonAssign!!.first)
+        assertEquals(5.0, colonAssign.second, 1e-6)
+
+        val walrusAssign = MathExpressionEvaluator.parseVariableAssignment("y := 12")
+        assertNotNull(walrusAssign)
+        assertEquals("y", walrusAssign!!.first)
+        assertEquals(12.0, walrusAssign.second, 1e-6)
+    }
+
+    @Test
+    fun numberFormattingCleanAndAccurate() {
+        assertEquals("5", MathExpressionEvaluator.formatNumber(5.0))
+        assertEquals("2.5", MathExpressionEvaluator.formatNumber(2.5))
+        assertEquals("-3", MathExpressionEvaluator.formatNumber(-3.0))
+        assertEquals("0.3", MathExpressionEvaluator.formatNumber(0.1 + 0.2))
+    }
 }

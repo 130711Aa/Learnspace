@@ -1583,7 +1583,7 @@ private fun NotePaneViewport(
                                     val pageVars = HandwrittenMathRecognizer.extractVariableDeclarations(
                                         allStrokes = allStrokesSnapshot,
                                         excludeStrokes = excludeSet,
-                                        beforeBottomY = eqMatch.answerTopY + eqMatch.charHeight * 1.1f
+                                        beforeBottomY = eqMatch.answerTopY + eqMatch.charHeight * 2.5f
                                     )
                                     val outcome = HandwrittenMathRecognizer.recognizeAndSolve(
                                         strokes = eqMatch.equationStrokes,
@@ -1992,7 +1992,7 @@ private fun NotePaneViewport(
                                                 val pageVars = HandwrittenMathRecognizer.extractVariableDeclarations(
                                                     allStrokes = allStrokesSnapshot,
                                                     excludeStrokes = selSet,
-                                                    beforeBottomY = selBottomY
+                                                    beforeBottomY = selBottomY + 60f
                                                 )
                                                 val outcome = HandwrittenMathRecognizer.recognizeAndSolve(
                                                     strokes = selStrokes,

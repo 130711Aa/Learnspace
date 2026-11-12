@@ -115,17 +115,18 @@ object HandwrittenMathRecognizer {
         val w2 = b2.width()
         val avgW = (w1 + w2) * 0.5f
         val ratio = max(w1, w2) / max(1f, min(w1, w2))
-        if (ratio > 2.4f) return null
+        if (ratio > 2.8f) return null
 
         // Horizontal overlap check
         val overlap = min(b1.right, b2.right) - max(b1.left, b2.left)
-        if (overlap < min(w1, w2) * 0.40f) return null
+        if (overlap < min(w1, w2) * 0.35f) return null
 
-        // Vertical separation check (not overlapping same line, not miles apart)
-        val topBar = if (b1.centerY() < b2.centerY()) b1 else b2
-        val botBar = if (b1.centerY() < b2.centerY()) b2 else b1
-        val centerGap = botBar.centerY() - topBar.centerY()
-        if (centerGap < 6f || centerGap > max(70f, avgW * 1.45f)) return null
+        // Vertical separation check (two distinct parallel bars, not identical stroke, not miles apart)
+        val centerGap = abs(b1.centerY() - b2.centerY())
+        if (centerGap < 4f || centerGap > max(75f, avgW * 1.55f)) return null
+
+        val horizDiff = abs(b1.centerX() - b2.centerX())
+        if (horizDiff > max(28f, avgW * 0.75f)) return null
 
         val eqBounds = RectF(
             min(b1.left, b2.left),
@@ -133,58 +134,67 @@ object HandwrittenMathRecognizer {
             max(b1.right, b2.right),
             max(b1.bottom, b2.bottom)
         )
+        val eqCenterY = eqBounds.centerY()
 
-        // Collect all strokes on the same line to the left of '='
+        // Collect all candidate strokes drawn prior to '=' largely to the left of '='
         val candidates = mutableListOf<Pair<Stroke, RectF>>()
         for (i in 0 until allStrokes.size - 2) {
             val st = allStrokes[i]
             val b = strokeBounds(st) ?: continue
-            // Must be largely to the left of '=' right edge
             if (b.centerX() < eqBounds.left + avgW * 0.25f) {
                 candidates.add(st to b)
             }
         }
         if (candidates.isEmpty()) return null
 
-        // Estimate line height from strokes near '=' vertically
-        val eqCenterY = eqBounds.centerY()
-        val bandTolerance = max(95f, avgW * 2.6f)
+        // Estimate line height from strokes physically near '=' on the same line
+        val nearby = candidates.filter { (_, b) ->
+            b.right >= eqBounds.left - 220f && abs(b.centerY() - eqCenterY) <= 75f
+        }
+        val pool = if (nearby.isNotEmpty()) nearby else candidates
+        val medianH = pool.map { it.second.height() }.sorted().let { it[it.size / 2] }.coerceIn(24f, 130f)
+
+        // Strict vertical band to prevent pulling in strokes from notes/lines above or below
+        val bandTolerance = max(45f, medianH * 1.15f)
         val sameBand = candidates.filter { (_, b) ->
-            abs(b.centerY() - eqCenterY) <= bandTolerance
+            abs(b.centerY() - eqCenterY) <= bandTolerance &&
+                b.bottom >= eqBounds.top - medianH * 0.5f &&
+                b.top <= eqBounds.bottom + medianH * 0.5f
         }.sortedByDescending { it.second.right }
 
         if (sameBand.isEmpty()) return null
 
-        val medianH = sameBand.map { it.second.height() }.sorted().let { it[it.size / 2] }.coerceIn(32f, 130f)
-        val maxGap = max(140f, medianH * 3.4f)
-
-        val picked = mutableListOf<Pair<Stroke, RectF>>()
+        val maxGap = max(65f, medianH * 2.0f)
+        val pickedStrokesSet = LinkedHashSet<Stroke>()
         var frontierLeft = eqBounds.left
-        for (pair in sameBand) {
-            val (_, b) = pair
-            // Connected if its right edge is within maxGap of the current leftmost equation frontier
-            if (frontierLeft - b.right <= maxGap) {
-                picked.add(pair)
-                frontierLeft = min(frontierLeft, b.left)
-            } else {
-                break
+
+        for (i in sameBand.indices) {
+            val (st, b) = sameBand[i]
+            // Stop if there is a wide horizontal gap between terms
+            if (frontierLeft - b.right > maxGap) break
+
+            // Stop if we encounter a preceding '=' sign (e.g. from an earlier equation on the line)
+            if (i + 1 < sameBand.size && isHorizontalBar(b)) {
+                val nextB = sameBand[i + 1].second
+                if (isHorizontalBar(nextB) && abs(b.centerX() - nextB.centerX()) <= max(24f, b.width() * 0.6f) &&
+                    abs(b.centerY() - nextB.centerY()) in 4f..50f
+                ) {
+                    // Preceding '=' encountered: stop walk leftward
+                    break
+                }
             }
+
+            pickedStrokesSet.add(st)
+            frontierLeft = min(frontierLeft, b.left)
         }
 
-        if (picked.isEmpty()) return null
+        if (pickedStrokesSet.isEmpty()) return null
 
-        val equationStrokes = picked.map { it.first }.reversed()
-        val sortedHeights = picked.map { it.second.height() }
-            .filter { it > max(20f, medianH * 0.55f) }
-            .sorted()
-        val refCharHeight = if (sortedHeights.isNotEmpty()) {
-            val p75 = sortedHeights[(sortedHeights.size * 3 / 4).coerceAtMost(sortedHeights.lastIndex)]
-            (p75 * 1.12f).coerceIn(58f, 165f)
-        } else {
-            (medianH * 1.15f).coerceIn(58f, 165f)
-        }
+        // Maintain original chronological stroke order for ML Kit accuracy
+        val equationStrokes = allStrokes.filter { it in pickedStrokesSet }
+        val refCharHeight = medianH.coerceIn(28f, 110f)
 
-        val answerStartX = eqBounds.right + max(24f, refCharHeight * 0.42f)
+        val answerStartX = eqBounds.right + max(16f, refCharHeight * 0.38f)
         val answerTopY = eqCenterY - refCharHeight * 0.5f
 
         return EqualsTriggerMatch(
@@ -199,7 +209,7 @@ object HandwrittenMathRecognizer {
     private fun isHorizontalBar(b: RectF): Boolean {
         val w = b.width()
         val h = b.height()
-        return w in 12f..320f && h <= max(22f, w * 0.52f)
+        return w in 10f..350f && h <= max(30f, w * 0.65f) && w >= h * 0.85f
     }
 
     suspend fun recognizeAndSolve(
@@ -341,8 +351,9 @@ object HandwrittenMathRecognizer {
     }
 
     /**
-     * Combines 2D spatial parsing (stacked fractions & superscript powers) with ML Kit Digital Ink
-     * so written fractions like a/b stacked vertically and powers like 2^3 or x^2 recognize reliably.
+     * Combines direct ML Kit Digital Ink recognition with 2D spatial parsing
+     * (stacked fractions & superscript powers) so written fractions like a/b and
+     * powers like 2^3 or x^2 recognize reliably without mangling unbroken handwriting.
      */
     private suspend fun recognizeMathLayoutCandidates(
         strokes: List<Stroke>,
@@ -352,8 +363,13 @@ object HandwrittenMathRecognizer {
         if (strokes.isEmpty()) return emptyList()
         val results = LinkedHashSet<String>()
 
-        if (depth < 3) {
-            // 1. Check stacked horizontal fraction bars first
+        // 1. Primary: Direct unbroken ML Kit candidates!
+        val rawCandidates = recognizeRawInkCandidates(strokes, variables)
+        results.addAll(rawCandidates)
+
+        // 2. If depth < 2, generate spatial parsing candidates (stacked fractions and superscripts)
+        // This augments the candidate list without overriding or corrupting raw unbroken handwriting.
+        if (depth < 2) {
             val fracSegment = detectStackedFraction(strokes)
             if (fracSegment != null) {
                 val leftExpr = if (fracSegment.leftStrokes.isNotEmpty()) {
@@ -375,7 +391,6 @@ object HandwrittenMathRecognizer {
                 }
             }
 
-            // 2. Check raised superscript exponents (e.g. 2^3, x^2, (x+1)^2)
             val supSplit = detectSuperscriptSplit(strokes)
             if (supSplit != null) {
                 val baseExpr = recognizeBestSegmentText(supSplit.baseStrokes, variables, depth + 1)
@@ -393,8 +408,6 @@ object HandwrittenMathRecognizer {
             }
         }
 
-        // 3. Always include direct ML Kit candidates as well
-        results.addAll(recognizeRawInkCandidates(strokes, variables))
         return results.toList()
     }
 
@@ -455,15 +468,33 @@ object HandwrittenMathRecognizer {
         val items = strokes.mapNotNull { st -> strokeBounds(st)?.let { st to it } }
         if (items.size < 3) return null
 
-        // Prefer wide horizontal bars near the middle vertical band that have both strokes above and below
+        // A fraction bar MUST be a clean, wide horizontal stroke
         val bars = items.filter { (_, b) ->
             val w = b.width()
             val h = b.height()
-            w >= 26f && h <= max(18f, w * 0.25f)
+            w >= 24f && h <= max(18f, w * 0.28f) && w >= h * 3.0f
         }.sortedByDescending { it.second.width() }
 
         for ((barStroke, barBox) in bars) {
-            val padX = max(14f, barBox.width() * 0.14f)
+            // Check that this bar is NOT part of an '=' sign (another parallel bar of similar width and position)
+            val hasParallelBar = items.any { (otherSt, ob) ->
+                otherSt !== barStroke &&
+                abs(ob.width() - barBox.width()) <= max(18f, barBox.width() * 0.45f) &&
+                abs(ob.centerX() - barBox.centerX()) <= max(18f, barBox.width() * 0.35f) &&
+                abs(ob.centerY() - barBox.centerY()) in 4f..max(60f, barBox.width() * 1.2f)
+            }
+            if (hasParallelBar) continue
+
+            // Check that no vertical stroke cuts through the bar (e.g. '+' sign or '4')
+            val isIntersected = items.any { (otherSt, ob) ->
+                otherSt !== barStroke &&
+                ob.height() > barBox.height() * 2.5f &&
+                ob.left >= barBox.left - 4f && ob.right <= barBox.right + 4f &&
+                ob.top < barBox.centerY() && ob.bottom > barBox.centerY()
+            }
+            if (isIntersected) continue
+
+            val padX = max(8f, barBox.width() * 0.10f)
             val spanLeft = barBox.left - padX
             val spanRight = barBox.right + padX
 
@@ -477,23 +508,25 @@ object HandwrittenMathRecognizer {
                 val cx = b.centerX()
                 val cy = b.centerY()
                 val overlapsBarX = cx in spanLeft..spanRight ||
-                    (min(b.right, barBox.right) - max(b.left, barBox.left)) > b.width() * 0.45f
-                if (overlapsBarX && cy < barBox.centerY() - 4f && b.bottom <= barBox.bottom + 14f) {
+                    (min(b.right, barBox.right) - max(b.left, barBox.left)) > b.width() * 0.40f
+
+                if (overlapsBarX && b.bottom <= barBox.centerY() + 4f) {
                     above.add(st)
-                } else if (overlapsBarX && cy > barBox.centerY() + 4f && b.top >= barBox.top - 14f) {
+                } else if (overlapsBarX && b.top >= barBox.centerY() - 4f) {
                     below.add(st)
-                } else if (b.right <= barBox.left + 8f) {
+                } else if (b.right <= barBox.left) {
                     left.add(st)
-                } else if (b.left >= barBox.right - 8f) {
+                } else if (b.left >= barBox.right) {
                     right.add(st)
                 }
             }
 
             if (above.isEmpty() || below.isEmpty()) continue
-            // Reject '=' sign where above & below are just single horizontal bars
-            val aboveSingleBar = above.size == 1 && (strokeBounds(above[0])?.let { isHorizontalBar(it) } == true)
-            val belowSingleBar = below.size == 1 && (strokeBounds(below[0])?.let { isHorizontalBar(it) } == true)
-            if (aboveSingleBar || belowSingleBar) continue
+
+            // Neither above nor below can be an '=' sign
+            val hasEqualAbove = above.size >= 2 && itemsLookLikeEquals(above)
+            val hasEqualBelow = below.size >= 2 && itemsLookLikeEquals(below)
+            if (hasEqualAbove || hasEqualBelow) continue
 
             return FractionSplit(
                 leftStrokes = left,
@@ -504,6 +537,25 @@ object HandwrittenMathRecognizer {
             )
         }
         return null
+    }
+
+    private fun itemsLookLikeEquals(strokes: List<Stroke>): Boolean {
+        val items = strokes.mapNotNull { st -> strokeBounds(st)?.let { st to it } }
+        val bars = items.filter { isHorizontalBar(it.second) }
+        if (bars.size < 2) return false
+        for (i in bars.indices) {
+            for (j in i + 1 until bars.size) {
+                val b1 = bars[i].second
+                val b2 = bars[j].second
+                val wAvg = (b1.width() + b2.width()) * 0.5f
+                val vGap = abs(b1.centerY() - b2.centerY())
+                val xDiff = abs(b1.centerX() - b2.centerX())
+                if (vGap in 4f..max(60f, wAvg * 1.3f) && xDiff <= max(24f, wAvg * 0.6f)) {
+                    return true
+                }
+            }
+        }
+        return false
     }
 
     private fun detectSuperscriptSplit(strokes: List<Stroke>): SuperscriptSplit? {
@@ -664,7 +716,7 @@ object HandwrittenMathRecognizer {
     }
 
     private fun lineLooksLikeAssignment(line: List<Stroke>): Boolean {
-        if (line.size !in 3..40) return false
+        if (line.size !in 3..45) return false
         val items = line.mapNotNull { st -> strokeBounds(st)?.let { st to it } }
         val bars = items.filter { isHorizontalBar(it.second) }
         if (bars.size < 2) return false
@@ -675,11 +727,11 @@ object HandwrittenMathRecognizer {
                 val wAvg = (b1.width() + b2.width()) * 0.5f
                 val vGap = abs(b1.centerY() - b2.centerY())
                 val xDiff = abs(b1.centerX() - b2.centerX())
-                if (vGap in 4f..max(48f, wAvg * 1.1f) && xDiff <= max(28f, wAvg * 0.65f)) {
+                if (vGap in 4f..max(65f, wAvg * 1.4f) && xDiff <= max(32f, wAvg * 0.8f)) {
                     val eqLeft = min(b1.left, b2.left)
                     val eqRight = max(b1.right, b2.right)
-                    val hasLeft = items.any { it.second.centerX() < eqLeft }
-                    val hasRight = items.any { it.second.centerX() > eqRight }
+                    val hasLeft = items.any { it.second.centerX() < eqLeft + wAvg * 0.2f }
+                    val hasRight = items.any { it.second.centerX() > eqRight - wAvg * 0.2f }
                     if (hasLeft && hasRight) return true
                 }
             }
@@ -713,38 +765,58 @@ object HandwrittenMathRecognizer {
         return recognizeGeometricFallback(strokes)
     }
 
-    private fun coerceHandwritingLookalikes(raw: String, declaredVars: Set<String> = emptySet()): String {
+    fun coerceHandwritingLookalikes(raw: String, declaredVars: Set<String> = emptySet()): String {
+        if (raw.isBlank()) return raw
         val lowerVars = declaredVars.map { it.lowercase() }.toSet()
-        val sb = StringBuilder(raw.length)
-        for (i in raw.indices) {
-            val ch = raw[i]
-            val lower = ch.lowercaseChar().toString()
-            if (lower in lowerVars) {
-                sb.append(ch)
-                continue
+
+        // If the expression contains an assignment like "z = 5" or "s = 10", protect the LHS variable name
+        val eqIdx = raw.indexOf('=')
+        val lhs = if (eqIdx > 0) raw.substring(0, eqIdx) else ""
+        val rhs = if (eqIdx > 0) raw.substring(eqIdx) else raw
+
+        fun fixSegment(str: String, isLhsOfAssignment: Boolean): String {
+            if (isLhsOfAssignment) return str
+            val sb = StringBuilder(str.length)
+            for (i in str.indices) {
+                val ch = str[i]
+                val lower = ch.lowercaseChar().toString()
+                if (lower in lowerVars) {
+                    sb.append(ch)
+                    continue
+                }
+                // Do not corrupt built-in function names or constants (sqrt, sin, cos, tan, log, ln, abs, pi, e)
+                val partOfAlphaWord = (i > 0 && str[i - 1].isLetter() && str[i - 1] !in "xX") ||
+                    (i < str.lastIndex && str[i + 1].isLetter() && str[i + 1] !in "xX")
+                if (partOfAlphaWord) {
+                    sb.append(ch)
+                    continue
+                }
+
+                val prevIsDigit = i > 0 && (str[i - 1].isDigit() || str[i - 1] == '.')
+                val nextIsDigit = i < str.lastIndex && (str[i + 1].isDigit() || str[i + 1] == '.')
+
+                // Only coerce letter lookalikes to digits when adjacent to digits or inside numbers.
+                // NEVER turn 'x' or 'X' into '*' here; our parser supports implicit multiplication (e.g. 2x, xy)
+                // and equation solving with variable 'x' naturally!
+                val mapped = when (ch) {
+                    'o', 'O' -> if (prevIsDigit || nextIsDigit) '0' else ch
+                    'l', 'I' -> if (prevIsDigit || nextIsDigit) '1' else ch
+                    's', 'S' -> if (prevIsDigit || nextIsDigit) '5' else ch
+                    'z', 'Z' -> if (prevIsDigit || nextIsDigit) '2' else ch
+                    'B' -> if (prevIsDigit || nextIsDigit) '8' else ch
+                    'q', 'g' -> if (prevIsDigit || nextIsDigit) '9' else ch
+                    else -> ch
+                }
+                sb.append(mapped)
             }
-            // Do not corrupt built-in function names (sqrt, sin, cos, tan, log, ln, abs, pi)
-            val partOfAlphaWord = (i > 0 && raw[i - 1].isLetter() && raw[i - 1] != 'x' && raw[i - 1] != 'X') ||
-                (i < raw.lastIndex && raw[i + 1].isLetter() && raw[i + 1] != 'x' && raw[i + 1] != 'X')
-            if (partOfAlphaWord) {
-                sb.append(ch)
-                continue
-            }
-            val prevIsDigitOrOp = i > 0 && (raw[i - 1].isDigit() || raw[i - 1] in "+-*/().^ ")
-            val nextIsDigitOrOp = i < raw.lastIndex && (raw[i + 1].isDigit() || raw[i + 1] in "+-*/().^ ")
-            val mapped = when (ch) {
-                'z', 'Z' -> '2'
-                's', 'S' -> '5'
-                'o', 'O' -> '0'
-                'l', 'I' -> '1'
-                'B' -> '8'
-                'q', 'g' -> '9'
-                'x', 'X' -> if (prevIsDigitOrOp && nextIsDigitOrOp && "x" !in lowerVars) '*' else ch
-                else -> ch
-            }
-            sb.append(mapped)
+            return sb.toString()
         }
-        return sb.toString()
+
+        return if (eqIdx > 0) {
+            fixSegment(lhs, isLhsOfAssignment = true) + fixSegment(rhs, isLhsOfAssignment = false)
+        } else {
+            fixSegment(raw, isLhsOfAssignment = false)
+        }
     }
 
     private fun buildMlKitInk(strokes: List<Stroke>): Ink {
