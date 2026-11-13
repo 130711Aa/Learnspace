@@ -370,7 +370,7 @@ enum class FlashcardRating(val label: String) {
 }
 
 fun previewIntervalLabel(card: FlashcardUi, rating: FlashcardRating): String {
-    if (rating == FlashcardRating.AGAIN) return "< 10 mnt"
+    if (rating == FlashcardRating.AGAIN) return "10 mnt"
     val next = computeSm2Review(card, rating)
     val days = next.intervalDays
     return when {
@@ -385,39 +385,61 @@ fun computeSm2Review(
     rating: FlashcardRating,
     nowMs: Long = System.currentTimeMillis()
 ): FlashcardUi {
+    // FSRS-inspired Memory Stability & Spaced Interval Engine
+    // Menghasilkan jeda review yang lebih cerdas dan alami tanpa kerumitan kalkulasi berat
     val quality = when (rating) {
         FlashcardRating.AGAIN -> 1
-        FlashcardRating.HARD -> 3
-        FlashcardRating.GOOD -> 4
-        FlashcardRating.EASY -> 5
+        FlashcardRating.HARD -> 2
+        FlashcardRating.GOOD -> 3
+        FlashcardRating.EASY -> 4
     }
+
     var reps = card.repetitions
     var interval = card.intervalDays
-    var ef = card.easeFactor
+    var ef = card.easeFactor // Used as Memory Stability Factor (1.3f to 3.0f)
 
-    if (quality < 3) {
+    if (quality <= 1) {
+        // Lupa: reset repetisi, ulangi dalam 10 menit
         reps = 0
         interval = 0
+        ef = (ef - 0.2f).coerceAtLeast(1.3f)
     } else {
+        // Ingat / Sukses
         interval = when (reps) {
-            0 -> if (rating == FlashcardRating.EASY) 4 else 1
-            1 -> if (rating == FlashcardRating.HARD) 3 else if (rating == FlashcardRating.EASY) 8 else 6
+            0 -> when (rating) {
+                FlashcardRating.EASY -> 3
+                FlashcardRating.GOOD -> 1
+                else -> 1 // HARD
+            }
+            1 -> when (rating) {
+                FlashcardRating.EASY -> 7
+                FlashcardRating.GOOD -> 3
+                else -> 2 // HARD
+            }
             else -> {
-                val mult = when (rating) {
-                    FlashcardRating.HARD -> 1.2f
+                val multiplier = when (rating) {
+                    FlashcardRating.HARD -> 1.25f
                     FlashcardRating.GOOD -> ef
-                    FlashcardRating.EASY -> ef * 1.3f
+                    FlashcardRating.EASY -> ef * 1.35f
                     FlashcardRating.AGAIN -> 0f
                 }
-                kotlin.math.max(interval + 1, (interval * mult).toInt())
+                kotlin.math.max(interval + 1, (interval * multiplier).toInt())
             }
         }
         reps += 1
+
+        // Dynamic Stability Adjustment
+        val delta = when (rating) {
+            FlashcardRating.EASY -> 0.15f
+            FlashcardRating.GOOD -> 0.02f
+            FlashcardRating.HARD -> -0.15f
+            FlashcardRating.AGAIN -> -0.2f
+        }
+        ef = (ef + delta).coerceIn(1.3f, 3.2f)
     }
 
-    ef = (ef + (0.1f - (5 - quality) * (0.08f + (5 - quality) * 0.02f))).coerceAtLeast(1.3f)
     val nextReviewMs = if (interval == 0) {
-        nowMs + 10 * 60 * 1000L // 10 minutes for Again
+        nowMs + 10 * 60 * 1000L // 10 menit
     } else {
         nowMs + interval * 24L * 60L * 60L * 1000L
     }

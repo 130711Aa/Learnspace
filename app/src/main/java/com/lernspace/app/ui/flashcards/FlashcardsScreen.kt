@@ -1288,20 +1288,21 @@ private fun FlashcardStudyDialog(
                     } else {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             val ratings = listOf(
-                                Triple(FlashcardRating.AGAIN, "Lupa", false),
-                                Triple(FlashcardRating.GOOD, "Ingat", true)
+                                Triple(FlashcardRating.AGAIN, "Lupa", AccentRed),
+                                Triple(FlashcardRating.HARD, "Sulit", AccentAmber),
+                                Triple(FlashcardRating.GOOD, "Bagus", AccentBlue),
+                                Triple(FlashcardRating.EASY, "Mudah", AccentTeal)
                             )
-                            ratings.forEach { (rating, label, isPrimary) ->
-                                val bg = if (isPrimary) LernspaceDark else LernspaceSurfaceLow
-                                val fg = if (isPrimary) LernspaceSurfaceCard else LernspaceTextPrimary
-                                val borderColor = if (isPrimary) LernspaceDark else LernspaceBorder
+                            ratings.forEach { (rating, label, accentColor) ->
+                                val intervalText = previewIntervalLabel(currentCard, rating)
+                                val isSelectedAction = rating == FlashcardRating.GOOD
                                 Surface(
                                     shape = RoundedCornerShape(12.dp),
-                                    color = bg,
-                                    border = BorderStroke(1.dp, borderColor),
+                                    color = if (isSelectedAction) LernspaceDark else LernspaceSurfaceLow,
+                                    border = BorderStroke(1.dp, if (isSelectedAction) LernspaceDark else LernspaceBorder),
                                     modifier = Modifier
                                         .weight(1f)
                                         .clip(RoundedCornerShape(12.dp))
@@ -1317,11 +1318,23 @@ private fun FlashcardStudyDialog(
                                             currentIndex++
                                         }
                                 ) {
-                                    Box(
-                                        modifier = Modifier.padding(vertical = 14.dp, horizontal = 12.dp),
-                                        contentAlignment = Alignment.Center
+                                    Column(
+                                        modifier = Modifier.padding(vertical = 10.dp, horizontal = 6.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(2.dp)
                                     ) {
-                                        Text(label, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = fg)
+                                        Text(
+                                            text = intervalText,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isSelectedAction) Color(0xFF93C5FD) else accentColor
+                                        )
+                                        Text(
+                                            text = label,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = if (isSelectedAction) Color.White else LernspaceTextPrimary
+                                        )
                                     }
                                 }
                             }
@@ -1645,6 +1658,8 @@ private fun GenerateFlashcardsFromNoteDialog(
         HandwrittenNoteRecognizer.countHandwrittenStrokes(activeSourcePages)
     }
 
+    // 0-Token Offline Preview: Hanya membaca offline lokal (ML Kit / Cache) untuk cek kesiapan bahan,
+    // TIDAK memanggil Gemini Vision di latar belakang agar hemat token dan bebas rate limit.
     LaunchedEffect(sourceMode, selectedNote?.id, selectedTopic?.id, activeStrokeCount) {
         recognizedHandwritingText = ""
         handwritingStatus = null
@@ -1653,7 +1668,6 @@ private fun GenerateFlashcardsFromNoteDialog(
             return@LaunchedEffect
         }
         val cacheId = if (sourceMode == 0) selectedNote?.id ?: "note" else "topic_${selectedTopic?.id ?: ""}"
-        val titleForVision = if (sourceMode == 0) selectedNote?.title ?: "Catatan" else selectedTopic?.title ?: "Sub-bab"
         isRecognizingInk = true
         try {
             val offlineRes = HandwrittenNoteRecognizer.recognizePagesOffline(
@@ -1663,22 +1677,11 @@ private fun GenerateFlashcardsFromNoteDialog(
             if (offlineRes.text.isNotBlank()) {
                 recognizedHandwritingText = offlineRes.text
                 handwritingStatus = offlineRes.sourceLabel
-            } else if (hasGeminiReady) {
-                handwritingStatus = "Membaca tulisan tangan via ${GeminiApiClient.selectedModelId} Vision..."
-                val visionRes = HandwrittenNoteRecognizer.recognizePagesWithGeminiVision(
-                    cacheKeyId = cacheId,
-                    pages = activeSourcePages,
-                    topicTitle = titleForVision
-                )
-                visionRes.onSuccess { vr ->
-                    recognizedHandwritingText = vr.text
-                    handwritingStatus = vr.sourceLabel
-                }.onFailure {
-                    handwritingStatus = offlineRes.sourceLabel
-                }
             } else {
                 handwritingStatus = offlineRes.sourceLabel
             }
+        } catch (_: Exception) {
+            // Ignore
         } finally {
             isRecognizingInk = false
         }

@@ -11,6 +11,7 @@ import android.graphics.RectF
 import android.graphics.pdf.PdfDocument
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
+import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
 import android.text.StaticLayout
@@ -367,12 +368,35 @@ object PdfNoteHelper {
                     }
                 }
 
-                // 3. Draw Vector Strokes for this page
+                // 3. Draw Vector Strokes for this page (Under-ink rendering: Highlighters first, Pens on top)
                 if (pageIdx < note.pages.size) {
                     val pageData = note.pages[pageIdx]
                     val identityMatrix = android.graphics.Matrix()
+
+                    // 3a. Pass 1: Draw highlighters underneath
                     for (stroke in pageData.strokes) {
-                        strokeRenderer.draw(canvas, stroke, identityMatrix)
+                        if (stroke.brush.family == androidx.ink.brush.StockBrushes.highlighter()) {
+                            strokeRenderer.draw(canvas, stroke, identityMatrix)
+                        }
+                    }
+
+                    // 3b. Pass 2: Draw pens and shapes on top (with smart inversion for dark-mode strokes)
+                    for (stroke in pageData.strokes) {
+                        if (stroke.brush.family != androidx.ink.brush.StockBrushes.highlighter()) {
+                            // If stroke was drawn in dark paper off-white (#F8FAFC), render as dark ink (#191C1E) on white PDF
+                            if (stroke.brush.colorIntArgb == 0xFFF8FAFC.toInt()) {
+                                val correctedBrush = androidx.ink.brush.Brush.createWithColorIntArgb(
+                                    family = stroke.brush.family,
+                                    colorIntArgb = 0xFF191C1E.toInt(),
+                                    size = stroke.brush.size,
+                                    epsilon = stroke.brush.epsilon
+                                )
+                                val correctedStroke = androidx.ink.strokes.Stroke(correctedBrush, stroke.inputs)
+                                strokeRenderer.draw(canvas, correctedStroke, identityMatrix)
+                            } else {
+                                strokeRenderer.draw(canvas, stroke, identityMatrix)
+                            }
+                        }
                     }
                 }
 
@@ -520,6 +544,41 @@ object PdfNoteHelper {
             context.startActivity(Intent.createChooser(intent, "Share PDF Note"))
         } catch (e: Exception) {
             e.printStackTrace()
+        }
+    }
+
+    /**
+     * Saves the exported PDF file into the public Downloads directory so the student
+     * can easily find, read offline, or backup their document using any file manager.
+     */
+    fun savePdfToDownloads(context: Context, file: File): Boolean {
+        return try {
+            val fileName = file.name
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val values = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                    put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
+                    put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
+                }
+                val resolver = context.contentResolver
+                val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return false
+                resolver.openOutputStream(uri)?.use { out ->
+                    file.inputStream().use { input ->
+                        input.copyTo(out)
+                    }
+                }
+                true
+            } else {
+                @Suppress("DEPRECATION")
+                val downloadsDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                if (!downloadsDir.exists()) downloadsDir.mkdirs()
+                val destFile = File(downloadsDir, fileName)
+                file.copyTo(destFile, overwrite = true)
+                true
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
         }
     }
 }

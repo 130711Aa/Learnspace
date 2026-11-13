@@ -37,6 +37,7 @@ import com.lernspace.app.core.updater.AppReleaseInfo
 import com.lernspace.app.core.updater.UpdateManager
 import com.lernspace.app.data.local.AppSettingsManager
 import com.lernspace.app.data.local.AppThemeMode
+import com.lernspace.app.data.local.BackupRestoreManager
 import com.lernspace.app.data.local.Handedness
 import com.lernspace.app.data.local.ShapeSnapSensitivity
 import com.lernspace.app.data.local.TouchInputMode
@@ -49,6 +50,7 @@ private enum class SettingsCategory(val title: String, val subtitle: String, val
     APPEARANCE("Tampilan & Tema", "Mode gelap, terang, sistem", Icons.Filled.Palette),
     WORKSPACE_DEFAULTS("Format Catatan", "Template kertas bawaan", Icons.AutoMirrored.Filled.MenuBook),
     OFFLINE_AI("AI & SLM Offline", "Model lokal, RAM, dan unduhan", Icons.Filled.AutoAwesome),
+    BACKUP_RESTORE("Cadangan & Pemulihan", "Backup .lernspace ZIP & Restore", Icons.Filled.Backup),
     ABOUT("Tentang & Sistem", "Info versi dan status memori", Icons.Filled.Info)
 }
 
@@ -223,6 +225,11 @@ fun SettingsScreen(
                         SettingsCategory.OFFLINE_AI -> {
                             item {
                                 OfflineSlmSection()
+                            }
+                        }
+                        SettingsCategory.BACKUP_RESTORE -> {
+                            item {
+                                BackupRestoreSection()
                             }
                         }
                         SettingsCategory.ABOUT -> {
@@ -1607,4 +1614,249 @@ private fun OfflineSlmSection() {
         }
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SECTION: CADANGAN & PEMULIHAN (.lernspace ZIP)
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun BackupRestoreSection() {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+
+    var isProcessing by remember { mutableStateOf(false) }
+    var statusMessage by remember { mutableStateOf<String?>(null) }
+    var isError by remember { mutableStateOf(false) }
+    var showRestoreConfirmDialog by remember { mutableStateOf(false) }
+    var pendingRestoreUri by remember { mutableStateOf<Uri?>(null) }
+
+    // Backup Launcher (Save to file)
+    val createBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri: Uri? ->
+        uri?.let { targetUri ->
+            isProcessing = true
+            statusMessage = "Membuat arsip cadangan .lernspace..."
+            isError = false
+            coroutineScope.launch {
+                val res = BackupRestoreManager.createBackup(context, targetUri)
+                isProcessing = false
+                isError = !res.success
+                statusMessage = res.message
+            }
+        }
+    }
+
+    // Restore Launcher (Pick file)
+    val openRestoreLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri?.let { pickedUri ->
+            pendingRestoreUri = pickedUri
+            showRestoreConfirmDialog = true
+        }
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
+        // Header
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                text = "Cadangan & Pemulihan Data",
+                style = MaterialTheme.typography.titleLarge,
+                color = LernspaceDark,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "Simpan seluruh catatan tulisan tangan, jadwal, dokumen, dan pengaturan ke file arsip .lernspace (ZIP) agar data aman saat ganti perangkat.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = LernspaceTextSecondary
+            )
+        }
+
+        // Status Card
+        if (statusMessage != null) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = if (isError) AccentRed.copy(alpha = 0.1f) else AccentTeal.copy(alpha = 0.1f),
+                border = BorderStroke(1.dp, if (isError) AccentRed else AccentTeal),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Icon(
+                        imageVector = if (isError) Icons.Filled.ErrorOutline else Icons.Filled.CheckCircle,
+                        contentDescription = null,
+                        tint = if (isError) AccentRed else AccentTeal,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Text(
+                        text = statusMessage!!,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = if (isError) AccentRed else AccentTeal
+                    )
+                }
+            }
+        }
+
+        // Card 1: Ekspor Cadangan
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = LernspaceSurfaceLow,
+            border = BorderStroke(1.dp, LernspaceBorder),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(AccentBlue.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Filled.CloudUpload, null, tint = AccentBlue, modifier = Modifier.size(22.dp))
+                    }
+                    Column {
+                        Text("Buat Cadangan Lengkap (.lernspace)", fontWeight = FontWeight.Bold, color = LernspaceDark, fontSize = 15.sp)
+                        Text("Mengompres database SQLite, semua stroke tulisan tangan, gambar, dan lampiran PDF.", fontSize = 12.sp, color = LernspaceTextSecondary)
+                    }
+                }
+
+                Button(
+                    enabled = !isProcessing,
+                    onClick = {
+                        createBackupLauncher.launch(BackupRestoreManager.generateDefaultBackupFileName())
+                    },
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = LernspaceDark,
+                        contentColor = Color.White
+                    ),
+                    modifier = Modifier.fillMaxWidth().height(44.dp)
+                ) {
+                    if (isProcessing && statusMessage?.contains("Membuat") == true) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
+                        Spacer(modifier = Modifier.width(8.dp))
+                    } else {
+                        Icon(Icons.Filled.FileDownload, null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+                    Text("Pilih Lokasi & Simpan Cadangan", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                }
+            }
+        }
+
+        // Card 2: Pulihkan Cadangan
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = LernspaceSurfaceLow,
+            border = BorderStroke(1.dp, LernspaceBorder),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(AccentTeal.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Filled.SettingsBackupRestore, null, tint = AccentTeal, modifier = Modifier.size(22.dp))
+                    }
+                    Column {
+                        Text("Pulihkan dari File Cadangan", fontWeight = FontWeight.Bold, color = LernspaceDark, fontSize = 15.sp)
+                        Text("Pilih file arsip .lernspace atau .zip untuk memulihkan seluruh data belajar.", fontSize = 12.sp, color = LernspaceTextSecondary)
+                    }
+                }
+
+                OutlinedButton(
+                    enabled = !isProcessing,
+                    onClick = {
+                        openRestoreLauncher.launch(arrayOf("*/*", "application/zip", "application/octet-stream"))
+                    },
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, LernspaceDark),
+                    modifier = Modifier.fillMaxWidth().height(44.dp)
+                ) {
+                    if (isProcessing && statusMessage?.contains("Memulihkan") == true) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = LernspaceDark)
+                        Spacer(modifier = Modifier.width(8.dp))
+                    } else {
+                        Icon(Icons.Filled.FileUpload, null, tint = LernspaceDark, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+                    Text("Pilih File Cadangan untuk Dipulihkan", fontWeight = FontWeight.SemiBold, color = LernspaceDark, fontSize = 13.sp)
+                }
+            }
+        }
+    }
+
+    // Confirmation Dialog before restore (since restore overwrites active database)
+    if (showRestoreConfirmDialog && pendingRestoreUri != null) {
+        AlertDialog(
+            onDismissRequest = {
+                showRestoreConfirmDialog = false
+                pendingRestoreUri = null
+            },
+            title = {
+                Text("Konfirmasi Pemulihan Data", fontWeight = FontWeight.Bold, color = LernspaceDark)
+            },
+            text = {
+                Text(
+                    "Memulihkan cadangan akan menimpa data dan catatan saat ini dengan data dari file cadangan tersebut. Apakah kamu yakin ingin melanjutkan?",
+                    fontSize = 13.sp,
+                    color = LernspaceTextPrimary
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val uriToRestore = pendingRestoreUri
+                        showRestoreConfirmDialog = false
+                        pendingRestoreUri = null
+                        if (uriToRestore != null) {
+                            isProcessing = true
+                            statusMessage = "Memulihkan seluruh catatan dan basis data..."
+                            isError = false
+                            coroutineScope.launch {
+                                val res = BackupRestoreManager.restoreBackup(context, uriToRestore)
+                                isProcessing = false
+                                isError = !res.success
+                                statusMessage = res.message
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentRed)
+                ) {
+                    Text("Ya, Pulihkan Data", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showRestoreConfirmDialog = false
+                    pendingRestoreUri = null
+                }) {
+                    Text("Batal", color = LernspaceDark)
+                }
+            }
+        )
+    }
+}
+
 

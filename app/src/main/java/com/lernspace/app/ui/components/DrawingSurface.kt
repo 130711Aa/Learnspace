@@ -57,6 +57,14 @@ private fun isDarkInkColor(colorInt: Int): Boolean {
     return lum < 0.22f
 }
 
+/**
+ * Checks if a stroke belongs to the highlighter brush family.
+ * Highlighters are rendered underneath regular pen ink so written text stays 100% crisp and readable.
+ */
+private fun isHighlighterStroke(stroke: Stroke): Boolean {
+    return stroke.brush.family == StockBrushes.highlighter()
+}
+
 private const val CHUNK_WORLD_SIZE = 512f
 
 private class StrokeBoundsIndex {
@@ -178,39 +186,71 @@ private class WorldStrokeChunk(
         try {
             rc.translate(-ox, -oy)
             if (!isDarkPaper) {
+                // Pass 1: Under-ink highlighter rendering (luminous color washes behind text)
                 for (i in 0 until strokes.size) {
-                    renderer.draw(
-                        canvas = rc,
-                        stroke = strokes[i],
-                        strokeToScreenTransform = localMatrix
-                    )
+                    if (isHighlighterStroke(strokes[i])) {
+                        renderer.draw(
+                            canvas = rc,
+                            stroke = strokes[i],
+                            strokeToScreenTransform = localMatrix
+                        )
+                    }
+                }
+                // Pass 2: Regular pen and shape strokes rendered crisp on top
+                for (i in 0 until strokes.size) {
+                    if (!isHighlighterStroke(strokes[i])) {
+                        renderer.draw(
+                            canvas = rc,
+                            stroke = strokes[i],
+                            strokeToScreenTransform = localMatrix
+                        )
+                    }
                 }
             } else {
+                // Pass 1: Highlighters under ink on dark paper
+                for (i in 0 until strokes.size) {
+                    if (isHighlighterStroke(strokes[i])) {
+                        renderer.draw(
+                            canvas = rc,
+                            stroke = strokes[i],
+                            strokeToScreenTransform = localMatrix
+                        )
+                    }
+                }
+                // Pass 2: Pen strokes on dark paper with smart inversion for dark ink
                 var i = 0
                 val count = strokes.size
                 while (i < count) {
+                    if (isHighlighterStroke(strokes[i])) {
+                        i++
+                        continue
+                    }
                     val isDark = isDarkInkColor(strokes[i].brush.colorIntArgb)
                     val batchStart = i
-                    while (i < count && isDarkInkColor(strokes[i].brush.colorIntArgb) == isDark) {
+                    while (i < count && !isHighlighterStroke(strokes[i]) && isDarkInkColor(strokes[i].brush.colorIntArgb) == isDark) {
                         i++
                     }
                     if (isDark) {
                         rc.saveLayer(null, darkStrokePaint)
                         for (j in batchStart until i) {
-                            renderer.draw(
-                                canvas = rc,
-                                stroke = strokes[j],
-                                strokeToScreenTransform = localMatrix
-                            )
+                            if (!isHighlighterStroke(strokes[j])) {
+                                renderer.draw(
+                                    canvas = rc,
+                                    stroke = strokes[j],
+                                    strokeToScreenTransform = localMatrix
+                                )
+                            }
                         }
                         rc.restore()
                     } else {
                         for (j in batchStart until i) {
-                            renderer.draw(
-                                canvas = rc,
-                                stroke = strokes[j],
-                                strokeToScreenTransform = localMatrix
-                            )
+                            if (!isHighlighterStroke(strokes[j])) {
+                                renderer.draw(
+                                    canvas = rc,
+                                    stroke = strokes[j],
+                                    strokeToScreenTransform = localMatrix
+                                )
+                            }
                         }
                     }
                 }
@@ -354,9 +394,27 @@ private fun drawCulledStrokesDirect(
     visBottom: Float
 ) {
     val count = strokes.size
+
+    // Pass 1: Highlighters rendered first (under ink)
+    for (i in 0 until count) {
+        val stroke = strokes[i]
+        if (!isHighlighterStroke(stroke)) continue
+        val bounds = boundsIndex.getStrokeBounds(stroke)
+        if (bounds != null && !boundsIndex.intersects(bounds, visLeft, visTop, visRight, visBottom)) {
+            continue
+        }
+        renderer.draw(
+            canvas = canvas,
+            stroke = stroke,
+            strokeToScreenTransform = matrix
+        )
+    }
+
+    // Pass 2: Pen strokes rendered on top
     if (!isDarkPaper) {
         for (i in 0 until count) {
             val stroke = strokes[i]
+            if (isHighlighterStroke(stroke)) continue
             val bounds = boundsIndex.getStrokeBounds(stroke)
             if (bounds != null && !boundsIndex.intersects(bounds, visLeft, visTop, visRight, visBottom)) {
                 continue
@@ -370,14 +428,19 @@ private fun drawCulledStrokesDirect(
     } else {
         var i = 0
         while (i < count) {
+            if (isHighlighterStroke(strokes[i])) {
+                i++
+                continue
+            }
             val isDark = isDarkInkColor(strokes[i].brush.colorIntArgb)
             val batchStart = i
-            while (i < count && isDarkInkColor(strokes[i].brush.colorIntArgb) == isDark) {
+            while (i < count && !isHighlighterStroke(strokes[i]) && isDarkInkColor(strokes[i].brush.colorIntArgb) == isDark) {
                 i++
             }
             if (isDark) {
                 var anyVisible = false
                 for (j in batchStart until i) {
+                    if (isHighlighterStroke(strokes[j])) continue
                     val b = boundsIndex.getStrokeBounds(strokes[j])
                     if (b == null || boundsIndex.intersects(b, visLeft, visTop, visRight, visBottom)) {
                         anyVisible = true
@@ -388,6 +451,7 @@ private fun drawCulledStrokesDirect(
                 canvas.saveLayer(null, darkStrokePaint)
                 for (j in batchStart until i) {
                     val stroke = strokes[j]
+                    if (isHighlighterStroke(stroke)) continue
                     val bounds = boundsIndex.getStrokeBounds(stroke)
                     if (bounds != null && !boundsIndex.intersects(bounds, visLeft, visTop, visRight, visBottom)) {
                         continue
@@ -402,6 +466,7 @@ private fun drawCulledStrokesDirect(
             } else {
                 for (j in batchStart until i) {
                     val stroke = strokes[j]
+                    if (isHighlighterStroke(stroke)) continue
                     val bounds = boundsIndex.getStrokeBounds(stroke)
                     if (bounds != null && !boundsIndex.intersects(bounds, visLeft, visTop, visRight, visBottom)) {
                         continue

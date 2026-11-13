@@ -79,6 +79,7 @@ fun QuizScreen() {
     var isRecognizingInk by remember { mutableStateOf(false) }
     var recognizedHandwritingText by remember { mutableStateOf("") }
     var isGenerating by remember { mutableStateOf(false) }
+    var generationStatusText by remember { mutableStateOf("Membuat Kuis AI...") }
 
     // Active quiz session state
     var quizQuestions by remember { mutableStateOf<List<GeneratedQuizQuestion>>(emptyList()) }
@@ -98,29 +99,19 @@ fun QuizScreen() {
         HandwrittenNoteRecognizer.countHandwrittenStrokes(activeSourcePages)
     }
 
+    // 0-Token Offline Preview: Hanya membaca offline lokal (ML Kit / Cache) untuk cek kesiapan bahan,
+    // TIDAK memanggil Gemini Vision di latar belakang agar hemat token dan bebas rate limit.
     LaunchedEffect(sourceMode, selectedNote?.id, selectedTopic?.id) {
         recognizedHandwritingText = ""
         errorMsg = null
         if (sourceMode != 2 && activeStrokeCount > 0) {
             isRecognizingInk = true
             val cacheId = if (sourceMode == 0) selectedNote?.id ?: "note" else "topic_${selectedTopic?.id ?: ""}"
-            val titleForVision = if (sourceMode == 0) selectedNote?.title ?: "Catatan" else selectedTopic?.title ?: "Sub-bab"
             try {
                 val offlineRes = HandwrittenNoteRecognizer.recognizePagesOffline(cacheId, activeSourcePages)
-                if (GeminiApiClient.isConfigured()) {
-                    val visionRes = HandwrittenNoteRecognizer.recognizePagesWithGeminiVision(
-                        cacheKeyId = cacheId,
-                        pages = activeSourcePages,
-                        topicTitle = titleForVision
-                    )
-                    visionRes.onSuccess { vr ->
-                        recognizedHandwritingText = vr.text
-                    }.onFailure {
-                        recognizedHandwritingText = offlineRes.text
-                    }
-                } else {
-                    recognizedHandwritingText = offlineRes.text
-                }
+                recognizedHandwritingText = offlineRes.text
+            } catch (_: Exception) {
+                // Abaikan jika model lokal belum selesai diunduh
             } finally {
                 isRecognizingInk = false
             }
@@ -418,11 +409,11 @@ fun QuizScreen() {
                         }
                     }
 
-                    // Clean status indicator (tanpa preview teks hasil bacaan AI)
-                    val isReady = when (sourceMode) {
-                        0, 1 -> !isRecognizingInk && effectiveSourceText.trim().length >= 15
+                    val hasEnoughBaseContent = when (sourceMode) {
+                        0, 1 -> activeStrokeCount > 0 || effectiveSourceText.trim().length >= 15
                         else -> !isExtractingDoc && effectiveSourceText.trim().length >= 15
                     }
+                    val isReady = !isRecognizingInk && !isExtractingDoc && hasEnoughBaseContent
                     Surface(
                         shape = RoundedCornerShape(10.dp),
                         color = LernspaceSurfaceLow,
@@ -446,14 +437,15 @@ fun QuizScreen() {
                             }
                             Text(
                                 text = when {
-                                    isRecognizingInk -> "AI sedang membaca catatan..."
+                                    isRecognizingInk -> "Memeriksa coretan catatan (offline)..."
                                     isExtractingDoc -> docExtractionStatus
                                     sourceMode == 2 && attachedDocument != null -> "Dokumen \"${attachedDocument!!.fileName}\" siap dijadikan kuis"
                                     sourceMode == 2 && isReady -> "Teks materi siap dijadikan kuis"
                                     sourceMode == 2 -> "Ketik materi atau pilih dokumen untuk dijadikan kuis"
-                                    recognizedHandwritingText.isNotBlank() -> "AI sudah selesai membaca catatan"
+                                    activeStrokeCount > 0 && effectiveSourceText.trim().length >= 15 -> "Catatan teks & coretan siap dianalisis AI"
+                                    activeStrokeCount > 0 -> "Coretan tulisan tangan siap dianalisis AI"
                                     isReady -> "Catatan teks siap dijadikan kuis"
-                                    else -> "Catatan belum memiliki cukup teks atau coretan"
+                                    else -> "Catatan belum memiliki teks atau coretan"
                                 },
                                 fontSize = 12.sp,
                                 fontWeight = if (isReady) FontWeight.Medium else FontWeight.Normal,
@@ -487,7 +479,7 @@ fun QuizScreen() {
                     Spacer(modifier = Modifier.weight(1f, fill = false))
 
                     Button(
-                        enabled = !isGenerating && !isRecognizingInk && !isExtractingDoc && effectiveSourceText.trim().length >= 15,
+                        enabled = !isGenerating && !isRecognizingInk && !isExtractingDoc && hasEnoughBaseContent,
                         onClick = {
                             if (!GeminiApiClient.isConfigured()) {
                                 errorMsg = "Gemini API Key belum diatur di Pengaturan."
@@ -495,21 +487,58 @@ fun QuizScreen() {
                             }
                             errorMsg = null
                             isGenerating = true
+                            generationStatusText = "Mempersiapkan materi..."
                             coroutineScope.launch {
-                                val res = GeminiApiClient.generateQuizQuestions(
-                                    sourceText = effectiveSourceText,
-                                    topicTitle = effectiveTopicTitle,
-                                    maxQuestions = questionCount
-                                )
-                                isGenerating = false
-                                res.onSuccess { questions ->
-                                    quizQuestions = questions
-                                    activeQuizTitle = effectiveTopicTitle
-                                    currentIndex = 0
-                                    selectedOptionIdx = null
-                                    correctCount = 0
-                                }.onFailure { err ->
-                                    errorMsg = err.message ?: "Gagal membuat kuis."
+                                try {
+                                    var finalText = effectiveSourceText.trim()
+
+                                    // Jika catatan memiliki coretan tulisan tangan dan teks hasil pengenalan belum ada,
+                                    // panggil Gemini Vision secara on-demand HANYA saat tombol ini diklik!
+                                    if (sourceMode != 2 && activeStrokeCount > 0 && recognizedHandwritingText.isBlank()) {
+                                        generationStatusText = "AI membaca coretan catatan..."
+                                        val cacheId = if (sourceMode == 0) selectedNote?.id ?: "note" else "topic_${selectedTopic?.id ?: ""}"
+                                        val titleForVision = if (sourceMode == 0) selectedNote?.title ?: "Catatan" else selectedTopic?.title ?: "Sub-bab"
+                                        val visionRes = HandwrittenNoteRecognizer.recognizePagesWithGeminiVision(
+                                            cacheKeyId = cacheId,
+                                            pages = activeSourcePages,
+                                            topicTitle = titleForVision
+                                        )
+                                        visionRes.onSuccess { vr ->
+                                            recognizedHandwritingText = vr.text
+                                            finalText = listOf(finalText, vr.text).filter { it.isNotBlank() }.joinToString("\n\n")
+                                        }.onFailure {
+                                            // Fallback ke offline text jika ada
+                                            val off = HandwrittenNoteRecognizer.recognizePagesOffline(cacheId, activeSourcePages)
+                                            if (off.text.isNotBlank()) {
+                                                recognizedHandwritingText = off.text
+                                                finalText = listOf(finalText, off.text).filter { it.isNotBlank() }.joinToString("\n\n")
+                                            }
+                                        }
+                                    }
+
+                                    if (finalText.length < 15) {
+                                        errorMsg = "Materi tidak cukup untuk dijadikan kuis. Tambahkan teks atau coretan yang lebih jelas."
+                                        isGenerating = false
+                                        return@launch
+                                    }
+
+                                    generationStatusText = "Merangkai soal kuis AI..."
+                                    val res = GeminiApiClient.generateQuizQuestions(
+                                        sourceText = finalText,
+                                        topicTitle = effectiveTopicTitle,
+                                        maxQuestions = questionCount
+                                    )
+                                    res.onSuccess { questions ->
+                                        quizQuestions = questions
+                                        activeQuizTitle = effectiveTopicTitle
+                                        currentIndex = 0
+                                        selectedOptionIdx = null
+                                        correctCount = 0
+                                    }.onFailure { err ->
+                                        errorMsg = err.message ?: "Gagal membuat kuis."
+                                    }
+                                } finally {
+                                    isGenerating = false
                                 }
                             }
                         },
@@ -523,7 +552,7 @@ fun QuizScreen() {
                         if (isGenerating) {
                             CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = LernspaceSurfaceCard)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Membuat Kuis AI...", fontWeight = FontWeight.SemiBold)
+                            Text(generationStatusText, fontWeight = FontWeight.SemiBold)
                         } else {
                             Icon(Icons.Filled.AutoAwesome, null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(8.dp))

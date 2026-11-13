@@ -4,6 +4,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.ink.brush.Brush
 import androidx.ink.brush.InputToolType
+import androidx.ink.brush.StockBrushes
+import androidx.ink.brush.compose.createWithComposeColor
 import androidx.ink.strokes.MutableStrokeInputBatch
 import androidx.ink.strokes.Stroke
 import androidx.ink.strokes.StrokeInput
@@ -56,6 +58,52 @@ object ShapeRecognizer {
             newBatch.add(updated)
         }
         return Stroke(stroke.brush, newBatch)
+    }
+
+    /**
+     * Changes the color and/or size of an existing [Stroke], preserving all points, pressure, and timing.
+     */
+    fun recolorStroke(stroke: Stroke, newColor: androidx.compose.ui.graphics.Color): Stroke {
+        val newBrush = Brush.createWithComposeColor(
+            family = stroke.brush.family,
+            color = newColor,
+            size = stroke.brush.size,
+            epsilon = stroke.brush.epsilon
+        )
+        return Stroke(newBrush, stroke.inputs)
+    }
+
+    /**
+     * Scales an existing [Stroke] around a center origin [pivot], preserving pressure and timing.
+     */
+    fun scaleStroke(stroke: Stroke, scaleFactor: Float, pivot: Offset): Stroke {
+        val oldInputs = stroke.inputs
+        val newBatch = MutableStrokeInputBatch()
+        val temp = StrokeInput()
+        for (i in 0 until oldInputs.size) {
+            oldInputs.populate(i, temp)
+            val updated = StrokeInput()
+            val newX = pivot.x + (temp.x - pivot.x) * scaleFactor
+            val newY = pivot.y + (temp.y - pivot.y) * scaleFactor
+            updated.update(
+                x = newX,
+                y = newY,
+                elapsedTimeMillis = temp.elapsedTimeMillis,
+                toolType = temp.toolType,
+                strokeUnitLengthCm = temp.strokeUnitLengthCm,
+                pressure = temp.pressure,
+                tiltRadians = temp.tiltRadians,
+                orientationRadians = temp.orientationRadians
+            )
+            newBatch.add(updated)
+        }
+        val newBrush = Brush.createWithComposeColor(
+            family = stroke.brush.family,
+            color = androidx.compose.ui.graphics.Color(stroke.brush.colorLong),
+            size = (stroke.brush.size * scaleFactor).coerceIn(1f, 100f),
+            epsilon = stroke.brush.epsilon
+        )
+        return Stroke(newBrush, newBatch)
     }
 
     /**
