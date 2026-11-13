@@ -6,6 +6,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.*
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -25,6 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -32,6 +34,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.lernspace.app.core.audio.NoteAudioController
 import com.lernspace.app.ui.theme.*
+import kotlin.math.ln
 
 /**
  * Compact, elegant Audio Lecture Recording & Player Bar.
@@ -61,6 +64,17 @@ fun AudioLectureBar(
         }
     }
 
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+    val pulseScale by infiniteTransition.animateFloat(
+        initialValue = 0.82f,
+        targetValue = 1.25f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(700, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "dot_pulse"
+    )
+
     Surface(
         shape = RoundedCornerShape(20.dp),
         color = LernspaceSurfaceCard.copy(alpha = 0.96f),
@@ -76,37 +90,25 @@ fun AudioLectureBar(
             when {
                 // ── RECORDING IN PROGRESS ──
                 recState.isRecording -> {
-                    // Pulsing red indicator
+                    // Breathing red / amber indicator dot
                     Box(
                         modifier = Modifier
                             .size(10.dp)
+                            .graphicsLayer {
+                                if (!recState.isPaused) {
+                                    scaleX = pulseScale
+                                    scaleY = pulseScale
+                                }
+                            }
                             .clip(CircleShape)
                             .background(if (recState.isPaused) AccentAmber else AccentRed)
                     )
 
-                    // Audio Amplitude wave simulation
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(2.dp),
-                        modifier = Modifier.width(36.dp).height(16.dp)
-                    ) {
-                        val normAmp = (recState.amplitude / 32767f).coerceIn(0.15f, 1f)
-                        val barHeights = listOf(
-                            (normAmp * 0.5f).coerceIn(0.2f, 1f),
-                            (normAmp * 1.0f).coerceIn(0.3f, 1f),
-                            (normAmp * 0.75f).coerceIn(0.25f, 1f),
-                            (normAmp * 0.4f).coerceIn(0.2f, 1f)
-                        )
-                        barHeights.forEach { h ->
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxHeight(if (recState.isPaused) 0.2f else h)
-                                    .clip(RoundedCornerShape(2.dp))
-                                    .background(if (recState.isPaused) AccentAmber else AccentRed)
-                            )
-                        }
-                    }
+                    // Dynamic multi-bar scrolling audio waveform
+                    LiveWaveformVisualizer(
+                        amplitude = recState.amplitude,
+                        isPaused = recState.isPaused
+                    )
 
                     // Elapsed Time
                     Text(
@@ -312,6 +314,72 @@ fun AudioLectureBar(
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * Modern, organic audio waveform visualizer.
+ * Renders a rolling sequence of soundwave bars driven by logarithmic loudness.
+ */
+@Composable
+private fun LiveWaveformVisualizer(
+    amplitude: Int,
+    isPaused: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val barCount = 14
+    val history = remember {
+        mutableStateListOf<Float>().apply {
+            repeat(barCount) { add(0.12f) }
+        }
+    }
+
+    // Perceptual loudness mapping:
+    // Raw amplitude is 0..32767. Conversational speech is 800..8000.
+    // Logarithmic curve ln(1 + amp) / ln(1 + 32767) scales voice naturally with high dynamic range.
+    val targetNorm = remember(amplitude, isPaused) {
+        if (isPaused) {
+            0.08f
+        } else {
+            val clamped = amplitude.coerceAtLeast(0)
+            val logVal = (ln(1.0 + clamped) / ln(1.0 + 32767.0)).toFloat()
+            // Boost conversational range so bars dance dynamically during speech
+            (logVal * 1.45f).coerceIn(0.12f, 1.0f)
+        }
+    }
+
+    LaunchedEffect(targetNorm, isPaused) {
+        if (history.size >= barCount) {
+            history.removeAt(0)
+        }
+        history.add(targetNorm)
+    }
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(2.5.dp),
+        modifier = modifier
+            .width(68.dp)
+            .height(20.dp)
+    ) {
+        history.forEachIndexed { index, targetHeightFraction ->
+            val animatedHeight by animateFloatAsState(
+                targetValue = targetHeightFraction,
+                animationSpec = spring(
+                    dampingRatio = 0.60f,
+                    stiffness = 600f
+                ),
+                label = "bar_$index"
+            )
+
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight(animatedHeight.coerceIn(0.12f, 1f))
+                    .clip(RoundedCornerShape(1.5.dp))
+                    .background(if (isPaused) AccentAmber else AccentRed)
+            )
         }
     }
 }

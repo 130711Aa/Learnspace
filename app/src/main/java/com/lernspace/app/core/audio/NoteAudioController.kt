@@ -160,7 +160,7 @@ class NoteAudioController(
         recordingTickerJob?.cancel()
         recordingTickerJob = scope.launch {
             while (isActive && recordingState.isRecording) {
-                delay(100)
+                delay(60) // ~17 fps for silky smooth live waveform rolling
                 if (!recordingState.isPaused) {
                     val currentElapsed = pausedAccumulatedMs + (SystemClock.elapsedRealtime() - recordingStartTime)
                     val amp = try { recorder?.maxAmplitude ?: 0 } catch (_: Exception) { 0 }
