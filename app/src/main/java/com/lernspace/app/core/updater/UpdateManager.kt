@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Environment
 import android.widget.Toast
 import androidx.core.content.FileProvider
+import com.lernspace.app.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -39,7 +40,7 @@ object UpdateManager {
      * Checks GitHub Releases API for the latest release (including stable and pre-release)
      * and compares with current app version.
      */
-    suspend fun checkForUpdates(currentVersion: String = "1.2.1"): Result<AppReleaseInfo> = withContext(Dispatchers.IO) {
+    suspend fun checkForUpdates(currentVersion: String = BuildConfig.VERSION_NAME): Result<AppReleaseInfo> = withContext(Dispatchers.IO) {
         try {
             val url = URL(API_URL)
             val connection = (url.openConnection() as HttpURLConnection).apply {

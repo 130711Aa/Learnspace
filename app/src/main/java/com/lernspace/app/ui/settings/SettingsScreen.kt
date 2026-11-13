@@ -30,6 +30,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.lernspace.app.BuildConfig
 import com.lernspace.app.core.ai.GeminiApiClient
 import com.lernspace.app.core.ai.LocalSlmManager
 import com.lernspace.app.core.ai.SlmModelSpec
@@ -908,7 +909,7 @@ private fun AboutAndSystemSection() {
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text("Learnspace Tablet OS", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
-                        Text("Versi 1.2.1 (Production Release)", fontSize = 12.sp, color = LernspaceTextSecondary)
+                        Text("Versi ${BuildConfig.VERSION_NAME} (Production Release)", fontSize = 12.sp, color = LernspaceTextSecondary)
                     }
 
                     Row(
@@ -951,7 +952,7 @@ private fun AboutAndSystemSection() {
                                 if (!isCheckingUpdate) {
                                     isCheckingUpdate = true
                                     scope.launch {
-                                        val result = UpdateManager.checkForUpdates("1.2.1")
+                                        val result = UpdateManager.checkForUpdates(BuildConfig.VERSION_NAME)
                                         isCheckingUpdate = false
                                         result.onSuccess { info ->
                                             if (info.hasUpdate) {
