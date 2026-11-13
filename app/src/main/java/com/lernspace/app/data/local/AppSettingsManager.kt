@@ -55,6 +55,7 @@ object AppSettingsManager {
     private const val KEY_TOUCH_INPUT_MODE = "touch_input_mode"
     private const val KEY_ERASER_RADIUS = "eraser_radius"
     private const val KEY_ERASER_MODE = "eraser_mode"
+    private const val KEY_SCRIBBLE_TO_ERASE = "scribble_to_erase"
 
     var handedness by mutableStateOf(Handedness.RIGHT_HANDED)
     var shapeSensitivity by mutableStateOf(ShapeSnapSensitivity.NORMAL)
@@ -63,6 +64,7 @@ object AppSettingsManager {
     var touchInputMode by mutableStateOf(TouchInputMode.STYLUS_ONLY)
     var eraserRadius by mutableFloatStateOf(30f)
     var eraserMode by mutableStateOf(EraserMode.PIXEL)
+    var isScribbleToEraseEnabled by mutableStateOf(true)
 
     val isFingerDrawingEnabled: Boolean
         get() = touchInputMode == TouchInputMode.FINGER_AND_STYLUS
@@ -109,6 +111,8 @@ object AppSettingsManager {
         } catch (e: Exception) {
             EraserMode.PIXEL
         }
+
+        isScribbleToEraseEnabled = sp.getBoolean(KEY_SCRIBBLE_TO_ERASE, true)
     }
 
     fun updateHandedness(value: Handedness) {
@@ -144,6 +148,11 @@ object AppSettingsManager {
     fun updateEraserMode(value: EraserMode) {
         eraserMode = value
         prefs?.edit()?.putString(KEY_ERASER_MODE, value.name)?.apply()
+    }
+
+    fun updateScribbleToErase(enabled: Boolean) {
+        isScribbleToEraseEnabled = enabled
+        prefs?.edit()?.putBoolean(KEY_SCRIBBLE_TO_ERASE, enabled)?.apply()
     }
 }
 

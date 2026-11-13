@@ -46,7 +46,7 @@ import com.lernspace.app.ui.workspace.model.PaperStyle
 import kotlinx.coroutines.launch
 
 private enum class SettingsCategory(val title: String, val subtitle: String, val icon: ImageVector) {
-    STYLUS_ERGONOMICS("Stylus & Ergonomi", "Mode tangan, snap bentuk geometri", Icons.Filled.Draw),
+    STYLUS_ERGONOMICS("Stylus & Ergonomi", "Mode tangan, snap bentuk, scribble erase", Icons.Filled.Draw),
     APPEARANCE("Tampilan & Tema", "Mode gelap, terang, sistem", Icons.Filled.Palette),
     WORKSPACE_DEFAULTS("Format Catatan", "Template kertas bawaan", Icons.AutoMirrored.Filled.MenuBook),
     OFFLINE_AI("AI & SLM Offline", "Model lokal, RAM, dan unduhan", Icons.Filled.AutoAwesome),
@@ -464,6 +464,76 @@ private fun StylusAndErgonomicsSection() {
                         modifier = Modifier.weight(1f)
                     )
                 }
+            }
+        }
+
+        // 4. SETTING: SCRIBBLE TO ERASE (CORET UNTUK MENGHAPUS)
+        val currentScribbleEnabled = AppSettingsManager.isScribbleToEraseEnabled
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = LernspaceSurfaceLow,
+            border = BorderStroke(1.dp, LernspaceBorder),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = LernspaceSurfaceCard,
+                            border = BorderStroke(1.dp, LernspaceBorder),
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Filled.AutoFixHigh,
+                                    contentDescription = null,
+                                    tint = LernspaceDark,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                text = "Coret untuk Menghapus (Scribble to Erase)",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = LernspaceDark
+                            )
+                            Text(
+                                text = if (currentScribbleEnabled) "Aktif (Otomatis deteksi coretan)" else "Nonaktif",
+                                fontSize = 12.sp,
+                                color = if (currentScribbleEnabled) Color(0xFF16A34A) else LernspaceTextSecondary,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                    Switch(
+                        checked = currentScribbleEnabled,
+                        onCheckedChange = { AppSettingsManager.updateScribbleToErase(it) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = LernspaceDark,
+                            uncheckedThumbColor = Color.LightGray,
+                            uncheckedTrackColor = LernspaceSurfaceCard
+                        )
+                    )
+                }
+
+                Text(
+                    text = "Hapus tulisan tangan atau teks secara instan cukup dengan mencoret-coretnya bolak-balik (zigzag / scratch-out) menggunakan pena stylus, tanpa perlu berganti ke tool penghapus.",
+                    fontSize = 12.sp,
+                    color = LernspaceTextSecondary,
+                    lineHeight = 18.sp
+                )
             }
         }
     }

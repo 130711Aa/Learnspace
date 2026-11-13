@@ -108,6 +108,7 @@ import com.lernspace.app.ui.workspace.lasso.LassoSelectionState
 import com.lernspace.app.ui.workspace.model.*
 import com.lernspace.app.ui.workspace.pdf.PdfNoteHelper
 import com.lernspace.app.ui.workspace.shape.ShapeRecognizer
+import com.lernspace.app.ui.workspace.gesture.ScribbleEraseRecognizer
 import com.lernspace.app.data.local.AppSettingsManager
 import com.lernspace.app.data.local.EraserMode
 import com.lernspace.app.data.local.Handedness
@@ -662,6 +663,106 @@ class NotePaneState(
                 }
             }
         }
+    }
+
+    /**
+     * Erases strokes and text boxes that are scratched out by a scribble gesture.
+     * Returns true if any content was erased and the gesture should consume the scribble stroke.
+     */
+    fun eraseWithScribble(scribbleStroke: Stroke): Boolean {
+        val sBounds = getStrokeBounds(scribbleStroke) ?: return false
+        val pad = maxOf(10f, 16f / scale)
+        val sLeft = sBounds[0] - pad
+        val sTop = sBounds[1] - pad
+        val sRight = sBounds[2] + pad
+        val sBottom = sBounds[3] + pad
+        val scribbleW = sRight - sLeft
+        val scribbleH = sBottom - sTop
+
+        val strokesToRemove = mutableListOf<Stroke>()
+        for (i in strokes.indices.reversed()) {
+            val stroke = strokes[i]
+            if (stroke === scribbleStroke) continue
+            val b = getStrokeBounds(stroke) ?: continue
+
+            // AABB fast reject
+            if (b[2] < sLeft || b[0] > sRight || b[3] < sTop || b[1] > sBottom) {
+                continue
+            }
+
+            val strokeW = b[2] - b[0]
+            val strokeH = b[3] - b[1]
+            val centerX = (b[0] + b[2]) / 2f
+            val centerY = (b[1] + b[3]) / 2f
+
+            val isContained = b[0] >= sLeft && b[2] <= sRight && b[1] >= sTop && b[3] <= sBottom
+            val isCenterInside = centerX in sLeft..sRight && centerY in sTop..sBottom
+
+            val inputs = stroke.inputs
+            val count = inputs.size
+            var insideCount = 0
+            val step = maxOf(1, count / 16)
+            var sampled = 0
+
+            for (k in 0 until count step step) {
+                inputs.populate(k, reusableInputA)
+                sampled++
+                if (reusableInputA.x in sLeft..sRight && reusableInputA.y in sTop..sBottom) {
+                    insideCount++
+                }
+            }
+
+            val insideRatio = if (sampled > 0) insideCount.toFloat() / sampled else 0f
+
+            if (isContained || insideRatio >= 0.30f || (isCenterInside && strokeW <= scribbleW * 1.6f && strokeH <= scribbleH * 1.6f)) {
+                strokesToRemove.add(stroke)
+            }
+        }
+
+        val textBoxesToRemove = mutableListOf<TextBoxElement>()
+        for (tb in textBoxes) {
+            val tbLeft = tb.x
+            val tbTop = tb.y
+            val tbRight = tb.x + tb.width
+            val tbBottom = tb.y + tb.height
+
+            if (tbRight < sLeft || tbLeft > sRight || tbBottom < sTop || tbTop > sBottom) {
+                continue
+            }
+
+            val tbCenterX = (tbLeft + tbRight) / 2f
+            val tbCenterY = (tbTop + tbBottom) / 2f
+
+            val interLeft = maxOf(sLeft, tbLeft)
+            val interTop = maxOf(sTop, tbTop)
+            val interRight = minOf(sRight, tbRight)
+            val interBottom = minOf(sBottom, tbBottom)
+            val interArea = maxOf(0f, interRight - interLeft) * maxOf(0f, interBottom - interTop)
+            val tbArea = maxOf(1f, tb.width * tb.height)
+            val scribbleArea = maxOf(1f, scribbleW * scribbleH)
+
+            val overlapRatioTb = interArea / tbArea
+            val overlapRatioScribble = interArea / scribbleArea
+            val isScribbleInsideTb = sLeft >= tbLeft - 20f && sRight <= tbRight + 20f && sTop >= tbTop - 20f && sBottom <= tbBottom + 20f
+
+            if (overlapRatioTb >= 0.25f || overlapRatioScribble >= 0.35f || isScribbleInsideTb || (tbCenterX in sLeft..sRight && tbCenterY in sTop..sBottom)) {
+                textBoxesToRemove.add(tb)
+            }
+        }
+
+        if (strokesToRemove.isEmpty() && textBoxesToRemove.isEmpty()) {
+            return false
+        }
+
+        pushUndoSnapshot()
+        if (strokesToRemove.isNotEmpty()) {
+            strokes.removeAll(strokesToRemove)
+        }
+        if (textBoxesToRemove.isNotEmpty()) {
+            textBoxes.removeAll(textBoxesToRemove)
+        }
+        saveActivePageData()
+        return true
     }
 }
 
@@ -1649,27 +1750,41 @@ private fun NotePaneViewport(
                 onStrokesFinished = { newStrokes ->
                     val isRecentTransform = System.currentTimeMillis() - lastTransformTime < 350L
                     if (!isRecentTransform) {
-                        val processedStrokes = newStrokes.map { stroke ->
+                        val strokesToAdd = mutableListOf<Stroke>()
+                        for (stroke in newStrokes) {
+                            // ── Scribble to Erase: Scratch-out gesture over handwriting or text ──
+                            if (AppSettingsManager.isScribbleToEraseEnabled && (activeTool == NoteTool.PEN || activeTool == NoteTool.HIGHLIGHTER)) {
+                                if (ScribbleEraseRecognizer.isScribble(stroke)) {
+                                    val erased = state.eraseWithScribble(stroke)
+                                    if (erased) {
+                                        try {
+                                            view.performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM)
+                                        } catch (e: Exception) {}
+                                        continue // Gesture consumed! Do not add scribble stroke to canvas.
+                                    }
+                                }
+                            }
+
                             if (isStrokeHoldAtEnd(stroke, state.scale)) {
                                 val refined = ShapeRecognizer.refineStroke(stroke)
                                 if (refined != null) {
                                     try {
                                         view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
                                     } catch (e: Exception) {}
-                                    refined
+                                    strokesToAdd.add(refined)
                                 } else {
-                                    stroke
+                                    strokesToAdd.add(stroke)
                                 }
                             } else {
-                                stroke
+                                strokesToAdd.add(stroke)
                             }
                         }
-                        if (processedStrokes.isNotEmpty()) {
+                        if (strokesToAdd.isNotEmpty()) {
                             if (state.textBoxes.any { it.isSelected } || state.imageElements.any { it.isSelected }) {
                                 state.deselectAll()
                             }
                             state.pushUndoSnapshot()
-                            state.strokes.addAll(processedStrokes)
+                            state.strokes.addAll(strokesToAdd)
                             state.saveActivePageData()
                         }
                     }
