@@ -34,6 +34,8 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.lernspace.app.core.audio.NoteAudioController
 import com.lernspace.app.ui.theme.*
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlin.math.ln
 
 /**
@@ -335,25 +337,45 @@ private fun LiveWaveformVisualizer(
         }
     }
 
-    // Perceptual loudness mapping:
-    // Raw amplitude is 0..32767. Conversational speech is 800..8000.
-    // Logarithmic curve ln(1 + amp) / ln(1 + 32767) scales voice naturally with high dynamic range.
-    val targetNorm = remember(amplitude, isPaused) {
-        if (isPaused) {
-            0.08f
-        } else {
-            val clamped = amplitude.coerceAtLeast(0)
-            val logVal = (ln(1.0 + clamped) / ln(1.0 + 32767.0)).toFloat()
-            // Boost conversational range so bars dance dynamically during speech
-            (logVal * 1.45f).coerceIn(0.12f, 1.0f)
-        }
-    }
+    val currentAmplitude by rememberUpdatedState(amplitude)
+    val currentIsPaused by rememberUpdatedState(isPaused)
 
-    LaunchedEffect(targetNorm, isPaused) {
-        if (history.size >= barCount) {
-            history.removeAt(0)
+    // Continuous 50ms (20 FPS) animation loop: runs continuously so bars ALWAYS scroll smoothly
+    LaunchedEffect(Unit) {
+        var smoothedPeak = 0.12f
+        while (isActive) {
+            delay(50L) // 20 updates per second
+
+            if (currentIsPaused) {
+                smoothedPeak = maxOf(0.08f, smoothedPeak * 0.80f)
+                if (history.size >= barCount) {
+                    history.removeAt(0)
+                }
+                history.add(0.08f)
+            } else {
+                val amp = currentAmplitude.coerceAtLeast(0)
+                // Logarithmic conversion: ln(1 + amp) / ln(1 + 32767)
+                // Maps 0..32767 to 0.0..1.0 with high sensitivity for normal human speech (800 - 8000)
+                val rawNorm = (ln(1.0 + amp) / ln(1.0 + 32767.0)).toFloat()
+                val targetLoudness = (rawNorm * 1.50f).coerceIn(0.12f, 1.0f)
+
+                // Instant attack (spikes up immediately on syllable), smooth exponential decay
+                smoothedPeak = if (targetLoudness > smoothedPeak) {
+                    targetLoudness
+                } else {
+                    maxOf(0.12f, smoothedPeak * 0.74f)
+                }
+
+                // Add subtle organic micro-frequency flutter (±10%) so bars ripple like a real audio wave
+                val flutter = 0.90f + (kotlin.random.Random.nextFloat() * 0.20f)
+                val finalSample = (smoothedPeak * flutter).coerceIn(0.12f, 1.0f)
+
+                if (history.size >= barCount) {
+                    history.removeAt(0)
+                }
+                history.add(finalSample)
+            }
         }
-        history.add(targetNorm)
     }
 
     Row(
@@ -367,8 +389,8 @@ private fun LiveWaveformVisualizer(
             val animatedHeight by animateFloatAsState(
                 targetValue = targetHeightFraction,
                 animationSpec = spring(
-                    dampingRatio = 0.60f,
-                    stiffness = 600f
+                    dampingRatio = 0.70f,
+                    stiffness = 700f
                 ),
                 label = "bar_$index"
             )
@@ -376,7 +398,7 @@ private fun LiveWaveformVisualizer(
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    .fillMaxHeight(animatedHeight.coerceIn(0.12f, 1f))
+                    .fillMaxHeight(animatedHeight.coerceIn(0.10f, 1f))
                     .clip(RoundedCornerShape(1.5.dp))
                     .background(if (isPaused) AccentAmber else AccentRed)
             )
