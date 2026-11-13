@@ -1,5 +1,10 @@
 package com.lernspace.app.ui.workspace.components
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -20,9 +25,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.lernspace.app.core.audio.NoteAudioController
 import com.lernspace.app.ui.theme.*
 
@@ -36,9 +43,23 @@ fun AudioLectureBar(
     onClose: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val recState = audioController.recordingState
     val playState = audioController.playbackState
     val hasAudio = audioController.hasExistingRecording
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            val started = audioController.startRecording()
+            if (!started) {
+                Toast.makeText(context, "Gagal memulai perekaman audio", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            Toast.makeText(context, "Izin mikrofon diperlukan untuk merekam suara pelajaran", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     Surface(
         shape = RoundedCornerShape(20.dp),
@@ -248,7 +269,19 @@ fun AudioLectureBar(
                         modifier = Modifier
                             .size(32.dp)
                             .clickable {
-                                audioController.startRecording()
+                                val hasMicPermission = ContextCompat.checkSelfPermission(
+                                    context,
+                                    Manifest.permission.RECORD_AUDIO
+                                ) == PackageManager.PERMISSION_GRANTED
+
+                                if (hasMicPermission) {
+                                    val started = audioController.startRecording()
+                                    if (!started) {
+                                        Toast.makeText(context, "Gagal memulai perekaman audio", Toast.LENGTH_SHORT).show()
+                                    }
+                                } else {
+                                    permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                }
                             }
                     ) {
                         Box(contentAlignment = Alignment.Center) {

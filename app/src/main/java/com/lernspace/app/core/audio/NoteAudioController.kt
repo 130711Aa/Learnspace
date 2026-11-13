@@ -109,7 +109,10 @@ class NoteAudioController(
             startRecordingTicker()
             true
         } catch (e: Exception) {
-            recorder?.release()
+            android.util.Log.e("NoteAudioController", "Failed to start recording: ${e.message}", e)
+            try {
+                recorder?.release()
+            } catch (_: Exception) {}
             recorder = null
             false
         }
