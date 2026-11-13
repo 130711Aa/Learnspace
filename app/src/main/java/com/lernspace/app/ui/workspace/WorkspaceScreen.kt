@@ -102,19 +102,24 @@ fun WorkspaceScreen(
         }
     }
 
-    // Filtered notes
-    val filteredNotes = remember(notes.size, selectedFilterKey, searchQuery) {
+    // Filtered notes - uses direct observable mapping including topicId & topicName
+    val filteredNotes = remember(
+        notes.map { listOf(it.id, it.title, it.subjectId, it.topicId, it.topicName, it.subject) },
+        selectedFilterKey,
+        searchQuery
+    ) {
         notes.filter { note ->
             val matchesFilter = when (selectedFilterKey) {
                 "ALL" -> true
                 "SCRATCHPAD" -> note.isScratchpad
                 else -> note.subjectId == selectedFilterKey
             }
+            val currentTopicName = note.topicName
             val matchesSearch = searchQuery.isBlank() ||
                     note.title.contains(searchQuery, ignoreCase = true) ||
                     note.snippet.contains(searchQuery, ignoreCase = true) ||
                     note.subject.contains(searchQuery, ignoreCase = true) ||
-                    (note.topicName != null && note.topicName.contains(searchQuery, ignoreCase = true))
+                    (currentTopicName != null && currentTopicName.contains(searchQuery, ignoreCase = true))
 
             matchesFilter && matchesSearch
         }
@@ -332,7 +337,10 @@ fun WorkspaceScreen(
                     .fillMaxWidth()
                     .weight(1f)
             ) {
-                items(filteredNotes, key = { it.id }) { note ->
+                items(
+                    items = filteredNotes,
+                    key = { "${it.id}_${it.title}_${it.subjectId}_${it.topicId}" }
+                ) { note ->
                     val matchingSubject = subjects.find { it.id == note.subjectId }
                     val subjectColor = matchingSubject?.color ?: if (note.isScratchpad) Color(0xFF64748B) else AccentBlue
 

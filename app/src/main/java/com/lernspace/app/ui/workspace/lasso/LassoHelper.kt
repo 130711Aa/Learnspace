@@ -11,10 +11,12 @@ data class LassoSelectionState(
     val selectedStrokes: MutableList<Stroke> = mutableListOf(),
     val selectedTextBoxes: MutableList<TextBoxElement> = mutableListOf(),
     val selectedImages: MutableList<ImageElement> = mutableListOf(),
-    val bounds: Rect = Rect.Zero
+    val bounds: Rect = Rect.Zero,
+    val isRegionCapture: Boolean = false,
+    val lassoPolygon: List<Offset> = emptyList()
 ) {
     val isEmpty: Boolean
-        get() = selectedStrokes.isEmpty() && selectedTextBoxes.isEmpty() && selectedImages.isEmpty()
+        get() = !isRegionCapture && selectedStrokes.isEmpty() && selectedTextBoxes.isEmpty() && selectedImages.isEmpty()
 }
 
 object LassoHelper {
@@ -90,19 +92,62 @@ object LassoHelper {
     }
 
     /**
-     * Tests if an ImageElement is inside the lasso polygon.
+     * Tests if an ImageElement is inside or overlapped by the lasso polygon.
      */
     fun isImageSelected(img: ImageElement, polygon: List<Offset>): Boolean {
+        if (polygon.isEmpty()) return false
         val center = Offset(img.x + img.width / 2f, img.y + img.height / 2f)
         if (isPointInPolygon(center, polygon)) return true
         val topLeft = Offset(img.x, img.y)
         val topRight = Offset(img.x + img.width, img.y)
         val bottomLeft = Offset(img.x, img.y + img.height)
         val bottomRight = Offset(img.x + img.width, img.y + img.height)
-        return isPointInPolygon(topLeft, polygon) ||
-                isPointInPolygon(topRight, polygon) ||
-                isPointInPolygon(bottomLeft, polygon) ||
-                isPointInPolygon(bottomRight, polygon)
+        if (isPointInPolygon(topLeft, polygon) ||
+            isPointInPolygon(topRight, polygon) ||
+            isPointInPolygon(bottomLeft, polygon) ||
+            isPointInPolygon(bottomRight, polygon)
+        ) return true
+
+        // Check if any point of the lasso polygon lies inside the image bounding box
+        val imgRect = Rect(img.x, img.y, img.x + img.width, img.y + img.height)
+        return polygon.any { imgRect.contains(it) }
+    }
+
+    /**
+     * Checks if a stroke overlaps with a bounding box.
+     */
+    fun isStrokeInBounds(stroke: Stroke, bounds: Rect): Boolean {
+        val inputs = stroke.inputs
+        val count = inputs.size
+        if (count == 0) return false
+        val temp = StrokeInput()
+        val step = maxOf(1, count / 12)
+        for (i in 0 until count step step) {
+            inputs.populate(i, temp)
+            if (bounds.contains(Offset(temp.x, temp.y))) return true
+        }
+        return false
+    }
+
+    /**
+     * Calculates the bounding box of a lasso polygon loop.
+     */
+    fun computePolygonBounds(polygon: List<Offset>, padding: Float = 10f): Rect? {
+        if (polygon.size < 3) return null
+        var minX = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE
+        var minY = Float.MAX_VALUE
+        var maxY = -Float.MAX_VALUE
+
+        for (pt in polygon) {
+            if (pt.x < minX) minX = pt.x
+            if (pt.x > maxX) maxX = pt.x
+            if (pt.y < minY) minY = pt.y
+            if (pt.y > maxY) maxY = pt.y
+        }
+
+        if (minX > maxX || minY > maxY) return null
+        return Rect(minX - padding, minY - padding, maxX + padding, maxY + padding)
     }
 
     /**

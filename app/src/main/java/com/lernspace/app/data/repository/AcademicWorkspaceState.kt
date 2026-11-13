@@ -102,14 +102,14 @@ object AcademicWorkspaceState {
         if (idx == -1) return null
         val old = notes[idx]
         val isUnlinkedScratch = subject == null && old.canvasType == NoteCanvasType.INFINITE_SCRATCHPAD
-        val updated = old.copy(
-            title = newTitle.trim().ifBlank { old.title },
-            subject = subject?.name ?: if (old.canvasType == NoteCanvasType.INFINITE_SCRATCHPAD) "Quick Scratchpad" else "General Study",
-            subjectId = subject?.id,
-            topicId = if (subject != null) topic?.id else null,
-            topicName = if (subject != null) topic?.title else null,
-            isScratchpad = isUnlinkedScratch
-        )
+        old.title = newTitle.trim().ifBlank { old.title }
+        old.subject = subject?.name ?: if (old.canvasType == NoteCanvasType.INFINITE_SCRATCHPAD) "Quick Scratchpad" else "General Study"
+        old.subjectId = subject?.id
+        old.topicId = if (subject != null) topic?.id else null
+        old.topicName = if (subject != null) topic?.title else null
+        old.isScratchpad = isUnlinkedScratch
+
+        val updated = old.copy()
         notes[idx] = updated
         if (activeEditingNote?.id == noteId) {
             activeEditingNote = updated
