@@ -1222,10 +1222,10 @@ fun NoteEditorScreen(
 // COMPONENT: NotePaneViewport (Clean Full-Height Canvas Viewport)
 // ─────────────────────────────────────────────────────────────────────────────
 private enum class LassoAiMode(val label: String) {
-    SOLVE("Selesaikan"),
+    AI_TUTOR("AI Tutor"),
+    FORMULA("Ubah ke Rumus"),
     CHECK("Cek Jawaban"),
-    PRACTICE("Soal Serupa"),
-    TRANSCRIBE("Rapikan")
+    PRACTICE("Soal Serupa")
 }
 
 @Composable
@@ -1252,7 +1252,7 @@ private fun NotePaneViewport(
     var lassoAiResponse by remember { mutableStateOf<String?>(null) }
     var lassoAiError by remember { mutableStateOf<String?>(null) }
     var lassoAiCustomPrompt by remember { mutableStateOf("") }
-    var lassoAiMode by remember { mutableStateOf(LassoAiMode.SOLVE) }
+    var lassoAiMode by remember { mutableStateOf(LassoAiMode.AI_TUTOR) }
 
     val triggerLassoAi: (LassoSelectionState, String, LassoAiMode) -> Unit = { sel, customQuestion, mode ->
         lassoAiMode = mode
@@ -1423,11 +1423,18 @@ private fun NotePaneViewport(
                     }
 
                     val sysPrompt = when (mode) {
-                        LassoAiMode.SOLVE -> """
-                            Jawab langsung ke inti penyelesaian dalam Bahasa Indonesia tanpa sapaan, tanpa kata pengantar/penutup, dan tanpa heading panjang.
-                            - Jika input berupa soal/hitungan: tulis langkah demi langkah secara ringkas, di setiap langkah sisipkan penjelasan singkat (1 frasa/kalimat pendek tentang apa yang dilakukan) sebelum rumus perhitungannya, lalu akhiri dengan **Hasil:** dan jawaban akhirnya.
-                            - Jika input berupa konsep/diagram/catatan: jawab langsung dengan poin-poin singkat yang jelas.
-                            - Gunakan LaTeX standar (${'$'}...${'$'} untuk sebaris, ${'$'}${'$'}...${'$'}${'$'} untuk persamaan utama) dan Markdown bersih.
+                        LassoAiMode.AI_TUTOR -> """
+                            Kamu adalah AI Tutor akademik yang sabar, cerdas, dan interaktif dalam Bahasa Indonesia.
+                            - Jelaskan dan selesaikan soal atau konsep yang dilingkari secara terstruktur dan mendalam layaknya seorang tutor profesional.
+                            - Untuk soal hitungan/sains: berikan penjelasan intuitif di setiap langkah pengerjaan, jelaskan konsep dasarnya sebelum rumus perhitungan, lalu akhiri dengan **Hasil Akhir:** yang jelas.
+                            - Untuk pertanyaan konsep/teori: jelaskan secara bertahap dengan analogi atau contoh nyata jika relevan.
+                            - Gunakan format LaTeX standar (${'$'}...${'$'} untuk sebaris, ${'$'}${'$'}...${'$'}${'$'} untuk persamaan utama) dan Markdown bersih tanpa basa-basi berlebihan.
+                        """.trimIndent()
+                        LassoAiMode.FORMULA -> """
+                            Kamu adalah mesin konversi tulisan tangan ke rumus matematika dan sains (Math & Formula OCR) tingkat tinggi.
+                            - Konversikan seluruh tulisan tangan, persamaan, pecahan, integral, matriks, atau notasi matematika/sains yang dilingkari menjadi rumus LaTeX murni yang presisi dan rapi.
+                            - HANYA keluarkan rumus dalam blok LaTeX (${'$'}${'$'}...${'$'}${'$'} atau ${'$'}...${'$'}) tanpa sapaan, tanpa kata pengantar/penutup, tanpa langkah penyelesaian, dan tanpa komentar apapun.
+                            - Jika terdiri dari beberapa persamaan atau baris, susun menggunakan format align atau baris baru yang rapi.
                         """.trimIndent()
                         LassoAiMode.CHECK -> """
                             Kamu adalah pemeriksa jawaban yang teliti dalam Bahasa Indonesia. Jawab langsung tanpa sapaan atau basa-basi.
@@ -1442,11 +1449,6 @@ private fun NotePaneViewport(
                             - Cantumkan bagian **Kunci Jawaban:** ringkas di bagian paling bawah.
                             - Gunakan LaTeX standar (${'$'}...${'$'} dan ${'$'}${'$'}...${'$'}${'$'}) dan Markdown bersih.
                         """.trimIndent()
-                        LassoAiMode.TRANSCRIBE -> """
-                            Transkrip dan rapikan tulisan tangan/catatan pada gambar menjadi catatan digital yang bersih dalam Bahasa Indonesia, tanpa sapaan atau komentar tambahan.
-                            - Pertahankan seluruh isi, poin, dan rumus secara akurat.
-                            - Ubah rumus matematika/fisika/kimia ke format LaTeX standar (${'$'}...${'$'} untuk sebaris, ${'$'}${'$'}...${'$'}${'$'} untuk persamaan utama) dan rapikan struktur dengan Markdown bersih.
-                        """.trimIndent()
                     }
 
                     val userPrompt = buildString {
@@ -1454,10 +1456,10 @@ private fun NotePaneViewport(
                             append("Permintaan tambahan: ").append(customQuestion.trim()).append("\n\n")
                         } else {
                             when (mode) {
-                                LassoAiMode.SOLVE -> append("Selesaikan atau jawab langsung konten yang dilingkari ini:\n\n")
+                                LassoAiMode.AI_TUTOR -> append("Bantu jelaskan dan selesaikan materi/soal yang dilingkari ini sebagai AI Tutor:\n\n")
+                                LassoAiMode.FORMULA -> append("Ubah tulisan tangan/notasi matematika yang dilingkari ini menjadi rumus LaTeX murni tanpa teks pengantar:\n\n")
                                 LassoAiMode.CHECK -> append("Periksa langkah dan jawaban yang ditulis pada area yang dilingkari ini:\n\n")
                                 LassoAiMode.PRACTICE -> append("Buatkan 2 soal latihan serupa beserta kunci jawaban ringkas dari konten yang dilingkari ini:\n\n")
-                                LassoAiMode.TRANSCRIBE -> append("Rapikan dan transkrip konten yang dilingkari ini menjadi catatan Markdown + LaTeX:\n\n")
                             }
                         }
                         if (textSnippets.isNotEmpty()) {
@@ -1468,7 +1470,7 @@ private fun NotePaneViewport(
                         }
                     }
 
-                    val thinkingBudget = if (mode == LassoAiMode.TRANSCRIBE) 0 else 256
+                    val thinkingBudget = if (mode == LassoAiMode.FORMULA) 0 else 256
                     val result = GeminiApiClient.streamGenerateTextFromImages(
                         systemPrompt = sysPrompt,
                         userPrompt = userPrompt,
@@ -2328,7 +2330,7 @@ private fun NotePaneViewport(
                                             color = LernspaceDark,
                                             modifier = Modifier.clickable {
                                                 lassoAiCustomPrompt = ""
-                                                triggerLassoAi(curSel, "", LassoAiMode.SOLVE)
+                                                triggerLassoAi(curSel, "", LassoAiMode.AI_TUTOR)
                                             }
                                         ) {
                                             Row(
