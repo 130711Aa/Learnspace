@@ -181,26 +181,57 @@ object ShapeRecognizer {
         return points
     }
 
-    fun sampleRectangle(minX: Float, minY: Float, maxX: Float, maxY: Float, pointsPerEdge: Int = 10): List<Offset> {
+    /**
+     * Samples closed polygon vertices (e.g. Rectangle, Triangle) with zero-velocity corner dwell knots.
+     * This eliminates spline rounding at vertices, ensuring all corners are 100% sharp and identical.
+     */
+    fun samplePolygon(vertices: List<Offset>, pointsPerEdge: Int = 16): List<Offset> {
+        if (vertices.size < 3) return vertices
         val points = mutableListOf<Offset>()
-        for (i in 0 until pointsPerEdge) {
-            val t = i.toFloat() / pointsPerEdge
-            points.add(Offset(minX + (maxX - minX) * t, minY))
+        val n = vertices.size
+
+        for (i in 0 until n) {
+            val vStart = vertices[i]
+            val vEnd = vertices[(i + 1) % n]
+
+            // Two identical points at the corner vertex: creates a zero-velocity knot that forces a crisp, sharp corner
+            points.add(vStart)
+            points.add(vStart)
+
+            for (step in 1 until pointsPerEdge) {
+                val t = step.toFloat() / pointsPerEdge
+                points.add(
+                    Offset(
+                        vStart.x + (vEnd.x - vStart.x) * t,
+                        vStart.y + (vEnd.y - vStart.y) * t
+                    )
+                )
+            }
         }
-        for (i in 0 until pointsPerEdge) {
-            val t = i.toFloat() / pointsPerEdge
-            points.add(Offset(maxX, minY + (maxY - minY) * t))
-        }
-        for (i in 0 until pointsPerEdge) {
-            val t = i.toFloat() / pointsPerEdge
-            points.add(Offset(maxX - (maxX - minX) * t, maxY))
-        }
-        for (i in 0 until pointsPerEdge) {
-            val t = i.toFloat() / pointsPerEdge
-            points.add(Offset(minX, maxY - (maxY - minY) * t))
-        }
-        points.add(Offset(minX, minY))
+
+        // Close cleanly at the starting vertex with matching zero-velocity knot
+        val v0 = vertices[0]
+        points.add(v0)
+        points.add(v0)
+
+        // Slight overlap along first edge so the stroke start and end blend invisibly
+        val v1 = vertices[1]
+        val smallT = 1f / pointsPerEdge
+        points.add(Offset(v0.x + (v1.x - v0.x) * smallT, v0.y + (v1.y - v0.y) * smallT))
+
         return points
+    }
+
+    fun sampleRectangle(minX: Float, minY: Float, maxX: Float, maxY: Float, pointsPerEdge: Int = 16): List<Offset> {
+        return samplePolygon(
+            listOf(
+                Offset(minX, minY),
+                Offset(maxX, minY),
+                Offset(maxX, maxY),
+                Offset(minX, maxY)
+            ),
+            pointsPerEdge = pointsPerEdge
+        )
     }
 
     fun sampleCircle(cx: Float, cy: Float, rx: Float, ry: Float, numPoints: Int = 48): List<Offset> {
@@ -212,22 +243,11 @@ object ShapeRecognizer {
         return points
     }
 
-    fun sampleTriangle(p1: Offset, p2: Offset, p3: Offset, pointsPerEdge: Int = 12): List<Offset> {
-        val points = mutableListOf<Offset>()
-        for (i in 0 until pointsPerEdge) {
-            val t = i.toFloat() / pointsPerEdge
-            points.add(Offset(p1.x + (p2.x - p1.x) * t, p1.y + (p2.y - p1.y) * t))
-        }
-        for (i in 0 until pointsPerEdge) {
-            val t = i.toFloat() / pointsPerEdge
-            points.add(Offset(p2.x + (p3.x - p2.x) * t, p2.y + (p3.y - p2.y) * t))
-        }
-        for (i in 0 until pointsPerEdge) {
-            val t = i.toFloat() / pointsPerEdge
-            points.add(Offset(p3.x + (p1.x - p3.x) * t, p3.y + (p1.y - p3.y) * t))
-        }
-        points.add(p1)
-        return points
+    fun sampleTriangle(p1: Offset, p2: Offset, p3: Offset, pointsPerEdge: Int = 16): List<Offset> {
+        return samplePolygon(
+            listOf(p1, p2, p3),
+            pointsPerEdge = pointsPerEdge
+        )
     }
 
     fun sampleArrow(start: Offset, end: Offset): List<Offset> {
