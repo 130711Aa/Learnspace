@@ -80,7 +80,15 @@ object MathLatexRecognizer {
                 return@withContext true
             }
             val conditions = DownloadConditions.Builder().build()
-            val success = awaitTask(remote.download(model, conditions)) != null
+            val success = suspendCancellableCoroutine<Boolean> { cont ->
+                remote.download(model, conditions)
+                    .addOnSuccessListener { if (cont.isActive) cont.resume(true) }
+                    .addOnFailureListener { e ->
+                        Log.e(TAG, "Download failed", e)
+                        if (cont.isActive) cont.resume(false)
+                    }
+                    .addOnCanceledListener { if (cont.isActive) cont.resume(false) }
+            }
             if (success) isMathModelReady = true
             success
         } catch (e: Exception) {
@@ -203,39 +211,20 @@ object MathLatexRecognizer {
     }
 
     private suspend fun getOrInitRecognizer(): DigitalInkRecognizer? {
-        // Try Math model first
         if (mathRecognizer != null) return mathRecognizer
         val remote = RemoteModelManager.getInstance()
 
-        val mathId = DigitalInkRecognitionModelIdentifier.fromLanguageTag(MATH_MODEL_TAG)
-        if (mathId != null) {
-            val mathModel = DigitalInkRecognitionModel.builder(mathId).build()
-            if (awaitTask(remote.isModelDownloaded(mathModel)) == true) {
-                mathRecognizer = DigitalInkRecognition.getClient(
-                    DigitalInkRecognizerOptions.builder(mathModel).setMaxResultCount(3).build()
-                )
-                return mathRecognizer
-            } else {
-                // Auto-trigger background download for math model
-                downloadOfflineMathModel()
-            }
+        val mathId = DigitalInkRecognitionModelIdentifier.fromLanguageTag(MATH_MODEL_TAG) ?: return null
+        val mathModel = DigitalInkRecognitionModel.builder(mathId).build()
+        if (awaitTask(remote.isModelDownloaded(mathModel)) == true) {
+            mathRecognizer = DigitalInkRecognition.getClient(
+                DigitalInkRecognizerOptions.builder(mathModel).setMaxResultCount(3).build()
+            )
+            return mathRecognizer
+        } else {
+            downloadOfflineMathModel()
+            return null
         }
-
-        // Fallback to standard Latin model ('en-US' or 'id')
-        if (latinRecognizer != null) return latinRecognizer
-        val candidateTags = listOf("en-US", "id", "en")
-        for (tag in candidateTags) {
-            val latId = DigitalInkRecognitionModelIdentifier.fromLanguageTag(tag) ?: continue
-            val latModel = DigitalInkRecognitionModel.builder(latId).build()
-            if (awaitTask(remote.isModelDownloaded(latModel)) == true) {
-                latinRecognizer = DigitalInkRecognition.getClient(
-                    DigitalInkRecognizerOptions.builder(latModel).setMaxResultCount(3).build()
-                )
-                return latinRecognizer
-            }
-        }
-
-        return null
     }
 
     /**
@@ -269,6 +258,32 @@ object MathLatexRecognizer {
         else if (text.startsWith("```tex")) text = text.removePrefix("```tex").trim()
         else if (text.startsWith("```")) text = text.removePrefix("```").trim()
         if (text.endsWith("```")) text = text.removeSuffix("```").trim()
+
+        // Normalize OCR lines for fractions (e.g. "3\n-\n2" or "3\n2" -> "\frac{3}{2}")
+        val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        if (lines.size == 2) {
+            val top = lines[0]
+            val bottom = lines[1]
+            if (top.isNotEmpty() && bottom.isNotEmpty() && !top.contains("=") && !bottom.contains("=")) {
+                text = "\\frac{$top}{$bottom}"
+            }
+        } else if (lines.size == 3) {
+            val top = lines[0]
+            val mid = lines[1]
+            val bottom = lines[2]
+            if (mid in listOf("-", "--", "—", "_", "__", "―", "=") && top.isNotEmpty() && bottom.isNotEmpty()) {
+                text = "\\frac{$top}{$bottom}"
+            }
+        } else if (lines.size > 1) {
+            text = text.replace("\n", " ").trim()
+        }
+
+        // Clean common OCR misrecognitions for math
+        text = text.replace("–", "-")
+            .replace("—", "-")
+            .replace("−", "-")
+            .replace("⁄", "/")
+
         return text
     }
 

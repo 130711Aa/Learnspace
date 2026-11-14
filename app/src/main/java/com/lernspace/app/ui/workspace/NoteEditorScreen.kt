@@ -1313,8 +1313,7 @@ private fun NotePaneViewport(
                     HandwrittenNoteRecognizer.renderStrokesToBitmap(
                         strokes = sel.selectedStrokes.toList(),
                         renderer = rendererSnapshot,
-                        maxDim = 800,
-                        backgroundColor = darkPaperBg
+                        maxDim = 800
                     )
                 }
                 val result = MathLatexRecognizer.recognizeMath(sel.selectedStrokes.toList(), cropBmp)
@@ -1989,38 +1988,12 @@ private fun NotePaneViewport(
                                         coroutineScope.launch {
                                             isEvaluatingMathAutoSolve = true
                                             try {
-                                                // Create tight bitmap crop of expression for maximum OCR accuracy
-                                                var cropBmp: android.graphics.Bitmap? = null
-                                                try {
-                                                    var minX = Float.POSITIVE_INFINITY
-                                                    var maxX = Float.NEGATIVE_INFINITY
-                                                    var minY = Float.POSITIVE_INFINITY
-                                                    var maxY = Float.NEGATIVE_INFINITY
-                                                    val temp = androidx.ink.strokes.StrokeInput()
-                                                    for (s in exprStrokes) {
-                                                        for (i in 0 until s.inputs.size) {
-                                                            s.inputs.populate(i, temp)
-                                                            minX = minOf(minX, temp.x)
-                                                            maxX = maxOf(maxX, temp.x)
-                                                            minY = minOf(minY, temp.y)
-                                                            maxY = maxOf(maxY, temp.y)
-                                                        }
-                                                    }
-                                                    val pad = 16f
-                                                    val bw = (maxX - minX + pad * 2f).toInt().coerceIn(64, 1600)
-                                                    val bh = (maxY - minY + pad * 2f).toInt().coerceIn(40, 800)
-                                                    cropBmp = android.graphics.Bitmap.createBitmap(bw, bh, android.graphics.Bitmap.Config.ARGB_8888)
-                                                    val canvas = android.graphics.Canvas(cropBmp)
-                                                    canvas.drawColor(if (isDark) android.graphics.Color.rgb(30, 30, 38) else android.graphics.Color.WHITE)
-                                                    val mat = android.graphics.Matrix().apply {
-                                                        postTranslate(-minX + pad, -minY + pad)
-                                                    }
-                                                    for (s in exprStrokes) {
-                                                        rendererSnapshot.draw(canvas, s, mat)
-                                                    }
-                                                } catch (e: Exception) {
-                                                    // ignore bitmap creation error, rely on ink strokes
-                                                }
+                                                // Create crisp, high-contrast bitmap crop of expression for maximum OCR accuracy
+                                                val cropBmp = HandwrittenNoteRecognizer.renderStrokesToBitmap(
+                                                    strokes = exprStrokes,
+                                                    renderer = rendererSnapshot,
+                                                    maxDim = 800
+                                                )
 
                                                 val recog = MathLatexRecognizer.recognizeMath(exprStrokes, cropBmp)
                                                 val rawMath = recog.latex

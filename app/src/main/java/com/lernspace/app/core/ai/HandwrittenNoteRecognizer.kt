@@ -3,7 +3,10 @@ package com.lernspace.app.core.ai
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.Matrix
+import android.graphics.Paint
 import android.graphics.RectF
 import android.util.Log
 import android.util.LruCache
@@ -282,43 +285,65 @@ object HandwrittenNoteRecognizer {
         }
         if (!minX.isFinite() || (maxX <= minX && maxY <= minY)) return null
 
-        val pad = 48f
+        val pad = 24f
         minX -= pad
         minY -= pad
         maxX += pad
         maxY += pad
 
-        val worldW = (maxX - minX).coerceAtLeast(100f)
-        val worldH = (maxY - minY).coerceAtLeast(100f)
-        val scale = min(1.5f, min(maxDim / worldW, maxDim / worldH)).coerceAtLeast(0.25f)
+        val worldW = (maxX - minX).coerceAtLeast(60f)
+        val worldH = (maxY - minY).coerceAtLeast(60f)
+
+        // Ensure ideal OCR scale so text has sufficient pixel height (~220px - 400px)
+        val targetH = 280f
+        val targetW = 720f
+        val optimalScale = min(targetW / worldW, targetH / worldH)
+        val scale = min(optimalScale, min(maxDim.toFloat() / worldW, maxDim.toFloat() / worldH)).coerceIn(0.5f, 4.0f)
+
         val bmpW = (worldW * scale).roundToInt().coerceIn(64, maxDim)
         val bmpH = (worldH * scale).roundToInt().coerceIn(64, maxDim)
 
-        val resolvedBg = backgroundColor ?: run {
-            val avgLum = strokes.map { st ->
-                val c = st.brush.colorIntArgb
-                val r = Color.red(c)
-                val g = Color.green(c)
-                val b = Color.blue(c)
-                (0.299f * r + 0.587f * g + 0.114f * b) / 255f
-            }.average()
-            if (avgLum > 0.78) Color.rgb(30, 30, 38) else Color.WHITE
-        }
+        val avgLum = strokes.map { st ->
+            val c = st.brush.colorIntArgb
+            val r = Color.red(c)
+            val g = Color.green(c)
+            val b = Color.blue(c)
+            (0.299f * r + 0.587f * g + 0.114f * b) / 255f
+        }.average()
+
+        val isLightInk = avgLum > 0.60
+        // If ink is light (e.g. white stylus on dark paper), render on black then invert to pure black-on-white
+        val drawBg = if (isLightInk) Color.BLACK else Color.WHITE
 
         val bitmap = Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
-        canvas.drawColor(resolvedBg)
+        canvas.drawColor(drawBg)
 
         val matrix = Matrix().apply {
             postTranslate(-minX, -minY)
             postScale(scale, scale)
         }
-        canvas.translate(-minX * scale, -minY * scale)
-        canvas.scale(scale, scale)
 
+        // Draw strokes using the transformation matrix directly (DO NOT transform canvas again)
         for (stroke in strokes) {
             renderer.draw(canvas, stroke, matrix)
         }
+
+        if (isLightInk) {
+            val inverted = Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.ARGB_8888)
+            val invertPaint = Paint().apply {
+                colorFilter = ColorMatrixColorFilter(ColorMatrix(floatArrayOf(
+                    -1f, 0f, 0f, 0f, 255f,
+                    0f, -1f, 0f, 0f, 255f,
+                    0f, 0f, -1f, 0f, 255f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            Canvas(inverted).drawBitmap(bitmap, 0f, 0f, invertPaint)
+            bitmap.recycle()
+            return inverted
+        }
+
         return bitmap
     }
 

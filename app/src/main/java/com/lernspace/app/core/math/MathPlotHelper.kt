@@ -236,3 +236,4 @@ object MathPlotHelper {
         return bmp
     }
 }
+
