@@ -2015,8 +2015,10 @@ private fun NotePaneViewport(
 
                                                 val recog = MathLatexRecognizer.recognizeMath(exprStrokes, cropBmp)
                                                 val rawMath = recog.latex
+                                                android.util.Log.d("MathAutoSolve", "recog: '$rawMath', source: ${recog.source}")
                                                 if (rawMath.isNotBlank()) {
                                                     val sol = MathSolver.solve(rawMath + " =") ?: MathSolver.solve(rawMath)
+                                                    android.util.Log.d("MathAutoSolve", "sol: ${sol?.result}")
                                                     if (sol != null && sol.isSolved) {
                                                         try {
                                                             view.performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM)

@@ -77,6 +77,8 @@ object MathSolver {
         text = text.replace("\\times", "*")
             .replace("\\cdot", "*")
             .replace("\\div", "/")
+            .replace("×", "*")
+            .replace("÷", "/")
             .replace("\\pm", "+-")
             .replace("\\pi", "pi")
             .replace("\\left(", "(")
@@ -89,6 +91,12 @@ object MathSolver {
             .replace("\\;", " ")
             .replace("\\quad", " ")
             .replace("\\qquad", " ")
+
+        // Handle 'x' or 'X' between numbers as multiplication (e.g. "4 x 5" -> "4 * 5")
+        text = text.replace(Regex("(\\d+)\\s*[xX]\\s*(\\d+)"), "$1 * $2")
+
+        // Handle ':' between numbers as division (common in Indonesian notation: "63 : 7" -> "63 / 7")
+        text = text.replace(Regex("(\\d+)\\s*:\\s*(\\d+)"), "$1 / $2")
 
         // Replace fractions: \frac{A}{B} -> ((A)/(B))
         text = convertFractions(text)
