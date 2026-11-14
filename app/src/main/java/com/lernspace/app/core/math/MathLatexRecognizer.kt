@@ -102,9 +102,9 @@ object MathLatexRecognizer {
             val localVisionText = recognizeOnDeviceVision(cropBitmap)
             if (!localVisionText.isNullOrBlank()) {
                 val clean = cleanLatex(localVisionText)
-                val solution = MathSolver.solve(clean + " =") ?: MathSolver.solve(clean)
-                if (solution != null && solution.isSolved) {
-                    Log.d(TAG, "Tier 1 On-Device Vision OCR succeeded: '$clean' -> ${solution.result}")
+                if (clean.isNotBlank()) {
+                    val solution = MathSolver.solve(clean + " =") ?: MathSolver.solve(clean)
+                    Log.d(TAG, "Tier 1 On-Device Vision OCR succeeded: '$clean' -> ${solution?.result}")
                     return@withContext MathRecognitionResult(
                         latex = clean,
                         solution = solution,

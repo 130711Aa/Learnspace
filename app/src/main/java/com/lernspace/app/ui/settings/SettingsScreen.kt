@@ -1,6 +1,7 @@
 package com.lernspace.app.ui.settings
 
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -34,6 +35,9 @@ import com.lernspace.app.BuildConfig
 import com.lernspace.app.core.ai.GeminiApiClient
 import com.lernspace.app.core.ai.LocalSlmManager
 import com.lernspace.app.core.ai.SlmModelSpec
+import com.lernspace.app.core.math.MathLatexRecognizer
+import com.lernspace.app.core.math.Pix2TexOnnxEngine
+import com.lernspace.app.core.math.Pix2TexModelStatus
 import com.lernspace.app.core.updater.AppReleaseInfo
 import com.lernspace.app.core.updater.UpdateManager
 import com.lernspace.app.data.local.AppSettingsManager
@@ -1751,6 +1755,150 @@ private fun OfflineSlmSection() {
                             color = LernspaceDark,
                             modifier = Modifier.padding(12.dp)
                         )
+                    }
+                }
+            }
+        }
+
+        // ── Card: HMER & Pengenal Matematika Offline (Pix2Tex / ML Kit) ──
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = LernspaceSurfaceLow,
+            border = BorderStroke(1.dp, LernspaceBorder),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(Icons.Filled.Calculate, contentDescription = null, tint = LernspaceDark)
+                    Column {
+                        Text("Pengenal Matematika Offline (HMER / LaTeX-OCR)", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = LernspaceDark)
+                        Text("Kalkulasi otomatis '=', pengenal rumus LaTeX, dan visualisasi grafik fungsi 100% offline.", fontSize = 12.sp, color = LernspaceTextSecondary)
+                    }
+                }
+
+                HorizontalDivider(color = LernspaceBorder)
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("On-Device Vision OCR (Bundled)", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = LernspaceDark)
+                        Text("Deteksi instan ~15ms via Google Play Services Vision tanpa koneksi internet.", fontSize = 11.5.sp, color = LernspaceTextSecondary)
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = Color(0xFF10B981).copy(alpha = 0.12f),
+                        border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.3f))
+                    ) {
+                        Text(
+                            text = "AKTIF (0 MB)",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF059669),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Simbol Matematika (Digital Ink)", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = LernspaceDark)
+                        Text("Model digital ink stroke pengenal rumus matematika offline (~20 MB).", fontSize = 11.5.sp, color = LernspaceTextSecondary)
+                    }
+                    var isInkDownloaded by remember { mutableStateOf(false) }
+                    LaunchedEffect(Unit) {
+                        isInkDownloaded = MathLatexRecognizer.isOfflineMathModelDownloaded()
+                    }
+                    if (isInkDownloaded) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = Color(0xFF10B981).copy(alpha = 0.12f),
+                            border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.3f))
+                        ) {
+                            Text(
+                                text = "TERUNDUH",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF059669),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    } else {
+                        OutlinedButton(
+                            onClick = {
+                                coroutineScope.launch {
+                                    Toast.makeText(context, "Mulai mengunduh model simbol matematika offline...", Toast.LENGTH_SHORT).show()
+                                    val ok = MathLatexRecognizer.downloadOfflineMathModel()
+                                    if (ok) isInkDownloaded = true
+                                }
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                        ) {
+                            Text("Unduh (~20 MB)", fontSize = 11.sp)
+                        }
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Model Pix2Tex / LaTeX-OCR (ONNX)", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = LernspaceDark)
+                        Text("Model Vision Transformer neural network lokal untuk membaca rumus pecahan, akar, dan integral bertingkat.", fontSize = 11.5.sp, color = LernspaceTextSecondary)
+                        if (Pix2TexOnnxEngine.modelStatus == Pix2TexModelStatus.DOWNLOADING) {
+                            Spacer(Modifier.height(4.dp))
+                            LinearProgressIndicator(
+                                progress = { Pix2TexOnnxEngine.downloadProgress },
+                                modifier = Modifier.fillMaxWidth(0.9f)
+                            )
+                        }
+                    }
+                    if (Pix2TexOnnxEngine.isReady(context)) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = Color(0xFF10B981).copy(alpha = 0.12f),
+                            border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.3f))
+                        ) {
+                            Text(
+                                text = "SIAP OFFLINE",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF059669),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    } else if (Pix2TexOnnxEngine.modelStatus == Pix2TexModelStatus.DOWNLOADING) {
+                        Text(
+                            text = "${(Pix2TexOnnxEngine.downloadProgress * 100).toInt()}%",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = LernspaceDark
+                        )
+                    } else {
+                        OutlinedButton(
+                            onClick = {
+                                coroutineScope.launch {
+                                    Toast.makeText(context, "Mengunduh model Pix2Tex ONNX...", Toast.LENGTH_SHORT).show()
+                                    Pix2TexOnnxEngine.downloadModel(context)
+                                }
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                        ) {
+                            Text("Unduh ONNX", fontSize = 11.sp)
+                        }
                     }
                 }
             }

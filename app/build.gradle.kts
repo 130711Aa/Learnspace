@@ -91,6 +91,9 @@ dependencies {
     implementation("com.llamatik:library:0.12.0")
     implementation("com.facebook.fbjni:fbjni:0.7.0")
 
+    // On-Device ONNX Runtime for Pix2Tex / LaTeX-OCR
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.18.0")
+
     // On-Device Handwriting / Digital Ink & Bundled Vision OCR (100% Offline)
     implementation("com.google.mlkit:digital-ink-recognition:19.0.0")
     implementation("com.google.mlkit:text-recognition:16.0.0")

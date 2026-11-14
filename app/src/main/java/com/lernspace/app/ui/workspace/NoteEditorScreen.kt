@@ -100,6 +100,8 @@ import com.lernspace.app.core.math.MathLatexRecognizer
 import com.lernspace.app.core.math.MathEqualsRecognizer
 import com.lernspace.app.core.math.MathAutoSolveResult
 import com.lernspace.app.core.math.EqualsSignMatch
+import com.lernspace.app.core.math.MathPlotHelper
+import com.lernspace.app.core.math.Pix2TexOnnxEngine
 import com.lernspace.app.core.audio.NoteAudioController
 import com.lernspace.app.ui.workspace.components.AudioLectureBar
 import com.lernspace.app.data.local.AcademicDatabaseManager
@@ -1299,38 +1301,45 @@ private fun NotePaneViewport(
         lassoAiResponse = null
         lassoAiError = null
         mathSolverResult = null
-        if (!GeminiApiClient.isConfigured()) {
-            if (mode == LassoAiMode.FORMULA && sel.selectedStrokes.isNotEmpty()) {
-                // Mode offline math recognition via ML Kit
-                isAskingLassoAi = true
-                lassoAiJob?.cancel()
-                lassoAiJob = coroutineScope.launch {
-                    val result = MathLatexRecognizer.recognizeMath(sel.selectedStrokes.toList(), null)
-                    if (result.latex.isNotBlank()) {
-                        lassoAiResponse = result.latex
-                        mathSolverResult = result.solution
-                    } else {
-                        val downloaded = MathLatexRecognizer.isOfflineMathModelDownloaded()
-                        if (!downloaded) {
-                            lassoAiError = "Model matematika offline (~20 MB) sedang diunduh. Hubungkan Gemini API jika ingin akurasi penuh."
-                            MathLatexRecognizer.downloadOfflineMathModel()
-                        } else {
-                            lassoAiError = "Tidak dapat mengenali tulisan matematika. Hubungkan Gemini API untuk mengenali rumus 2D rumit."
-                        }
-                    }
-                    isAskingLassoAi = false
+        val darkPaperBg = if (state.isDarkPaper) android.graphics.Color.rgb(30, 30, 38) else android.graphics.Color.WHITE
+        val rendererSnapshot = state.canvasStrokeRenderer
+
+        if (mode == LassoAiMode.FORMULA && sel.selectedStrokes.isNotEmpty()) {
+            // Mode offline-first math recognition via ML Kit & Vision (100% Offline)
+            isAskingLassoAi = true
+            lassoAiJob?.cancel()
+            lassoAiJob = coroutineScope.launch {
+                val cropBmp = withContext(Dispatchers.Default) {
+                    HandwrittenNoteRecognizer.renderStrokesToBitmap(
+                        strokes = sel.selectedStrokes.toList(),
+                        renderer = rendererSnapshot,
+                        maxDim = 800,
+                        backgroundColor = darkPaperBg
+                    )
                 }
-            } else {
+                val result = MathLatexRecognizer.recognizeMath(sel.selectedStrokes.toList(), cropBmp)
+                if (result.latex.isNotBlank()) {
+                    lassoAiResponse = result.latex
+                    mathSolverResult = result.solution
+                } else {
+                    val downloaded = MathLatexRecognizer.isOfflineMathModelDownloaded()
+                    if (!downloaded) {
+                        lassoAiError = "Model matematika offline (~20 MB) sedang diunduh. Hubungkan Gemini API jika ingin akurasi penuh."
+                        MathLatexRecognizer.downloadOfflineMathModel()
+                    } else {
+                        lassoAiError = "Tidak dapat mengenali tulisan matematika. Hubungkan Gemini API untuk mengenali rumus 2D rumit."
+                    }
+                }
                 isAskingLassoAi = false
-                lassoAiError = "Gemini API Key belum diatur. Buka Pengaturan -> AI & Integrasi untuk memasukkan API Key gratis kamu."
             }
+        } else if (!GeminiApiClient.isConfigured()) {
+            isAskingLassoAi = false
+            lassoAiError = "Gemini API Key belum diatur. Buka Pengaturan -> AI & Integrasi untuk memasukkan API Key gratis kamu."
         } else {
             isAskingLassoAi = true
             val strokesSnapshot = sel.selectedStrokes.toList()
             val textSnippets = sel.selectedTextBoxes.mapNotNull { it.text.trim().takeIf { t -> t.isNotEmpty() } }
             val imageBitmapsSrc = sel.selectedImages.map { it.bitmap }
-            val darkPaperBg = if (state.isDarkPaper) android.graphics.Color.rgb(30, 30, 38) else android.graphics.Color.WHITE
-            val rendererSnapshot = state.canvasStrokeRenderer
 
             lassoAiJob?.cancel()
             lassoAiJob = coroutineScope.launch {
@@ -3191,6 +3200,43 @@ private fun NotePaneViewport(
                                                 }
                                             }
                                         }
+
+                                        val currentFormulaReply = lassoAiResponse ?: ""
+                                        if (lassoAiMode == LassoAiMode.FORMULA && MathPlotHelper.isPlottableFunction(currentFormulaReply)) {
+                                            Spacer(Modifier.height(8.dp))
+                                            Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = if (LocalIsDarkTheme.current) Color(0xFF0F2B48) else Color(0xFFF0F9FF),
+                                                border = BorderStroke(1.dp, if (LocalIsDarkTheme.current) Color(0xFF0284C7) else Color(0xFFBAE6FD)),
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.padding(10.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                ) {
+                                                    Icon(
+                                                        Icons.Filled.ShowChart,
+                                                        contentDescription = null,
+                                                        tint = if (LocalIsDarkTheme.current) Color(0xFF38BDF8) else Color(0xFF0284C7),
+                                                        modifier = Modifier.size(20.dp)
+                                                    )
+                                                    Column(modifier = Modifier.weight(1f)) {
+                                                        Text(
+                                                            text = "Fungsi Matematika Terdeteksi",
+                                                            fontSize = 12.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = if (LocalIsDarkTheme.current) Color(0xFF38BDF8) else Color(0xFF0284C7)
+                                                        )
+                                                        Text(
+                                                            text = "Kamu bisa klik 'Plot Grafik' untuk menggambar kurva koordinat Cartesius fungsi ini ke catatan.",
+                                                            fontSize = 11.5.sp,
+                                                            color = LernspaceTextSecondary
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -3222,6 +3268,44 @@ private fun NotePaneViewport(
                                     Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp), tint = LernspaceTextPrimary)
                                     Spacer(Modifier.width(4.dp))
                                     Text("Salin LaTeX", fontSize = 12.sp, color = LernspaceTextPrimary)
+                                }
+
+                                if (MathPlotHelper.isPlottableFunction(reply)) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            val cleanFunc = MathPlotHelper.extractFunctionBody(reply)
+                                            val plotData = MathPlotHelper.sampleFunction(cleanFunc)
+                                            if (plotData != null) {
+                                                val graphBmp = MathPlotHelper.renderGraphBitmap(plotData, isDarkTheme = state.isDarkPaper)
+                                                val insertX = sel.bounds.left.coerceAtLeast(32f)
+                                                val insertY = (sel.bounds.bottom + 20f).coerceAtLeast(32f)
+                                                state.pushUndoSnapshot()
+                                                state.imageElements.add(
+                                                    ImageElement(
+                                                        x = insertX,
+                                                        y = insertY,
+                                                        bitmap = graphBmp.asImageBitmap(),
+                                                        width = 560f,
+                                                        height = 420f,
+                                                        isSelected = false
+                                                    )
+                                                )
+                                                state.saveActivePageData()
+                                                showLassoAiDialog = false
+                                                state.lassoSelection = null
+                                                Toast.makeText(context, "Grafik fungsi disisipkan ke catatan", Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                Toast.makeText(context, "Tidak dapat memplot fungsi ini", Toast.LENGTH_SHORT).show()
+                                            }
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        border = BorderStroke(1.dp, if (state.isDarkPaper) Color(0xFF38BDF8) else Color(0xFF0284C7)),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                    ) {
+                                        Icon(Icons.Filled.ShowChart, contentDescription = null, modifier = Modifier.size(14.dp), tint = if (state.isDarkPaper) Color(0xFF38BDF8) else Color(0xFF0284C7))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("Plot Grafik", fontSize = 12.sp, color = if (state.isDarkPaper) Color(0xFF38BDF8) else Color(0xFF0284C7), fontWeight = FontWeight.SemiBold)
+                                    }
                                 }
 
                                 if (solution != null && solution.isSolved) {
@@ -3404,6 +3488,38 @@ private fun NotePaneViewport(
                             val sel = state.lassoSelection
                             val solution = mathSolverResult
                             if (!reply.isNullOrBlank() && sel != null && lassoAiMode == LassoAiMode.FORMULA) {
+                                if (MathPlotHelper.isPlottableFunction(reply)) {
+                                    TextButton(
+                                        onClick = {
+                                            val cleanFunc = MathPlotHelper.extractFunctionBody(reply)
+                                            val plotData = MathPlotHelper.sampleFunction(cleanFunc)
+                                            if (plotData != null) {
+                                                val graphBmp = MathPlotHelper.renderGraphBitmap(plotData, isDarkTheme = state.isDarkPaper)
+                                                val insertX = sel.bounds.left.coerceAtLeast(32f)
+                                                val insertY = (sel.bounds.bottom + 20f).coerceAtLeast(32f)
+                                                state.pushUndoSnapshot()
+                                                state.imageElements.add(
+                                                    ImageElement(
+                                                        x = insertX,
+                                                        y = insertY,
+                                                        bitmap = graphBmp.asImageBitmap(),
+                                                        width = 560f,
+                                                        height = 420f,
+                                                        isSelected = false
+                                                    )
+                                                )
+                                                state.saveActivePageData()
+                                                showLassoAiDialog = false
+                                                state.lassoSelection = null
+                                                Toast.makeText(context, "Grafik fungsi disisipkan ke catatan", Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                Toast.makeText(context, "Tidak dapat memplot fungsi ini", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    ) {
+                                        Text("📈 Plot Grafik", fontSize = 12.sp, color = if (state.isDarkPaper) Color(0xFF38BDF8) else Color(0xFF0284C7), fontWeight = FontWeight.Bold)
+                                    }
+                                }
                                 if (solution != null && solution.isSolved) {
                                     TextButton(
                                         onClick = {
