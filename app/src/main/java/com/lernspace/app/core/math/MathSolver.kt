@@ -98,6 +98,18 @@ object MathSolver {
         // Handle ':' between numbers as division (common in Indonesian notation: "63 : 7" -> "63 / 7")
         text = text.replace(Regex("(\\d+)\\s*:\\s*(\\d+)"), "$1 / $2")
 
+        // Normalize misrecognized arrows to '='
+        if (!text.contains("\\lim")) {
+            text = text.replace(Regex("""\s*(?:\\rightarrow|\\to|\\Rightarrow|\\implies|-->|->|==>|=>|→|⇒)\s*"""), " = ")
+        }
+        text = text.replace(Regex("""\s*>\s*$"""), " =")
+        text = text.replace(Regex("""\s*(?:--|__|―|—)\s*$"""), " =")
+        text = text.replace(Regex("""={2,}"""), "=")
+        text = text.replace(Regex("""\s*=\s*"""), " = ")
+        if (text.endsWith(" = ")) {
+            text = text.trimEnd()
+        }
+
         // Replace fractions: \frac{A}{B} -> ((A)/(B))
         text = convertFractions(text)
 
@@ -405,7 +417,7 @@ object MathSolver {
                 x = parseExpression()
                 eat(')')
             } else if (ch in '0'..'9' || ch == '.') {
-                while (ch in '0'..'9' || ch == '.') nextChar()
+                while (ch in '0'..'9' || ch == '.' || ch == 'e' || ch == 'E' || ((ch == '+' || ch == '-') && pos > startPos && (text[pos - 1] == 'e' || text[pos - 1] == 'E'))) nextChar()
                 x = text.substring(startPos, pos).toDouble()
             } else if (ch in 'a'..'z' || ch in 'A'..'Z') {
                 while (ch in 'a'..'z' || ch in 'A'..'Z') nextChar()

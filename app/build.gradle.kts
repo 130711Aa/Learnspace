@@ -13,8 +13,8 @@ android {
         applicationId = "com.lernspace.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 11
-        versionName = "1.5.0"
+        versionCode = 12
+        versionName = "1.6.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -91,10 +91,7 @@ dependencies {
     implementation("com.llamatik:library:0.12.0")
     implementation("com.facebook.fbjni:fbjni:0.7.0")
 
-    // On-Device ONNX Runtime for Pix2Tex / LaTeX-OCR
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.18.0")
-
-    // On-Device Handwriting / Digital Ink & Bundled Vision OCR (100% Offline)
+    // ML Kit Digital Ink Recognition for Offline Vector Strokes & Text OCR
     implementation("com.google.mlkit:digital-ink-recognition:19.0.0")
     implementation("com.google.mlkit:text-recognition:16.0.0")
 

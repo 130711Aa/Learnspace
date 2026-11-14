@@ -36,8 +36,6 @@ import com.lernspace.app.core.ai.GeminiApiClient
 import com.lernspace.app.core.ai.LocalSlmManager
 import com.lernspace.app.core.ai.SlmModelSpec
 import com.lernspace.app.core.math.MathLatexRecognizer
-import com.lernspace.app.core.math.Pix2TexOnnxEngine
-import com.lernspace.app.core.math.Pix2TexModelStatus
 import com.lernspace.app.core.updater.AppReleaseInfo
 import com.lernspace.app.core.updater.UpdateManager
 import com.lernspace.app.data.local.AppSettingsManager
@@ -1760,7 +1758,7 @@ private fun OfflineSlmSection() {
             }
         }
 
-        // ── Card: HMER & Pengenal Matematika Offline (Pix2Tex / ML Kit) ──
+        // ── Card: Pengenal Matematika & Tulisan Tangan AI (Gemini Vision AI) ──
         Surface(
             shape = RoundedCornerShape(14.dp),
             color = LernspaceSurfaceLow,
@@ -1774,8 +1772,8 @@ private fun OfflineSlmSection() {
                 ) {
                     Icon(Icons.Filled.Calculate, contentDescription = null, tint = LernspaceDark)
                     Column {
-                        Text("Pengenal Matematika Offline (HMER / LaTeX-OCR)", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = LernspaceDark)
-                        Text("Kalkulasi otomatis '=', pengenal rumus LaTeX, dan visualisasi grafik fungsi 100% offline.", fontSize = 12.sp, color = LernspaceTextSecondary)
+                        Text("Pengenal Matematika & Tulisan Tangan AI", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = LernspaceDark)
+                        Text("Ditenagai langsung oleh Gemini Multimodal Vision AI untuk kalkulasi '=', rumus LaTeX murni, dan plot fungsi.", fontSize = 12.sp, color = LernspaceTextSecondary)
                     }
                 }
 
@@ -1787,32 +1785,8 @@ private fun OfflineSlmSection() {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("On-Device Vision OCR (Bundled)", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = LernspaceDark)
-                        Text("Deteksi instan ~15ms via Google Play Services Vision tanpa koneksi internet.", fontSize = 11.5.sp, color = LernspaceTextSecondary)
-                    }
-                    Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = Color(0xFF10B981).copy(alpha = 0.12f),
-                        border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.3f))
-                    ) {
-                        Text(
-                            text = "AKTIF (0 MB)",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF059669),
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                        )
-                    }
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Simbol Matematika (Digital Ink)", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = LernspaceDark)
-                        Text("Model digital ink stroke pengenal rumus matematika offline (~20 MB).", fontSize = 11.5.sp, color = LernspaceTextSecondary)
+                        Text("Vector Digital Ink Math (Offline)", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = LernspaceDark)
+                        Text("Model pengenal trajektori coretan stylus offline (~20 MB) dengan normalisasi cerdas tanda '='.", fontSize = 11.5.sp, color = LernspaceTextSecondary)
                     }
                     var isInkDownloaded by remember { mutableStateOf(false) }
                     LaunchedEffect(Unit) {
@@ -1836,7 +1810,7 @@ private fun OfflineSlmSection() {
                         OutlinedButton(
                             onClick = {
                                 coroutineScope.launch {
-                                    Toast.makeText(context, "Mulai mengunduh model simbol matematika offline...", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "Mulai mengunduh model vektor matematika...", Toast.LENGTH_SHORT).show()
                                     val ok = MathLatexRecognizer.downloadOfflineMathModel()
                                     if (ok) isInkDownloaded = true
                                 }
@@ -1855,50 +1829,22 @@ private fun OfflineSlmSection() {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Model Pix2Tex / LaTeX-OCR (ONNX)", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = LernspaceDark)
-                        Text("Model Vision Transformer neural network lokal untuk membaca rumus pecahan, akar, dan integral bertingkat.", fontSize = 11.5.sp, color = LernspaceTextSecondary)
-                        if (Pix2TexOnnxEngine.modelStatus == Pix2TexModelStatus.DOWNLOADING) {
-                            Spacer(Modifier.height(4.dp))
-                            LinearProgressIndicator(
-                                progress = { Pix2TexOnnxEngine.downloadProgress },
-                                modifier = Modifier.fillMaxWidth(0.9f)
-                            )
-                        }
+                        Text("Gemini Vision AI Engine", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = LernspaceDark)
+                        Text("Kecerdasan multimodal cloud untuk membaca struktur 2D rumit (matriks, integral, sistem persamaan).", fontSize = 11.5.sp, color = LernspaceTextSecondary)
                     }
-                    if (Pix2TexOnnxEngine.isReady(context)) {
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = Color(0xFF10B981).copy(alpha = 0.12f),
-                            border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.3f))
-                        ) {
-                            Text(
-                                text = "SIAP OFFLINE",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF059669),
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                            )
-                        }
-                    } else if (Pix2TexOnnxEngine.modelStatus == Pix2TexModelStatus.DOWNLOADING) {
+                    val isAiReady = GeminiApiClient.isConfigured()
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = if (isAiReady) Color(0xFF10B981).copy(alpha = 0.12f) else Color(0xFFEF4444).copy(alpha = 0.12f),
+                        border = BorderStroke(1.dp, if (isAiReady) Color(0xFF10B981).copy(alpha = 0.3f) else Color(0xFFEF4444).copy(alpha = 0.3f))
+                    ) {
                         Text(
-                            text = "${(Pix2TexOnnxEngine.downloadProgress * 100).toInt()}%",
-                            fontSize = 12.sp,
+                            text = if (isAiReady) "AKTIF (AI)" else "API KEY BELUM DIATUR",
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
-                            color = LernspaceDark
+                            color = if (isAiReady) Color(0xFF059669) else Color(0xFFDC2626),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                         )
-                    } else {
-                        OutlinedButton(
-                            onClick = {
-                                coroutineScope.launch {
-                                    Toast.makeText(context, "Mengunduh model Pix2Tex ONNX...", Toast.LENGTH_SHORT).show()
-                                    Pix2TexOnnxEngine.downloadModel(context)
-                                }
-                            },
-                            shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
-                        ) {
-                            Text("Unduh ONNX", fontSize = 11.sp)
-                        }
                     }
                 }
             }

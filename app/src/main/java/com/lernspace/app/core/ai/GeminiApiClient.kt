@@ -518,6 +518,7 @@ object GeminiApiClient {
                 }
             }
             val text = textBuilder.toString().trim()
+            Log.d("GeminiApiClient", "callGenerateContent success text='${text.take(200)}'")
 
             if (text.isBlank()) {
                 val finishReason = cand0?.optString("finishReason").orEmpty()

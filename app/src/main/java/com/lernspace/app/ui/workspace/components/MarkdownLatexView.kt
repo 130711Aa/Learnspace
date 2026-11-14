@@ -621,6 +621,52 @@ object LatexMathFormatter {
                 }
             }
 
+            // 9) Inline Superscript: ^2, ^{12}, ^n, etc.
+            if (raw[i] == '^') {
+                val (expText, nextIdx) = readTokenOrBraced(raw, i + 1)
+                if (expText.isNotEmpty()) {
+                    val allUnicodeSup = expText.all { it in UNICODE_SUP }
+                    if (allUnicodeSup) {
+                        val supStr = expText.map { UNICODE_SUP[it] ?: it }.joinToString("")
+                        append(supStr)
+                    } else {
+                        pushStyle(
+                            SpanStyle(
+                                fontSize = baseFontSize * 0.75f,
+                                baselineShift = BaselineShift.Superscript
+                            )
+                        )
+                        append(expText)
+                        pop()
+                    }
+                    i = nextIdx
+                    continue
+                }
+            }
+
+            // 10) Inline Subscript: _1, _{10}, _i, etc.
+            if (raw[i] == '_') {
+                val (subText, nextIdx) = readTokenOrBraced(raw, i + 1)
+                if (subText.isNotEmpty()) {
+                    val allUnicodeSub = subText.all { it in UNICODE_SUB }
+                    if (allUnicodeSub) {
+                        val subStr = subText.map { UNICODE_SUB[it] ?: it }.joinToString("")
+                        append(subStr)
+                    } else {
+                        pushStyle(
+                            SpanStyle(
+                                fontSize = baseFontSize * 0.75f,
+                                baselineShift = BaselineShift.Subscript
+                            )
+                        )
+                        append(subText)
+                        pop()
+                    }
+                    i = nextIdx
+                    continue
+                }
+            }
+
             append(raw[i])
             i++
         }
@@ -901,11 +947,20 @@ private fun parseMarkdownLatexBlocks(input: String): List<MdBlock> {
             continue
         }
 
-        // Standalone pure math line (e.g. starts with \frac, \sqrt, or is $...$)
-        if (trimmed.startsWith("$") && trimmed.endsWith("$") && trimmed.length > 2 && trimmed.indexOf('$', 1) == trimmed.length - 1) {
-            blocks.add(MdBlock.DisplayMath(trimmed.removeSurrounding("$").trim()))
-            i++
-            continue
+        // Standalone pure math line (e.g. starts with \frac, \sqrt, or is $...$, or bare formula like x^2)
+        if (isStandaloneMath(trimmed)) {
+            val innerMath = when {
+                trimmed.startsWith("$$") && trimmed.endsWith("$$") && trimmed.length >= 4 -> trimmed.removeSurrounding("$$").trim()
+                trimmed.startsWith("$") && trimmed.endsWith("$") && trimmed.length >= 2 -> trimmed.removeSurrounding("$").trim()
+                trimmed.startsWith("\\[") && trimmed.endsWith("\\]") && trimmed.length >= 4 -> trimmed.removePrefix("\\[").removeSuffix("\\]").trim()
+                trimmed.startsWith("\\(") && trimmed.endsWith("\\)") && trimmed.length >= 4 -> trimmed.removePrefix("\\(").removeSuffix("\\)").trim()
+                else -> trimmed
+            }
+            if (innerMath.isNotEmpty()) {
+                blocks.add(MdBlock.DisplayMath(innerMath))
+                i++
+                continue
+            }
         }
 
         // Normal paragraph line
@@ -926,6 +981,31 @@ private fun parseMarkdownLatexBlocks(input: String): List<MdBlock> {
         blocks.add(MdBlock.Paragraph(paraSb.toString()))
     }
     return blocks
+}
+
+private fun isStandaloneMath(line: String): Boolean {
+    val t = line.trim()
+    if (t.isEmpty()) return false
+    if (t.startsWith("$$") && t.endsWith("$$") && t.length >= 4) return true
+    if (t.startsWith("$") && t.endsWith("$") && t.length >= 2) return true
+    if (t.startsWith("\\[") && t.endsWith("\\]") && t.length >= 4) return true
+    if (t.startsWith("\\(") && t.endsWith("\\)") && t.length >= 4) return true
+    if (t.startsWith("\\frac") || t.startsWith("\\dfrac") || t.startsWith("\\tfrac") ||
+        t.startsWith("\\sqrt") || t.startsWith("\\sum") || t.startsWith("\\int") ||
+        t.startsWith("\\prod") || t.startsWith("\\binom") || t.startsWith("\\begin{")
+    ) return true
+
+    // Check if it's an algebraic formula or equation like x^2, x^2 + y^2 = 25, (x-1)^2 = 4, y = 2x + 1
+    val hasMathIndicator = t.contains('^') || t.contains('_') || t.contains('\\') ||
+            (t.contains('=') && (t.contains('x') || t.contains('y') || t.contains('+') || t.contains('-') || t.contains('*') || t.contains('/'))) ||
+            t.startsWith("y=") || t.startsWith("f(x)=") || t.startsWith("g(x)=")
+    if (!hasMathIndicator) return false
+
+    // Ensure it doesn't contain conversational prose sentences
+    val mathKeywords = setOf("sin", "cos", "tan", "cot", "sec", "csc", "log", "ln", "lim", "exp", "abs", "sqrt", "cbrt", "frac", "cdot", "times")
+    val words = t.split(Regex("[^a-zA-Z]+")).filter { it.length >= 4 }
+    val hasProse = words.any { it.lowercase() !in mathKeywords }
+    return !hasProse
 }
 
 private sealed class DisplayMathSegment {

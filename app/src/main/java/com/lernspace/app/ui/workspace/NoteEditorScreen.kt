@@ -101,7 +101,6 @@ import com.lernspace.app.core.math.MathEqualsRecognizer
 import com.lernspace.app.core.math.MathAutoSolveResult
 import com.lernspace.app.core.math.EqualsSignMatch
 import com.lernspace.app.core.math.MathPlotHelper
-import com.lernspace.app.core.math.Pix2TexOnnxEngine
 import com.lernspace.app.core.audio.NoteAudioController
 import com.lernspace.app.ui.workspace.components.AudioLectureBar
 import com.lernspace.app.data.local.AcademicDatabaseManager
@@ -111,6 +110,8 @@ import com.lernspace.app.ui.components.DrawingSurface
 import com.lernspace.app.ui.theme.*
 import com.lernspace.app.ui.workspace.components.DraggableImage
 import com.lernspace.app.ui.workspace.components.DraggableTextBox
+import com.lernspace.app.ui.workspace.components.FloatingGraphWindow
+import com.lernspace.app.ui.workspace.components.InteractiveGraphDialog
 import com.lernspace.app.ui.workspace.components.MarkdownLatexContent
 import com.lernspace.app.ui.workspace.components.NoteFloatingToolbar
 import com.lernspace.app.ui.workspace.components.PaperBackground
@@ -905,6 +906,8 @@ fun NoteEditorScreen(
 
     // Hardware / gesture back button handling
     var showEditNoteLinkDialog by remember { mutableStateOf(false) }
+    var interactiveGraphFunction by remember { mutableStateOf<String?>(null) }
+    var showInteractiveGraphDialog by remember { mutableStateOf(false) }
 
     BackHandler {
         if (secondaryNote != null) {
@@ -1004,6 +1007,10 @@ fun NoteEditorScreen(
                     selectedThickness = activeThickness,
                     selectedShapeType = selectedShapeType,
                     onActivate = { activeNoteId = primaryState.note.id },
+                    onOpenGraph = { eq ->
+                        interactiveGraphFunction = eq
+                        showInteractiveGraphDialog = true
+                    },
                     modifier = Modifier
                         .fillMaxSize()
                         .clipToBounds()
@@ -1032,6 +1039,10 @@ fun NoteEditorScreen(
                                 selectedThickness = activeThickness,
                                 selectedShapeType = selectedShapeType,
                                 onActivate = { activeNoteId = leftState.note.id },
+                                onOpenGraph = { eq ->
+                                    interactiveGraphFunction = eq
+                                    showInteractiveGraphDialog = true
+                                },
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .clipToBounds()
@@ -1068,6 +1079,10 @@ fun NoteEditorScreen(
                                 selectedThickness = activeThickness,
                                 selectedShapeType = selectedShapeType,
                                 onActivate = { activeNoteId = rightState.note.id },
+                                onOpenGraph = { eq ->
+                                    interactiveGraphFunction = eq
+                                    showInteractiveGraphDialog = true
+                                },
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .clipToBounds()
@@ -1147,6 +1162,10 @@ fun NoteEditorScreen(
             isExporting = isExporting,
             isDarkPaper = activeState.isDarkPaper,
             onToggleDarkPaper = { activeState.toggleDarkPaper() },
+            onOpenGraph = {
+                showInteractiveGraphDialog = true
+                interactiveGraphFunction = ""
+            },
             hasAudioRecording = audioController.hasExistingRecording,
             isAudioBarOpen = showAudioBar,
             onToggleAudioBar = {
@@ -1173,6 +1192,62 @@ fun NoteEditorScreen(
             AudioLectureBar(
                 audioController = audioController,
                 onClose = { showAudioBar = false }
+            )
+        }
+
+        // High-Performance Floating GeoGebra-style 2D Function & Circle Graph Window
+        if (showInteractiveGraphDialog) {
+            FloatingGraphWindow(
+                equationRaw = interactiveGraphFunction ?: "",
+                isDarkTheme = activeState.isDarkPaper,
+                onClose = {
+                    showInteractiveGraphDialog = false
+                    interactiveGraphFunction = null
+                },
+                onInsertGraphToNote = { bitmap, equations ->
+                    val sel = activeState.lassoSelection
+                    val insertX = sel?.bounds?.left?.coerceAtLeast(32f) ?: (activeState.panX + 60f)
+                    var currentY = (sel?.bounds?.bottom?.plus(20f))?.coerceAtLeast(32f) ?: (activeState.panY + 60f)
+                    activeState.pushUndoSnapshot()
+
+                    // If equations are present, insert a clean LaTeX formula card above the graph
+                    if (equations.isNotEmpty()) {
+                        val latexLines = equations.joinToString("\n") { eq ->
+                            val clean = cleanLatexFormula(eq).removePrefix("$$").removeSuffix("$$").removePrefix("$").removeSuffix("$").trim()
+                            "$$ $clean $$"
+                        }
+                        val approxH = (equations.size * 54f + 20f).coerceIn(64f, 240f)
+                        activeState.textBoxes.add(
+                            TextBoxElement(
+                                x = insertX,
+                                y = currentY,
+                                width = 560f,
+                                height = approxH,
+                                text = latexLines,
+                                isSelected = false,
+                                fontSize = 30f,
+                                hasBackground = false
+                            )
+                        )
+                        currentY += approxH + 16f
+                    }
+
+                    activeState.imageElements.add(
+                        ImageElement(
+                            x = insertX,
+                            y = currentY,
+                            bitmap = bitmap.asImageBitmap(),
+                            width = 560f,
+                            height = 420f,
+                            isSelected = false
+                        )
+                    )
+                    activeState.saveActivePageData()
+                    activeState.lassoSelection = null
+                    val msg = if (equations.isNotEmpty()) "Grafik dan rumus LaTeX disisipkan ke catatan" else "Grafik kartesius disisipkan ke catatan"
+                    android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                },
+                modifier = Modifier.zIndex(20f)
             )
         }
 
@@ -1233,21 +1308,13 @@ fun NoteEditorScreen(
 // COMPONENT: NotePaneViewport (Clean Full-Height Canvas Viewport)
 // ─────────────────────────────────────────────────────────────────────────────
 private fun cleanLatexFormula(raw: String): String {
-    var text = raw.trim()
-    if (text.startsWith("```latex")) text = text.removePrefix("```latex").trim()
-    else if (text.startsWith("```tex")) text = text.removePrefix("```tex").trim()
-    else if (text.startsWith("```")) text = text.removePrefix("```").trim()
-    if (text.endsWith("```")) text = text.removeSuffix("```").trim()
-    return text
+    return MathLatexRecognizer.cleanLatex(raw)
 }
 
 private fun formatLatexForCanvas(raw: String): String {
     val clean = cleanLatexFormula(raw)
-    return if (clean.startsWith("$") && clean.endsWith("$")) {
-        clean
-    } else {
-        "$$\n$clean\n$$"
-    }
+    val stripped = clean.removePrefix("$$").removeSuffix("$$").removePrefix("$").removeSuffix("$").trim()
+    return "$$\n$stripped\n$$"
 }
 
 private enum class LassoAiMode(val label: String) {
@@ -1267,6 +1334,7 @@ private fun NotePaneViewport(
     selectedThickness: Float,
     selectedShapeType: GeometricShapeType,
     onActivate: () -> Unit,
+    onOpenGraph: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -1304,29 +1372,34 @@ private fun NotePaneViewport(
         val darkPaperBg = if (state.isDarkPaper) android.graphics.Color.rgb(30, 30, 38) else android.graphics.Color.WHITE
         val rendererSnapshot = state.canvasStrokeRenderer
 
-        if (mode == LassoAiMode.FORMULA && sel.selectedStrokes.isNotEmpty()) {
-            // Mode offline-first math recognition via ML Kit & Vision (100% Offline)
+        val effectiveStrokes = if (sel.selectedStrokes.isNotEmpty()) {
+            sel.selectedStrokes.toList()
+        } else {
+            state.strokes.filter { LassoHelper.isStrokeInBounds(it, sel.bounds) }
+        }
+
+        if (mode == LassoAiMode.FORMULA && effectiveStrokes.isNotEmpty()) {
             isAskingLassoAi = true
             lassoAiJob?.cancel()
             lassoAiJob = coroutineScope.launch {
                 val cropBmp = withContext(Dispatchers.Default) {
                     HandwrittenNoteRecognizer.renderStrokesToBitmap(
-                        strokes = sel.selectedStrokes.toList(),
+                        strokes = effectiveStrokes,
                         renderer = rendererSnapshot,
                         maxDim = 800
                     )
                 }
-                val result = MathLatexRecognizer.recognizeMath(sel.selectedStrokes.toList(), cropBmp)
+                val result = MathLatexRecognizer.recognizeMath(effectiveStrokes, cropBmp)
                 if (result.latex.isNotBlank()) {
                     lassoAiResponse = result.latex
                     mathSolverResult = result.solution
                 } else {
                     val downloaded = MathLatexRecognizer.isOfflineMathModelDownloaded()
-                    if (!downloaded) {
-                        lassoAiError = "Model matematika offline (~20 MB) sedang diunduh. Hubungkan Gemini API jika ingin akurasi penuh."
+                    if (!downloaded && !GeminiApiClient.isConfigured()) {
+                        lassoAiError = "Model matematika offline (~20 MB) sedang diunduh. Hubungkan Gemini API untuk akurasi instan."
                         MathLatexRecognizer.downloadOfflineMathModel()
                     } else {
-                        lassoAiError = "Tidak dapat mengenali tulisan matematika. Hubungkan Gemini API untuk mengenali rumus 2D rumit."
+                        lassoAiError = "Tidak dapat mengenali tulisan matematika. Pastikan coretan terbaca jelas."
                     }
                 }
                 isAskingLassoAi = false
@@ -1336,7 +1409,7 @@ private fun NotePaneViewport(
             lassoAiError = "Gemini API Key belum diatur. Buka Pengaturan -> AI & Integrasi untuk memasukkan API Key gratis kamu."
         } else {
             isAskingLassoAi = true
-            val strokesSnapshot = sel.selectedStrokes.toList()
+            val strokesSnapshot = effectiveStrokes
             val textSnippets = sel.selectedTextBoxes.mapNotNull { it.text.trim().takeIf { t -> t.isNotEmpty() } }
             val imageBitmapsSrc = sel.selectedImages.map { it.bitmap }
 
@@ -2279,10 +2352,16 @@ private fun NotePaneViewport(
                                                     val imgRect = Rect(img.x, img.y, img.x + img.width, img.y + img.height)
                                                     imgRect.overlaps(polyBounds) || LassoHelper.isImageSelected(img, loopCopy)
                                                 }.toMutableList()
+                                                val regionStrokes = state.strokes.filter {
+                                                    LassoHelper.isStrokeInBounds(it, polyBounds) || LassoHelper.isStrokeSelected(it, loopCopy)
+                                                }.toMutableList()
+                                                val regionBoxes = state.textBoxes.filter {
+                                                    LassoHelper.isTextBoxSelected(it, loopCopy)
+                                                }.toMutableList()
 
                                                 state.lassoSelection = LassoSelectionState(
-                                                    selectedStrokes = mutableListOf(),
-                                                    selectedTextBoxes = mutableListOf(),
+                                                    selectedStrokes = regionStrokes,
+                                                    selectedTextBoxes = regionBoxes,
                                                     selectedImages = overlappingImages,
                                                     bounds = polyBounds,
                                                     isRegionCapture = true,
@@ -3117,9 +3196,17 @@ private fun NotePaneViewport(
                                             .verticalScroll(rememberScrollState())
                                             .padding(12.dp)
                                     ) {
+                                        val formulaContent = lassoAiResponse ?: ""
+                                        val displayContent = remember(formulaContent, lassoAiMode) {
+                                            if (lassoAiMode == LassoAiMode.FORMULA && formulaContent.isNotBlank()) {
+                                                formatLatexForCanvas(formulaContent)
+                                            } else {
+                                                formulaContent
+                                            }
+                                        }
                                         MarkdownLatexContent(
-                                            markdown = lassoAiResponse ?: "",
-                                            baseFontSize = 13.5.sp,
+                                            markdown = displayContent,
+                                            baseFontSize = if (lassoAiMode == LassoAiMode.FORMULA) 18.sp else 13.5.sp,
                                             textColor = LernspaceTextPrimary,
                                             accentColor = LernspaceDark,
                                             isDarkSurface = LocalIsDarkTheme.current,
@@ -3175,6 +3262,7 @@ private fun NotePaneViewport(
                                         }
 
                                         val currentFormulaReply = lassoAiResponse ?: ""
+                                        val detectedCircle = remember(currentFormulaReply) { MathPlotHelper.parseCircle(currentFormulaReply) }
                                         if (lassoAiMode == LassoAiMode.FORMULA && MathPlotHelper.isPlottableFunction(currentFormulaReply)) {
                                             Spacer(Modifier.height(8.dp))
                                             Surface(
@@ -3189,20 +3277,24 @@ private fun NotePaneViewport(
                                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                                 ) {
                                                     Icon(
-                                                        Icons.Filled.ShowChart,
+                                                        if (detectedCircle != null) Icons.Filled.CenterFocusStrong else Icons.Filled.ShowChart,
                                                         contentDescription = null,
                                                         tint = if (LocalIsDarkTheme.current) Color(0xFF38BDF8) else Color(0xFF0284C7),
                                                         modifier = Modifier.size(20.dp)
                                                     )
                                                     Column(modifier = Modifier.weight(1f)) {
                                                         Text(
-                                                            text = "Fungsi Matematika Terdeteksi",
+                                                            text = if (detectedCircle != null) "Persamaan Lingkaran Terdeteksi" else "Fungsi Matematika Terdeteksi",
                                                             fontSize = 12.sp,
                                                             fontWeight = FontWeight.Bold,
                                                             color = if (LocalIsDarkTheme.current) Color(0xFF38BDF8) else Color(0xFF0284C7)
                                                         )
                                                         Text(
-                                                            text = "Kamu bisa klik 'Plot Grafik' untuk menggambar kurva koordinat Cartesius fungsi ini ke catatan.",
+                                                            text = if (detectedCircle != null) {
+                                                                "Pusat P(${MathPlotHelper.formatNumber(detectedCircle.centerX)}, ${MathPlotHelper.formatNumber(detectedCircle.centerY)}), Jari-jari r = ${MathPlotHelper.formatNumber(detectedCircle.radius)}. Klik 'Grafik Floating' untuk membuka grafik lingkaran."
+                                                            } else {
+                                                                "Klik 'Grafik Floating' untuk membuka jendela floating interaktif di atas catatanmu."
+                                                            },
                                                             fontSize = 11.5.sp,
                                                             color = LernspaceTextSecondary
                                                         )
@@ -3244,40 +3336,20 @@ private fun NotePaneViewport(
                                 }
 
                                 if (MathPlotHelper.isPlottableFunction(reply)) {
-                                    OutlinedButton(
+                                    Button(
                                         onClick = {
-                                            val cleanFunc = MathPlotHelper.extractFunctionBody(reply)
-                                            val plotData = MathPlotHelper.sampleFunction(cleanFunc)
-                                            if (plotData != null) {
-                                                val graphBmp = MathPlotHelper.renderGraphBitmap(plotData, isDarkTheme = state.isDarkPaper)
-                                                val insertX = sel.bounds.left.coerceAtLeast(32f)
-                                                val insertY = (sel.bounds.bottom + 20f).coerceAtLeast(32f)
-                                                state.pushUndoSnapshot()
-                                                state.imageElements.add(
-                                                    ImageElement(
-                                                        x = insertX,
-                                                        y = insertY,
-                                                        bitmap = graphBmp.asImageBitmap(),
-                                                        width = 560f,
-                                                        height = 420f,
-                                                        isSelected = false
-                                                    )
-                                                )
-                                                state.saveActivePageData()
-                                                showLassoAiDialog = false
-                                                state.lassoSelection = null
-                                                Toast.makeText(context, "Grafik fungsi disisipkan ke catatan", Toast.LENGTH_SHORT).show()
-                                            } else {
-                                                Toast.makeText(context, "Tidak dapat memplot fungsi ini", Toast.LENGTH_SHORT).show()
-                                            }
+                                            onOpenGraph(reply)
+                                            showLassoAiDialog = false
                                         },
                                         shape = RoundedCornerShape(8.dp),
-                                        border = BorderStroke(1.dp, if (state.isDarkPaper) Color(0xFF38BDF8) else Color(0xFF0284C7)),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (state.isDarkPaper) Color(0xFF0284C7) else Color(0xFF0284C7)
+                                        ),
                                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
                                     ) {
-                                        Icon(Icons.Filled.ShowChart, contentDescription = null, modifier = Modifier.size(14.dp), tint = if (state.isDarkPaper) Color(0xFF38BDF8) else Color(0xFF0284C7))
+                                        Icon(Icons.Filled.ShowChart, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color.White)
                                         Spacer(Modifier.width(4.dp))
-                                        Text("Plot Grafik", fontSize = 12.sp, color = if (state.isDarkPaper) Color(0xFF38BDF8) else Color(0xFF0284C7), fontWeight = FontWeight.SemiBold)
+                                        Text("📈 Grafik Floating", fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Bold)
                                     }
                                 }
 
@@ -3411,13 +3483,18 @@ private fun NotePaneViewport(
                                         val insertX = sel.bounds.left.coerceAtLeast(32f)
                                         val insertY = (sel.bounds.bottom + 24f).coerceAtLeast(32f)
                                         state.pushUndoSnapshot()
+                                        val textToInsert = if (lassoAiMode == LassoAiMode.FORMULA) {
+                                            mathSolverResult?.takeIf { it.isSolved }?.fullEquationLatex ?: formatLatexForCanvas(reply)
+                                        } else {
+                                            reply
+                                        }
                                         state.textBoxes.add(
                                             TextBoxElement(
                                                 x = insertX,
                                                 y = insertY,
                                                 width = boxW,
                                                 height = boxH,
-                                                text = reply,
+                                                text = textToInsert,
                                                 isSelected = false,
                                                 fontSize = 30f,
                                                 hasBackground = true
@@ -3464,33 +3541,11 @@ private fun NotePaneViewport(
                                 if (MathPlotHelper.isPlottableFunction(reply)) {
                                     TextButton(
                                         onClick = {
-                                            val cleanFunc = MathPlotHelper.extractFunctionBody(reply)
-                                            val plotData = MathPlotHelper.sampleFunction(cleanFunc)
-                                            if (plotData != null) {
-                                                val graphBmp = MathPlotHelper.renderGraphBitmap(plotData, isDarkTheme = state.isDarkPaper)
-                                                val insertX = sel.bounds.left.coerceAtLeast(32f)
-                                                val insertY = (sel.bounds.bottom + 20f).coerceAtLeast(32f)
-                                                state.pushUndoSnapshot()
-                                                state.imageElements.add(
-                                                    ImageElement(
-                                                        x = insertX,
-                                                        y = insertY,
-                                                        bitmap = graphBmp.asImageBitmap(),
-                                                        width = 560f,
-                                                        height = 420f,
-                                                        isSelected = false
-                                                    )
-                                                )
-                                                state.saveActivePageData()
-                                                showLassoAiDialog = false
-                                                state.lassoSelection = null
-                                                Toast.makeText(context, "Grafik fungsi disisipkan ke catatan", Toast.LENGTH_SHORT).show()
-                                            } else {
-                                                Toast.makeText(context, "Tidak dapat memplot fungsi ini", Toast.LENGTH_SHORT).show()
-                                            }
+                                            onOpenGraph(reply)
+                                            showLassoAiDialog = false
                                         }
                                     ) {
-                                        Text("📈 Plot Grafik", fontSize = 12.sp, color = if (state.isDarkPaper) Color(0xFF38BDF8) else Color(0xFF0284C7), fontWeight = FontWeight.Bold)
+                                        Text("📈 Grafik Floating", fontSize = 12.sp, color = if (state.isDarkPaper) Color(0xFF38BDF8) else Color(0xFF0284C7), fontWeight = FontWeight.Bold)
                                     }
                                 }
                                 if (solution != null && solution.isSolved) {
@@ -3544,7 +3599,6 @@ private fun NotePaneViewport(
             )
         }
 
-        // Recovery Banner if a legacy PDF lost external URI permission
         if (state.canvasType == NoteCanvasType.PDF_DOCUMENT && state.pdfLoadFailed) {
             Surface(
                 shape = RoundedCornerShape(14.dp),
@@ -3856,6 +3910,7 @@ private fun UnifiedNoteTopBar(
     isExporting: Boolean,
     isDarkPaper: Boolean = false,
     onToggleDarkPaper: () -> Unit = {},
+    onOpenGraph: () -> Unit = {},
     hasAudioRecording: Boolean = false,
     isAudioBarOpen: Boolean = false,
     onToggleAudioBar: () -> Unit = {},
@@ -3899,6 +3954,7 @@ private fun UnifiedNoteTopBar(
                 onExportPdf = onExportPdf,
                 isDarkPaper = isDarkPaper,
                 onToggleDarkPaper = onToggleDarkPaper,
+                onOpenGraph = onOpenGraph,
                 canUndo = canUndo,
                 onUndo = onUndo,
                 canRedo = canRedo,
@@ -3939,6 +3995,7 @@ private fun UnifiedNoteTopBar(
                 onExportPdf = onExportPdf,
                 isDarkPaper = isDarkPaper,
                 onToggleDarkPaper = onToggleDarkPaper,
+                onOpenGraph = onOpenGraph,
                 canUndo = canUndo,
                 onUndo = onUndo,
                 canRedo = canRedo,
@@ -4247,6 +4304,7 @@ private fun NoteActionsCapsule(
     onExportPdf: () -> Unit,
     isDarkPaper: Boolean,
     onToggleDarkPaper: () -> Unit,
+    onOpenGraph: () -> Unit = {},
     canUndo: Boolean,
     onUndo: () -> Unit,
     canRedo: Boolean,
@@ -4333,6 +4391,24 @@ private fun NoteActionsCapsule(
                             modifier = Modifier.size(17.dp)
                         )
                     }
+                }
+            }
+
+            // GeoGebra Floating Graph Button
+            Surface(
+                shape = CircleShape,
+                color = AccentBlueContainer.copy(alpha = 0.5f),
+                modifier = Modifier
+                    .size(36.dp)
+                    .clickable(onClick = onOpenGraph)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Filled.ShowChart,
+                        contentDescription = "Buka Grafik Matematika (GeoGebra)",
+                        tint = AccentBlue,
+                        modifier = Modifier.size(17.dp)
+                    )
                 }
             }
 

@@ -1,10 +1,6 @@
 package com.lernspace.app.core.math
 
 import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.Paint
-import android.graphics.RectF
 import android.util.Log
 import androidx.ink.strokes.Stroke
 import com.google.android.gms.tasks.Task
@@ -31,17 +27,18 @@ import kotlin.coroutines.resume
 data class MathRecognitionResult(
     val latex: String,
     val solution: MathSolution?,
-    val source: String, // "on_device_vision", "offline_mlkit", "gemini_vision"
+    val source: String, // "offline_mlkit", "on_device_vision", "gemini_vision"
     val isSolved: Boolean = solution?.isSolved == true
 )
 
 /**
- * Dedicated Math & LaTeX OCR Recognition Engine for Learnspace.
+ * Hybrid Vector & Vision Math Recognition Engine for Learnspace.
  *
- * Multi-Tier Pipeline:
- * 1. Tier 1: On-Device Vision OCR (Built-in ML Kit Text Recognition) - Instant (~15ms), 100% Offline, no download needed!
- * 2. Tier 2: ML Kit Digital Ink Recognition ('zxx-Zsym-x-math' or 'en-US'/'id') - Vector stroke trajectory parsing.
- * 3. Tier 3: Gemini Vision OCR - Cloud LLM for complex 2D structures (matrices, large integrals, systems of equations).
+ * Architecture:
+ * 1. Vector Strokes (Digital Ink 'zxx-Zsym-x-math'): Direct vector trajectory parsing (offline, instant).
+ *    Evaluates multiple candidates and converts handwriting arrow misclassifications (\rightarrow, \to) to '='.
+ * 2. On-Device Vision OCR: Fast offline bitmap OCR for printed/raster equations.
+ * 3. Gemini Multimodal Vision AI: Cloud AI for complex 2D structures (matrices, large integrals).
  */
 object MathLatexRecognizer {
 
@@ -49,7 +46,6 @@ object MathLatexRecognizer {
     private const val MATH_MODEL_TAG = "zxx-Zsym-x-math"
 
     private var mathRecognizer: DigitalInkRecognizer? = null
-    private var latinRecognizer: DigitalInkRecognizer? = null
     private var isMathModelReady = false
 
     /**
@@ -98,52 +94,73 @@ object MathLatexRecognizer {
     }
 
     /**
-     * Recognizes handwriting strokes as LaTeX math.
+     * Recognizes handwriting vector strokes and/or bitmap as LaTeX math.
      */
     suspend fun recognizeMath(
         strokes: List<Stroke>,
         cropBitmap: Bitmap?,
         forceVision: Boolean = false
     ): MathRecognitionResult = withContext(Dispatchers.Default) {
-        // ── Tier 1: On-Device Vision OCR (Built-in, Instant 15ms, 100% Offline) ──
+        var fallbackResult: MathRecognitionResult? = null
+
+        // ── 1. Vector Stroke Recognition (ML Kit 'zxx-Zsym-x-math' Model) ──
+        if (!forceVision && strokes.isNotEmpty()) {
+            val inkCandidates = recognizeOfflineInkMathCandidates(strokes)
+            for (rawCandidate in inkCandidates) {
+                val clean = cleanLatex(rawCandidate)
+                if (clean.isNotBlank()) {
+                    val solution = MathSolver.solve(clean) ?: MathSolver.solve(clean + " =")
+                    val result = MathRecognitionResult(
+                        latex = clean,
+                        solution = solution,
+                        source = "offline_mlkit"
+                    )
+                    if (solution != null && solution.isSolved) {
+                        Log.d(TAG, "Vector Ink math solved: '$clean' -> ${solution.result}")
+                        return@withContext result
+                    }
+                    if (fallbackResult == null) {
+                        fallbackResult = result
+                    }
+                }
+            }
+        }
+
+        // ── 2. On-Device Vision OCR (Fast offline text recognizer) ──
         if (cropBitmap != null) {
             val localVisionText = recognizeOnDeviceVision(cropBitmap)
             if (!localVisionText.isNullOrBlank()) {
                 val clean = cleanLatex(localVisionText)
                 if (clean.isNotBlank()) {
-                    val solution = MathSolver.solve(clean + " =") ?: MathSolver.solve(clean)
-                    Log.d(TAG, "Tier 1 On-Device Vision OCR succeeded: '$clean' -> ${solution?.result}")
-                    return@withContext MathRecognitionResult(
+                    val solution = MathSolver.solve(clean) ?: MathSolver.solve(clean + " =")
+                    val result = MathRecognitionResult(
                         latex = clean,
                         solution = solution,
                         source = "on_device_vision"
                     )
+                    if (solution != null && solution.isSolved) {
+                        Log.d(TAG, "Vision OCR math solved: '$clean' -> ${solution.result}")
+                        return@withContext result
+                    }
+                    if (fallbackResult == null) {
+                        fallbackResult = result
+                    }
                 }
             }
         }
 
-        // ── Tier 2: Offline ML Kit Digital Ink Recognition ──
-        if (!forceVision && strokes.isNotEmpty()) {
-            val offlineInkText = recognizeOfflineInkMath(strokes)
-            if (!offlineInkText.isNullOrBlank()) {
-                val clean = cleanLatex(offlineInkText)
-                val solution = MathSolver.solve(clean + " =") ?: MathSolver.solve(clean)
-                Log.d(TAG, "Tier 2 Digital Ink Recognition succeeded: '$clean' -> ${solution?.result}")
-                return@withContext MathRecognitionResult(
-                    latex = clean,
-                    solution = solution,
-                    source = "offline_mlkit"
-                )
-            }
+        // Return solved or offline result if available and Gemini not configured
+        if (fallbackResult != null && (fallbackResult.isSolved || !GeminiApiClient.isConfigured())) {
+            return@withContext fallbackResult
         }
 
-        // ── Tier 3: Gemini Vision OCR (Cloud API for complex 2D math) ──
+        // ── 3. Gemini Multimodal Vision AI (Cloud AI for complex 2D math) ──
         if (cropBitmap != null && GeminiApiClient.isConfigured()) {
             val visionLatex = recognizeVisionMath(cropBitmap)
             if (!visionLatex.isNullOrBlank()) {
                 val clean = cleanLatex(visionLatex)
-                val solution = MathSolver.solve(clean + " =") ?: MathSolver.solve(clean)
-                Log.d(TAG, "Tier 3 Gemini Vision OCR succeeded: '$clean' -> ${solution?.result}")
+                val solution = MathSolver.solve(clean) ?: MathSolver.solve(clean + " =")
+                Log.d(TAG, "Gemini Vision OCR succeeded: '$clean' -> ${solution?.result}")
                 return@withContext MathRecognitionResult(
                     latex = clean,
                     solution = solution,
@@ -152,8 +169,7 @@ object MathLatexRecognizer {
             }
         }
 
-        // Fallback: empty result
-        MathRecognitionResult(
+        fallbackResult ?: MathRecognitionResult(
             latex = "",
             solution = null,
             source = "none"
@@ -161,28 +177,11 @@ object MathLatexRecognizer {
     }
 
     /**
-     * Instant on-device vision OCR using built-in Google Play Services ML Kit.
-     * Takes ~15ms and recognizes handwriting and printed text completely offline.
+     * Performs offline ML Kit Digital Ink recognition and returns all candidates.
      */
-    private suspend fun recognizeOnDeviceVision(bitmap: Bitmap): String? = withContext(Dispatchers.IO) {
-        try {
-            val image = InputImage.fromBitmap(bitmap, 0)
-            val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-            val visionText = awaitTask(recognizer.process(image))
-            val text = visionText?.text?.trim()
-            if (!text.isNullOrBlank()) text else null
-        } catch (e: Exception) {
-            Log.w(TAG, "On-device vision OCR failed", e)
-            null
-        }
-    }
-
-    /**
-     * Performs offline ML Kit Digital Ink recognition.
-     */
-    private suspend fun recognizeOfflineInkMath(strokes: List<Stroke>): String? {
+    private suspend fun recognizeOfflineInkMathCandidates(strokes: List<Stroke>): List<String> {
         return try {
-            val recognizer = getOrInitRecognizer() ?: return null
+            val recognizer = getOrInitRecognizer() ?: return emptyList()
             val inkBuilder = Ink.builder()
 
             for (stroke in strokes) {
@@ -203,9 +202,25 @@ object MathLatexRecognizer {
 
             val ink = inkBuilder.build()
             val result = awaitTask(recognizer.recognize(ink))
-            result?.candidates?.firstOrNull()?.text
+            result?.candidates?.mapNotNull { it.text } ?: emptyList()
         } catch (e: Exception) {
             Log.w(TAG, "Offline ink recognition failed", e)
+            emptyList()
+        }
+    }
+
+    /**
+     * Instant on-device vision OCR using Google Play Services ML Kit.
+     */
+    private suspend fun recognizeOnDeviceVision(bitmap: Bitmap): String? = withContext(Dispatchers.IO) {
+        try {
+            val image = InputImage.fromBitmap(bitmap, 0)
+            val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+            val visionText = awaitTask(recognizer.process(image))
+            val text = visionText?.text?.trim()
+            if (!text.isNullOrBlank()) text else null
+        } catch (e: Exception) {
+            Log.w(TAG, "On-device vision OCR failed", e)
             null
         }
     }
@@ -218,7 +233,7 @@ object MathLatexRecognizer {
         val mathModel = DigitalInkRecognitionModel.builder(mathId).build()
         if (awaitTask(remote.isModelDownloaded(mathModel)) == true) {
             mathRecognizer = DigitalInkRecognition.getClient(
-                DigitalInkRecognizerOptions.builder(mathModel).setMaxResultCount(3).build()
+                DigitalInkRecognizerOptions.builder(mathModel).setMaxResultCount(5).build()
             )
             return mathRecognizer
         } else {
@@ -233,9 +248,9 @@ object MathLatexRecognizer {
     private suspend fun recognizeVisionMath(bitmap: Bitmap): String? {
         val sysPrompt = """
             Kamu adalah mesin konversi tulisan tangan matematika ke LaTeX (Math & LaTeX OCR Engine) tingkat tinggi.
-            - Konversikan seluruh tulisan tangan, simbol pecahan, eksponen, akar, integral, limit, turunan, matriks, dan notasi matematika/sains yang ada pada gambar menjadi kode LaTeX murni.
+            - Konversikan seluruh tulisan tangan angka, pecahan, eksponen, akar, simbol operasi, dan simbol sama dengan (=) yang ada pada gambar menjadi rumus LaTeX murni.
+            - PENTING: Jangan pernah mengubah simbol sama dengan (=) menjadi tanda panah (->, \rightarrow, \to). Simbol sama dengan harus dituliskan persis sebagai '='.
             - HANYA keluarkan rumus dalam blok LaTeX ($$...$$ atau $...$) tanpa sapaan, tanpa kata pengantar, tanpa penjelasan langkah, dan tanpa komentar apapun.
-            - Jika terdiri dari beberapa persamaan, susun menggunakan format align atau baris baru yang rapi.
         """.trimIndent()
 
         val userPrompt = "Ekstrak tulisan tangan matematika pada gambar ini menjadi rumus LaTeX murni tanpa teks pengantar:"
@@ -246,11 +261,14 @@ object MathLatexRecognizer {
             imageBitmaps = listOf(bitmap)
         )
 
-        return response.getOrNull()
+        val resStr = response.getOrNull()
+        Log.d(TAG, "recognizeVisionMath raw response: '$resStr'")
+        return resStr
     }
 
     /**
      * Cleans raw LaTeX output to ensure it is valid, pure LaTeX.
+     * Crucially converts any misrecognized arrow tokens (\rightarrow, \to, ->) to '='.
      */
     fun cleanLatex(raw: String): String {
         var text = raw.trim()
@@ -258,6 +276,17 @@ object MathLatexRecognizer {
         else if (text.startsWith("```tex")) text = text.removePrefix("```tex").trim()
         else if (text.startsWith("```")) text = text.removePrefix("```").trim()
         if (text.endsWith("```")) text = text.removeSuffix("```").trim()
+
+        // Strip surrounding dollar signs if present
+        if (text.startsWith("$$") && text.endsWith("$$") && text.length >= 4) {
+            text = text.substring(2, text.length - 2).trim()
+        } else if (text.startsWith("$") && text.endsWith("$") && text.length >= 2) {
+            text = text.substring(1, text.length - 1).trim()
+        }
+
+        if (text in listOf("\\varnothing", "\\emptyset", "\\phi", "{}", "")) {
+            return ""
+        }
 
         // Normalize OCR lines for fractions (e.g. "3\n-\n2" or "3\n2" -> "\frac{3}{2}")
         val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
@@ -284,7 +313,21 @@ object MathLatexRecognizer {
             .replace("−", "-")
             .replace("⁄", "/")
 
-        return text
+        // Normalize misrecognized arrows to '='
+        // In handwritten arithmetic (e.g. "2 + 2 ="), ML Kit commonly misclassifies '=' as:
+        // '\rightarrow', '\to', '\Rightarrow', '->', '-->', '=>', '→', '⇒', or trailing '>'
+        if (!text.contains("\\lim")) {
+            text = text.replace(Regex("""\s*(?:\\rightarrow|\\to|\\Rightarrow|\\implies|-->|->|==>|=>|→|⇒)\s*"""), " = ")
+        }
+        text = text.replace(Regex("""\s*>\s*$"""), " =")
+        text = text.replace(Regex("""\s*(?:--|__|―|—)\s*$"""), " =")
+        text = text.replace(Regex("""={2,}"""), "=")
+        text = text.replace(Regex("""\s*=\s*"""), " = ")
+        if (text.endsWith(" = ")) {
+            text = text.trimEnd()
+        }
+
+        return text.trim()
     }
 
     /**
@@ -292,11 +335,8 @@ object MathLatexRecognizer {
      */
     fun formatForCanvas(latex: String): String {
         val clean = cleanLatex(latex)
-        return if (clean.startsWith("$") && clean.endsWith("$")) {
-            clean
-        } else {
-            "$$\n$clean\n$$"
-        }
+        val stripped = clean.removePrefix("$$").removeSuffix("$$").removePrefix("$").removeSuffix("$").trim()
+        return "$$\n$stripped\n$$"
     }
 
     private suspend fun <T> awaitTask(task: Task<T>): T? = suspendCancellableCoroutine { cont ->

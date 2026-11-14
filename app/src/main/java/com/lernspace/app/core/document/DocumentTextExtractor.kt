@@ -5,17 +5,12 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Log
-import com.google.android.gms.tasks.Task
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import com.lernspace.app.core.ai.GeminiApiClient
 import com.lernspace.app.ui.workspace.pdf.PdfNoteHelper
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.InputStreamReader
-import kotlin.coroutines.resume
 
 data class ExtractedDocumentResult(
     val fileName: String,
@@ -70,10 +65,13 @@ object DocumentTextExtractor {
                     if (bitmap == null) {
                         return@withContext Result.failure(IllegalStateException("Gagal memuat gambar."))
                     }
-                    val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-                    val inputImage = InputImage.fromBitmap(bitmap, 0)
-                    val visionResult = awaitTask(recognizer.process(inputImage))
-                    val text = visionResult?.text?.trim().orEmpty()
+                    val text = if (GeminiApiClient.isConfigured()) {
+                        GeminiApiClient.generateTextFromImages(
+                            systemPrompt = "Ekstrak seluruh teks yang ada pada gambar dokumen ini menjadi teks terstruktur tanpa kata pengantar.",
+                            userPrompt = "Ekstrak seluruh tulisan pada gambar ini:",
+                            imageBitmaps = listOf(bitmap)
+                        ).getOrNull()?.trim().orEmpty()
+                    } else ""
                     val words = countWords(text)
                     bitmap.recycle()
                     Result.success(
@@ -126,19 +124,22 @@ object DocumentTextExtractor {
             return Result.failure(IllegalStateException("PDF tidak memiliki halaman atau tidak dapat dibuka."))
         }
 
-        val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
         val sb = StringBuilder()
-        // Process up to 15 pages to keep memory & performance safe on tablet
-        val pagesToProcess = minOf(pageCount, 15)
+        val pagesToProcess = minOf(pageCount, 10)
 
         for (p in 0 until pagesToProcess) {
             onProgress(p + 1, pagesToProcess)
-            val bmp = PdfNoteHelper.renderPdfPage(context, uri, p, targetWidth = 1400)
+            val bmp = PdfNoteHelper.renderPdfPage(context, uri, p, targetWidth = 1200)
             if (bmp != null) {
                 try {
-                    val inputImage = InputImage.fromBitmap(bmp, 0)
-                    val visionResult = awaitTask(recognizer.process(inputImage))
-                    val pageText = visionResult?.text?.trim().orEmpty()
+                    val pageText = if (GeminiApiClient.isConfigured()) {
+                        GeminiApiClient.generateTextFromImages(
+                            systemPrompt = "Ekstrak seluruh materi teks, soal, dan tabel pada halaman dokumen ini secara terstruktur tanpa sapaan.",
+                            userPrompt = "Ekstrak teks pada halaman dokumen ini:",
+                            imageBitmaps = listOf(bmp)
+                        ).getOrNull()?.trim().orEmpty()
+                    } else ""
+
                     if (pageText.isNotBlank()) {
                         if (sb.isNotEmpty()) sb.append("\n\n")
                         sb.append("--- Halaman ${p + 1} ---\n").append(pageText)
@@ -158,71 +159,59 @@ object DocumentTextExtractor {
             ExtractedDocumentResult(
                 fileName = fileName,
                 text = fullText,
-                pageCount = pageCount,
+                pageCount = pagesToProcess,
                 wordCount = countWords(fullText),
                 mimeType = "application/pdf"
             )
         )
     }
 
-    fun getFileName(context: Context, uri: Uri): String {
-        var name = ""
+    private fun isTextFile(fileName: String, mimeType: String): Boolean {
+        if (mimeType.startsWith("text/", ignoreCase = true)) return true
+        val extensions = listOf(".txt", ".md", ".json", ".csv", ".kt", ".java", ".py", ".js", ".ts", ".html", ".css", ".xml")
+        return extensions.any { fileName.endsWith(it, ignoreCase = true) }
+    }
+
+    private fun isImageFile(fileName: String): Boolean {
+        val extensions = listOf(".png", ".jpg", ".jpeg", ".webp", ".bmp")
+        return extensions.any { fileName.endsWith(it, ignoreCase = true) }
+    }
+
+    private fun getFileName(context: Context, uri: Uri): String {
+        var name = "dokumen"
         if (uri.scheme == "content") {
             try {
                 context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                    val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                    if (nameIdx >= 0 && cursor.moveToFirst()) {
-                        name = cursor.getString(nameIdx)
+                    if (cursor.moveToFirst()) {
+                        val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        if (index >= 0) {
+                            name = cursor.getString(index) ?: "dokumen"
+                        }
                     }
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                Log.w(TAG, "Gagal mendapatkan nama file dari ContentResolver", e)
+            }
+        } else if (uri.scheme == "file") {
+            name = uri.lastPathSegment ?: "dokumen"
         }
-        if (name.isBlank()) {
-            name = uri.lastPathSegment.orEmpty().substringAfterLast('/')
-        }
-        return if (name.isBlank()) "Dokumen" else name
+        return name
     }
 
     private fun getMimeTypeFromFileName(fileName: String): String {
-        val ext = fileName.substringAfterLast('.', "").lowercase()
-        return when (ext) {
-            "pdf" -> "application/pdf"
-            "txt" -> "text/plain"
-            "md", "markdown" -> "text/markdown"
-            "json" -> "application/json"
-            "csv" -> "text/csv"
-            "png" -> "image/png"
-            "jpg", "jpeg" -> "image/jpeg"
-            "webp" -> "image/webp"
+        return when {
+            fileName.endsWith(".pdf", ignoreCase = true) -> "application/pdf"
+            fileName.endsWith(".txt", ignoreCase = true) -> "text/plain"
+            fileName.endsWith(".md", ignoreCase = true) -> "text/markdown"
+            fileName.endsWith(".png", ignoreCase = true) -> "image/png"
+            fileName.endsWith(".jpg", ignoreCase = true) || fileName.endsWith(".jpeg", ignoreCase = true) -> "image/jpeg"
+            fileName.endsWith(".webp", ignoreCase = true) -> "image/webp"
             else -> "application/octet-stream"
         }
     }
 
-    private fun isTextFile(fileName: String, mime: String): Boolean {
-        if (mime.startsWith("text/")) return true
-        val ext = fileName.substringAfterLast('.', "").lowercase()
-        return ext in setOf("txt", "md", "markdown", "csv", "json", "rtf", "log")
+    private fun countWords(text: String): Int {
+        if (text.isBlank()) return 0
+        return text.trim().split(Regex("\\s+")).size
     }
-
-    private fun isImageFile(fileName: String): Boolean {
-        val ext = fileName.substringAfterLast('.', "").lowercase()
-        return ext in setOf("png", "jpg", "jpeg", "webp", "bmp")
-    }
-
-    private fun countWords(str: String): Int {
-        if (str.isBlank()) return 0
-        return str.trim().split(Regex("""\s+""")).size
-    }
-
-    private suspend fun <T> awaitTask(task: Task<T>): T? =
-        suspendCancellableCoroutine { cont ->
-            task.addOnSuccessListener { result ->
-                if (cont.isActive) cont.resume(result)
-            }.addOnFailureListener { e ->
-                Log.w(TAG, "MLKit Task failed: ${e.message}")
-                if (cont.isActive) cont.resume(null)
-            }.addOnCanceledListener {
-                if (cont.isActive) cont.resume(null)
-            }
-        }
 }

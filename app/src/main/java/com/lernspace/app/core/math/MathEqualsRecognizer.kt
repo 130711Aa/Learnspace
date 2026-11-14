@@ -69,6 +69,19 @@ object MathEqualsRecognizer {
                     return match
                 }
             }
+
+            // Fallback: check if the equals sign was drawn right before a tiny micro-tap / palm touch
+            if (allStrokes.size >= 3) {
+                val penultStroke = allStrokes[allStrokes.size - 3]
+                val penultBounds = getStrokeBounds(penultStroke)
+                if (penultBounds != null && prevBounds != null && lastBounds.width < 12f && lastBounds.height < 12f) {
+                    val match2 = evaluateTwoStrokeEquals(penultStroke, penultBounds, prevStroke, prevBounds)
+                    if (match2 != null) {
+                        Log.d(TAG, "Detected 2-stroke '=' with trailing noise tap at ${match2.bounds}")
+                        return match2
+                    }
+                }
+            }
         }
 
         // ── Case 2: Single continuous stroke '=' (drawn in one motion) ──
@@ -101,22 +114,22 @@ object MathEqualsRecognizer {
 
         val aspect1 = w1 / max(h1, 1f)
         val aspect2 = w2 / max(h2, 1f)
-        if (aspect1 < MIN_ASPECT_RATIO || aspect2 < MIN_ASPECT_RATIO) return null
+        if (aspect1 < 1.05f || aspect2 < 1.05f) return null
 
         // Check length similarity
         val lengthRatio = min(w1, w2) / max(w1, w2)
-        if (lengthRatio < 0.35f) return null
+        if (lengthRatio < 0.28f) return null
 
         // Check horizontal overlap
         val overlapLeft = max(b1.left, b2.left)
         val overlapRight = min(b1.right, b2.right)
         val overlapWidth = overlapRight - overlapLeft
-        val minOverlapNeeded = min(w1, w2) * 0.30f
+        val minOverlapNeeded = min(w1, w2) * 0.20f
         if (overlapWidth < minOverlapNeeded) return null
 
         // Check vertical gap between the centers
         val centerGapY = abs(b1.center.y - b2.center.y)
-        if (centerGapY !in MIN_GAP_BETWEEN_BARS..MAX_GAP_BETWEEN_BARS) return null
+        if (centerGapY !in MIN_GAP_BETWEEN_BARS..95f) return null
 
         // Combined bounds for the '=' sign
         val combinedBounds = Rect(
@@ -189,7 +202,7 @@ object MathEqualsRecognizer {
             val b = getStrokeBounds(s) ?: continue
 
             // Must be strictly to the left of the '=' sign
-            if (b.right > equalsLeft + 16f) continue
+            if (b.right > equalsLeft + 8f) continue
 
             // Must intersect the horizontal line band of the equation
             val strokeCenterY = b.center.y
