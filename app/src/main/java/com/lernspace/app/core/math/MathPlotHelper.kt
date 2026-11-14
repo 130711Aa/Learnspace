@@ -652,6 +652,8 @@ object MathPlotHelper {
     // HIGH-SPEED COMPILED AST EXPRESSION EVALUATOR
     // ─────────────────────────────────────────────────────────────────────────
 
+    private val compiledCache = java.util.concurrent.ConcurrentHashMap<String, CompiledExpr>()
+
     /**
      * Compiles a mathematical expression of 'x' into an optimized AST.
      * Evaluates in nanoseconds with zero object allocations and zero regex per step.
@@ -661,15 +663,16 @@ object MathPlotHelper {
             .replace(" ", "")
             .replace("\\cdot", "*")
             .replace("\\times", "*")
-        return try {
-            val tokens = tokenize(clean)
-            val parser = ExprAstParser(tokens)
-            val ast = parser.parse()
-            ast
-        } catch (_: Exception) {
-            // Fallback to safe string evaluation if syntax is complex
-            val fallback = { x: Double -> evaluateAt(exprStr, x) ?: Double.NaN }
-            CompiledExpr(fallback)
+        return compiledCache.getOrPut(clean) {
+            try {
+                val tokens = tokenize(clean)
+                val parser = ExprAstParser(tokens)
+                parser.parse()
+            } catch (_: Exception) {
+                // Fallback to safe string evaluation if syntax is complex
+                val fallback = { x: Double -> evaluateAt(exprStr, x) ?: Double.NaN }
+                CompiledExpr(fallback)
+            }
         }
     }
 

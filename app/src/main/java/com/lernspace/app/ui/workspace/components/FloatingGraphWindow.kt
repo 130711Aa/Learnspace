@@ -305,12 +305,12 @@ fun FloatingGraphWindow(
     var centerWorldY by remember { mutableFloatStateOf(0f) }
     var worldSpanX by remember { mutableFloatStateOf(18f) }
 
-    val intersections = remember(visibleCurvesDef, centerWorldX, worldSpanX) {
-        if (visibleCurvesDef.size >= 2) {
+    val intersections = remember(showIntersections, visibleCurvesDef) {
+        if (showIntersections && visibleCurvesDef.size >= 2) {
             MathPlotHelper.findIntersections(
                 visibleCurvesDef,
-                centerWorldX - worldSpanX / 2f,
-                centerWorldX + worldSpanX / 2f
+                -100f,
+                100f
             )
         } else {
             emptyList()
@@ -987,30 +987,23 @@ fun FloatingGraphWindow(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .clipToBounds()
-                                .pointerInput(Unit) {
+                                .pointerInput(viewWidth, viewHeight) {
                                     detectTransformGestures { centroid, pan, zoom, _ ->
-                                        val isZooming = kotlin.math.abs(zoom - 1f) > 0.005f
+                                        val currentSpanX = worldSpanX
+                                        val currentSpanY = currentSpanX / aspectRatio
 
-                                        if (isZooming) {
-                                            // Focal-point zoom anchored directly around user's pinch centroid
-                                            val currentSpanX = worldSpanX
-                                            val currentSpanY = currentSpanX / aspectRatio
-                                            val focusWorldX = centerWorldX + (centroid.x - viewWidth / 2f) * (currentSpanX / viewWidth)
-                                            val focusWorldY = centerWorldY - (centroid.y - viewHeight / 2f) * (currentSpanY / viewHeight)
+                                        // 1. Compute the world coordinate that was under (centroid - pan) before this frame
+                                        val wxPrev = centerWorldX + ((centroid.x - pan.x) - viewWidth / 2f) * (currentSpanX / viewWidth)
+                                        val wyPrev = centerWorldY - ((centroid.y - pan.y) - viewHeight / 2f) * (currentSpanY / viewHeight)
 
-                                            val newSpanX = (currentSpanX / zoom).coerceIn(0.2f, 250f)
-                                            val newSpanY = newSpanX / aspectRatio
+                                        // 2. Compute smooth new zoom span
+                                        val newSpanX = (currentSpanX / zoom).coerceIn(0.2f, 250f)
+                                        val newSpanY = newSpanX / aspectRatio
 
-                                            centerWorldX = focusWorldX - (centroid.x - viewWidth / 2f) * (newSpanX / viewWidth)
-                                            centerWorldY = focusWorldY + (centroid.y - viewHeight / 2f) * (newSpanY / viewHeight)
-                                            worldSpanX = newSpanX
-                                        } else {
-                                            // Pure 1-finger translation: 1:1 smooth pan without zoom jitter
-                                            val dx = pan.x * (worldSpanX / viewWidth)
-                                            val dy = pan.y * (worldSpanY / viewHeight)
-                                            centerWorldX -= dx
-                                            centerWorldY += dy
-                                        }
+                                        // 3. Align new center so wxPrev and wyPrev stay exactly under current touch centroid
+                                        centerWorldX = wxPrev - (centroid.x - viewWidth / 2f) * (newSpanX / viewWidth)
+                                        centerWorldY = wyPrev + (centroid.y - viewHeight / 2f) * (newSpanY / viewHeight)
+                                        worldSpanX = newSpanX
                                     }
                                 }
                         ) {
