@@ -97,6 +97,9 @@ import com.lernspace.app.core.ai.HandwrittenNoteRecognizer
 import com.lernspace.app.core.math.MathSolver
 import com.lernspace.app.core.math.MathSolution
 import com.lernspace.app.core.math.MathLatexRecognizer
+import com.lernspace.app.core.math.MathEqualsRecognizer
+import com.lernspace.app.core.math.MathAutoSolveResult
+import com.lernspace.app.core.math.EqualsSignMatch
 import com.lernspace.app.core.audio.NoteAudioController
 import com.lernspace.app.ui.workspace.components.AudioLectureBar
 import com.lernspace.app.data.local.AcademicDatabaseManager
@@ -1279,6 +1282,8 @@ private fun NotePaneViewport(
     var lassoAiCustomPrompt by remember { mutableStateOf("") }
     var lassoAiMode by remember { mutableStateOf(LassoAiMode.AI_TUTOR) }
     var mathSolverResult by remember { mutableStateOf<MathSolution?>(null) }
+    var activeMathAutoSolve by remember { mutableStateOf<MathAutoSolveResult?>(null) }
+    var isEvaluatingMathAutoSolve by remember { mutableStateOf(false) }
 
     LaunchedEffect(lassoAiResponse, lassoAiMode) {
         if (lassoAiMode == LassoAiMode.FORMULA && !lassoAiResponse.isNullOrBlank()) {
@@ -1962,6 +1967,80 @@ private fun NotePaneViewport(
                             state.pushUndoSnapshot()
                             state.strokes.addAll(strokesToAdd)
                             state.saveActivePageData()
+
+                            // ── Math Auto-Solve (HMER): Real-time '=' calculation (Apple Math Notes style) ──
+                            if (AppSettingsManager.isMathAutoSolveEnabled && (activeTool == NoteTool.PEN || activeTool == NoteTool.HIGHLIGHTER)) {
+                                val currentStrokesSnapshot = state.strokes.toList()
+                                val equalsMatch = MathEqualsRecognizer.detectEqualsSign(currentStrokesSnapshot)
+                                if (equalsMatch != null) {
+                                    val exprStrokes = MathEqualsRecognizer.collectExpressionStrokes(currentStrokesSnapshot, equalsMatch)
+                                    if (exprStrokes.isNotEmpty()) {
+                                        val rendererSnapshot = state.canvasStrokeRenderer
+                                        val isDark = state.isDarkPaper
+                                        coroutineScope.launch {
+                                            isEvaluatingMathAutoSolve = true
+                                            try {
+                                                // Create tight bitmap crop of expression for maximum OCR accuracy
+                                                var cropBmp: android.graphics.Bitmap? = null
+                                                try {
+                                                    var minX = Float.POSITIVE_INFINITY
+                                                    var maxX = Float.NEGATIVE_INFINITY
+                                                    var minY = Float.POSITIVE_INFINITY
+                                                    var maxY = Float.NEGATIVE_INFINITY
+                                                    val temp = androidx.ink.strokes.StrokeInput()
+                                                    for (s in exprStrokes) {
+                                                        for (i in 0 until s.inputs.size) {
+                                                            s.inputs.populate(i, temp)
+                                                            minX = minOf(minX, temp.x)
+                                                            maxX = maxOf(maxX, temp.x)
+                                                            minY = minOf(minY, temp.y)
+                                                            maxY = maxOf(maxY, temp.y)
+                                                        }
+                                                    }
+                                                    val pad = 16f
+                                                    val bw = (maxX - minX + pad * 2f).toInt().coerceIn(64, 1600)
+                                                    val bh = (maxY - minY + pad * 2f).toInt().coerceIn(40, 800)
+                                                    cropBmp = android.graphics.Bitmap.createBitmap(bw, bh, android.graphics.Bitmap.Config.ARGB_8888)
+                                                    val canvas = android.graphics.Canvas(cropBmp)
+                                                    canvas.drawColor(if (isDark) android.graphics.Color.rgb(30, 30, 38) else android.graphics.Color.WHITE)
+                                                    val mat = android.graphics.Matrix().apply {
+                                                        postTranslate(-minX + pad, -minY + pad)
+                                                    }
+                                                    for (s in exprStrokes) {
+                                                        rendererSnapshot.draw(canvas, s, mat)
+                                                    }
+                                                } catch (e: Exception) {
+                                                    // ignore bitmap creation error, rely on ink strokes
+                                                }
+
+                                                val recog = MathLatexRecognizer.recognizeMath(exprStrokes, cropBmp)
+                                                val rawMath = recog.latex
+                                                if (rawMath.isNotBlank()) {
+                                                    val sol = MathSolver.solve(rawMath + " =") ?: MathSolver.solve(rawMath)
+                                                    if (sol != null && sol.isSolved) {
+                                                        try {
+                                                            view.performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM)
+                                                        } catch (e: Exception) {}
+                                                        activeMathAutoSolve = MathAutoSolveResult(
+                                                            equalsMatch = equalsMatch,
+                                                            expressionStrokes = exprStrokes,
+                                                            recognizedLatex = rawMath,
+                                                            solution = sol,
+                                                            resultText = sol.result,
+                                                            insertX = equalsMatch.rightEdgeX + 16f,
+                                                            insertY = equalsMatch.centerY - 22f
+                                                        )
+                                                    }
+                                                }
+                                            } catch (e: Exception) {
+                                                // ignore
+                                            } finally {
+                                                isEvaluatingMathAutoSolve = false
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 },
@@ -2580,6 +2659,87 @@ private fun NotePaneViewport(
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+            }
+
+            // ── Math Auto-Solve (HMER) Floating Result Badge (Apple Math Notes Style) ──
+            if (activeMathAutoSolve != null) {
+                val autoSol = activeMathAutoSolve!!
+                Box(
+                    modifier = Modifier.offset {
+                        val screenX = autoSol.insertX * state.scale + state.panX
+                        val screenY = autoSol.insertY * state.scale + state.panY
+                        IntOffset(screenX.roundToInt(), screenY.roundToInt())
+                    }
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (state.isDarkPaper) Color(0xFF0F172A) else Color(0xFFFFFFFF),
+                        border = BorderStroke(1.5.dp, if (state.isDarkPaper) Color(0xFF38BDF8) else Color(0xFF0284C7)),
+                        shadowElevation = 8.dp
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.clickable {
+                                    state.pushUndoSnapshot()
+                                    val approxW = maxOf(autoSol.resultText.length * 30f + 36f, 100f)
+                                    state.textBoxes.add(
+                                        TextBoxElement(
+                                            x = autoSol.insertX,
+                                            y = autoSol.equalsMatch.centerY - 24f,
+                                            width = approxW,
+                                            height = 64f,
+                                            text = autoSol.resultText,
+                                            isSelected = false,
+                                            fontSize = maxOf(autoSol.equalsMatch.bounds.height * 1.25f, 30f),
+                                            hasBackground = false
+                                        )
+                                    )
+                                    state.saveActivePageData()
+                                    try {
+                                        view.performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM)
+                                    } catch (e: Exception) {}
+                                    activeMathAutoSolve = null
+                                },
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Text(
+                                    text = autoSol.resultText,
+                                    fontSize = 17.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (state.isDarkPaper) Color(0xFF38BDF8) else Color(0xFF0284C7)
+                                )
+                                Surface(
+                                    shape = CircleShape,
+                                    color = (if (state.isDarkPaper) Color(0xFF38BDF8) else Color(0xFF0284C7)).copy(alpha = 0.15f),
+                                    modifier = Modifier.size(20.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            Icons.Filled.Check,
+                                            contentDescription = "Masukkan Hasil",
+                                            tint = if (state.isDarkPaper) Color(0xFF38BDF8) else Color(0xFF0284C7),
+                                            modifier = Modifier.size(13.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            Icon(
+                                Icons.Filled.Close,
+                                contentDescription = "Tutup",
+                                tint = LernspaceTextSecondary,
+                                modifier = Modifier
+                                    .size(15.dp)
+                                    .clickable { activeMathAutoSolve = null }
+                            )
                         }
                     }
                 }

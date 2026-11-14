@@ -56,6 +56,7 @@ object AppSettingsManager {
     private const val KEY_ERASER_RADIUS = "eraser_radius"
     private const val KEY_ERASER_MODE = "eraser_mode"
     private const val KEY_SCRIBBLE_TO_ERASE = "scribble_to_erase"
+    private const val KEY_MATH_AUTO_SOLVE = "math_auto_solve"
 
     var handedness by mutableStateOf(Handedness.RIGHT_HANDED)
     var shapeSensitivity by mutableStateOf(ShapeSnapSensitivity.NORMAL)
@@ -65,6 +66,7 @@ object AppSettingsManager {
     var eraserRadius by mutableFloatStateOf(30f)
     var eraserMode by mutableStateOf(EraserMode.PIXEL)
     var isScribbleToEraseEnabled by mutableStateOf(true)
+    var isMathAutoSolveEnabled by mutableStateOf(true)
 
     val isFingerDrawingEnabled: Boolean
         get() = touchInputMode == TouchInputMode.FINGER_AND_STYLUS
@@ -113,6 +115,7 @@ object AppSettingsManager {
         }
 
         isScribbleToEraseEnabled = sp.getBoolean(KEY_SCRIBBLE_TO_ERASE, true)
+        isMathAutoSolveEnabled = sp.getBoolean(KEY_MATH_AUTO_SOLVE, true)
     }
 
     fun updateHandedness(value: Handedness) {
@@ -153,6 +156,11 @@ object AppSettingsManager {
     fun updateScribbleToErase(enabled: Boolean) {
         isScribbleToEraseEnabled = enabled
         prefs?.edit()?.putBoolean(KEY_SCRIBBLE_TO_ERASE, enabled)?.apply()
+    }
+
+    fun updateMathAutoSolve(enabled: Boolean) {
+        isMathAutoSolveEnabled = enabled
+        prefs?.edit()?.putBoolean(KEY_MATH_AUTO_SOLVE, enabled)?.apply()
     }
 }
 

@@ -470,6 +470,7 @@ private fun StylusAndErgonomicsSection() {
 
         // 4. SETTING: SCRIBBLE TO ERASE (CORET UNTUK MENGHAPUS)
         val currentScribbleEnabled = AppSettingsManager.isScribbleToEraseEnabled
+        val currentMathAutoSolveEnabled = AppSettingsManager.isMathAutoSolveEnabled
         Surface(
             shape = RoundedCornerShape(14.dp),
             color = LernspaceSurfaceLow,
@@ -531,6 +532,77 @@ private fun StylusAndErgonomicsSection() {
 
                 Text(
                     text = "Hapus tulisan tangan atau teks secara instan cukup dengan mencoret-coretnya bolak-balik (zigzag / scratch-out) menggunakan pena stylus, tanpa perlu berganti ke tool penghapus.",
+                    fontSize = 12.sp,
+                    color = LernspaceTextSecondary,
+                    lineHeight = 18.sp
+                )
+            }
+        }
+
+        // ── Math Auto-Solve (HMER - Apple Math Notes Style) ──
+        Card(
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(containerColor = LernspaceSurfaceLow),
+            border = BorderStroke(1.dp, LernspaceBorder),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = LernspaceSurfaceCard,
+                            border = BorderStroke(1.dp, LernspaceBorder),
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    Icons.Filled.Calculate,
+                                    contentDescription = null,
+                                    tint = LernspaceDark,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                text = "Kalkulasi Otomatis Tanda '=' (Math Notes)",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = LernspaceDark
+                            )
+                            Text(
+                                text = if (currentMathAutoSolveEnabled) "Aktif (Otomatis hitung hasil)" else "Nonaktif",
+                                fontSize = 12.sp,
+                                color = if (currentMathAutoSolveEnabled) Color(0xFF16A34A) else LernspaceTextSecondary,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                    Switch(
+                        checked = currentMathAutoSolveEnabled,
+                        onCheckedChange = { AppSettingsManager.updateMathAutoSolve(it) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = LernspaceDark,
+                            uncheckedThumbColor = Color.LightGray,
+                            uncheckedTrackColor = LernspaceSurfaceCard
+                        )
+                    )
+                }
+
+                Text(
+                    text = "Saat kamu menulis ekspresi matematika lalu membubuhkan tanda sama dengan (=) di ujung baris (seperti Apple Math Notes), sistem HMER secara otomatis menghitung soal dan memunculkan hasilnya tepat di sebelah kanan tanda =.",
                     fontSize = 12.sp,
                     color = LernspaceTextSecondary,
                     lineHeight = 18.sp
