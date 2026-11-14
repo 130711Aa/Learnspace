@@ -56,6 +56,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -246,18 +247,56 @@ fun FloatingGraphWindow(
         )
     }
 
+    // ── Parameter Sliders State (Ala Desmos) ──
+    val paramValues = remember { mutableStateMapOf<Char, Float>() }
+    val detectedParams = remember(graphItems.toList()) {
+        graphItems.flatMap { MathPlotHelper.extractParameters(it.rawEquation) }.distinct().sorted()
+    }
+
+    LaunchedEffect(detectedParams) {
+        for (p in detectedParams) {
+            if (!paramValues.containsKey(p)) {
+                paramValues[p] = if (p in listOf('a', 'b', 'm')) 1f else if (p == 'r') 3f else 0f
+            }
+        }
+    }
+
+    // ── Trigonometric Pi-Grid Mode State ──
+    var isPiGridMode by remember { mutableStateOf(false) }
+
+    LaunchedEffect(graphItems.toList()) {
+        if (graphItems.any { MathPlotHelper.isTrigonometric(it.rawEquation) }) {
+            isPiGridMode = true
+        }
+    }
+
+    fun getEffectiveExpr(item: GraphPlotItem): String {
+        return if (detectedParams.isNotEmpty()) {
+            MathPlotHelper.substituteParameters(item.cleanExpr, paramValues)
+        } else {
+            item.cleanExpr
+        }
+    }
+
+    fun getEffectiveCircle(item: GraphPlotItem): CircleData? {
+        if (!item.isCircle) return null
+        if (detectedParams.isEmpty()) return item.circleData
+        val substituted = MathPlotHelper.substituteParameters(item.rawEquation, paramValues)
+        return MathPlotHelper.parseCircle(substituted) ?: item.circleData
+    }
+
     // ── Intersections State ──
     var showIntersections by remember { mutableStateOf(false) }
 
-    val visibleCurvesDef = remember(graphItems.toList()) {
-        graphItems.filter { it.isVisible }.map {
+    val visibleCurvesDef = remember(graphItems.toList(), paramValues.toMap()) {
+        graphItems.filter { it.isVisible }.map { item ->
             CurvePlotDefinition(
-                id = it.id,
-                cleanExpr = it.cleanExpr,
-                isCircle = it.isCircle,
-                circleData = it.circleData,
-                isVerticalLine = it.isVerticalLine,
-                verticalLineX = it.verticalLineX
+                id = item.id,
+                cleanExpr = getEffectiveExpr(item),
+                isCircle = item.isCircle,
+                circleData = getEffectiveCircle(item),
+                isVerticalLine = item.isVerticalLine,
+                verticalLineX = item.verticalLineX
             )
         }
     }
@@ -485,16 +524,24 @@ fun FloatingGraphWindow(
                             Button(
                                 onClick = {
                                     val visibleCurves = graphItems.filter { it.isVisible }.map { item ->
+                                        val effExpr = getEffectiveExpr(item)
+                                        val effCircle = getEffectiveCircle(item)
                                         MultiPlotCurve(
-                                            label = MathPlotHelper.formatFormulaForDisplay(item.displayLabel),
+                                            label = MathPlotHelper.formatFormulaForDisplay(
+                                                if (detectedParams.isNotEmpty()) {
+                                                    "${item.displayLabel} (${MathPlotHelper.extractFunctionBody(effExpr)})"
+                                                } else {
+                                                    item.displayLabel
+                                                }
+                                            ),
                                             colorArgb = item.color.toArgb(),
                                             points = if (item.isCircle || item.isVerticalLine) emptyList() else MathPlotHelper.sampleFunctionDynamic(
-                                                item.cleanExpr,
+                                                effExpr,
                                                 centerWorldX - worldSpanX / 2f,
                                                 centerWorldX + worldSpanX / 2f,
                                                 steps = 400
                                             ),
-                                            circleData = item.circleData,
+                                            circleData = effCircle,
                                             keyPoints = item.keyPoints,
                                             isVerticalLine = item.isVerticalLine,
                                             verticalLineX = item.verticalLineX
@@ -505,16 +552,17 @@ fun FloatingGraphWindow(
                                     val spanY = worldSpanX / aspect
 
                                     val plotData = MathPlotData(
-                                        functionExpression = activeItem?.cleanExpr ?: "",
+                                        functionExpression = activeItem?.let { getEffectiveExpr(it) } ?: "",
                                         xMin = centerWorldX - worldSpanX / 2f,
                                         xMax = centerWorldX + worldSpanX / 2f,
                                         yMin = centerWorldY - spanY / 2f,
                                         yMax = centerWorldY + spanY / 2f,
-                                        circleData = activeItem?.circleData,
+                                        circleData = activeItem?.let { getEffectiveCircle(it) },
                                         multiCurves = visibleCurves,
                                         intersections = if (showIntersections) intersections else emptyList(),
                                         isVerticalLine = activeItem?.isVerticalLine ?: false,
-                                        verticalLineX = activeItem?.verticalLineX ?: 0f
+                                        verticalLineX = activeItem?.verticalLineX ?: 0f,
+                                        isPiGridMode = isPiGridMode
                                     )
 
                                     val highResBmp = MathPlotHelper.renderGraphBitmap(
@@ -805,6 +853,108 @@ fun FloatingGraphWindow(
                         }
                     }
 
+                    // ── Interactive Parameter Sliders Panel (Ala Desmos) ──
+                    if (detectedParams.isNotEmpty()) {
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            color = cardBg,
+                            border = androidx.compose.foundation.BorderStroke(0.5.dp, borderColor)
+                        ) {
+                            Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text(
+                                            text = "🎛️ Parameter Interaktif",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = textPrimary
+                                        )
+                                        Text(
+                                            text = "(${detectedParams.size})",
+                                            fontSize = 10.5.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = Color(0xFF2563EB)
+                                        )
+                                    }
+                                }
+                                Spacer(Modifier.height(3.dp))
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    detectedParams.forEach { param ->
+                                        val curVal = paramValues[param] ?: if (param in listOf('a', 'b', 'm')) 1f else if (param == 'r') 3f else 0f
+                                        val minVal = if (param == 'r') 0.5f else -10f
+                                        val maxVal = 10f
+
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = inputBg,
+                                            border = androidx.compose.foundation.BorderStroke(1.dp, borderColor),
+                                            modifier = Modifier.width(180.dp)
+                                        ) {
+                                            Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)) {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Text(
+                                                        text = "$param = ${MathPlotHelper.formatNumber(curVal)}",
+                                                        fontSize = 11.5.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontFamily = FontFamily.Monospace,
+                                                        color = Color(0xFF2563EB)
+                                                    )
+                                                    Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                                                        Surface(
+                                                            shape = RoundedCornerShape(4.dp),
+                                                            color = cardBg,
+                                                            border = androidx.compose.foundation.BorderStroke(0.5.dp, borderColor),
+                                                            modifier = Modifier.clickable {
+                                                                paramValues[param] = (curVal - 0.5f).coerceIn(minVal, maxVal)
+                                                            }
+                                                        ) {
+                                                            Text("-", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = textPrimary, modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp))
+                                                        }
+                                                        Surface(
+                                                            shape = RoundedCornerShape(4.dp),
+                                                            color = cardBg,
+                                                            border = androidx.compose.foundation.BorderStroke(0.5.dp, borderColor),
+                                                            modifier = Modifier.clickable {
+                                                                paramValues[param] = (curVal + 0.5f).coerceIn(minVal, maxVal)
+                                                            }
+                                                        ) {
+                                                            Text("+", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = textPrimary, modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp))
+                                                        }
+                                                    }
+                                                }
+                                                androidx.compose.material3.Slider(
+                                                    value = curVal,
+                                                    onValueChange = { newVal ->
+                                                        paramValues[param] = ((newVal * 10f).roundToInt() / 10f).coerceIn(minVal, maxVal)
+                                                    },
+                                                    valueRange = minVal..maxVal,
+                                                    modifier = Modifier.height(26.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     // ── Cartesian Graph Viewport Area (Strictly Clipped) ──
                     BoxWithConstraints(
                         modifier = Modifier
@@ -829,6 +979,10 @@ fun FloatingGraphWindow(
 
                         // Adaptive Grid Step
                         val gridStep = remember(worldSpanX) { calculateNiceStep(worldSpanX) }
+                        val gridStepX = remember(worldSpanX, isPiGridMode) {
+                            if (isPiGridMode) MathPlotHelper.calculateNicePiStep(worldSpanX) else gridStep
+                        }
+                        val gridStepY = gridStep
 
                         Canvas(
                             modifier = Modifier
@@ -851,9 +1005,9 @@ fun FloatingGraphWindow(
                             // This ensures NOT A SINGLE PIXEL of curves, circles, or labels can penetrate header or borders!
                             clipRect(0f, 0f, size.width, size.height) {
                                 // 1. Grid Lines
-                                val firstGridX = (floor(xMin / gridStep) * gridStep).toFloat()
+                                val firstGridX = (floor(xMin / gridStepX) * gridStepX).toFloat()
                                 var gx = firstGridX
-                                while (gx <= xMax + gridStep) {
+                                while (gx <= xMax + gridStepX) {
                                     val sx = toScreenX(gx)
                                     drawLine(
                                         color = gridColor,
@@ -862,12 +1016,12 @@ fun FloatingGraphWindow(
                                         strokeWidth = 1f,
                                         pathEffect = PathEffect.dashPathEffect(floatArrayOf(5f, 5f), 0f)
                                     )
-                                    gx += gridStep
+                                    gx += gridStepX
                                 }
 
-                                val firstGridY = (floor(yMin / gridStep) * gridStep).toFloat()
+                                val firstGridY = (floor(yMin / gridStepY) * gridStepY).toFloat()
                                 var gy = firstGridY
-                                while (gy <= yMax + gridStep) {
+                                while (gy <= yMax + gridStepY) {
                                     val sy = toScreenY(gy)
                                     drawLine(
                                         color = gridColor,
@@ -876,7 +1030,7 @@ fun FloatingGraphWindow(
                                         strokeWidth = 1f,
                                         pathEffect = PathEffect.dashPathEffect(floatArrayOf(5f, 5f), 0f)
                                     )
-                                    gy += gridStep
+                                    gy += gridStepY
                                 }
 
                                 // 2. Axes X and Y
@@ -910,31 +1064,35 @@ fun FloatingGraphWindow(
                                 }
 
                                 var lx = firstGridX
-                                while (lx <= xMax + gridStep) {
+                                while (lx <= xMax + gridStepX) {
                                     if (abs(lx) > 1e-4) {
                                         val sx = toScreenX(lx)
                                         val labelY = (originY + 22f).coerceIn(24f, viewHeight - 6f)
-                                        nativeCanvas.drawText(MathPlotHelper.formatNumber(lx), sx, labelY, tickTextPaint)
+                                        val labelStr = if (isPiGridMode) MathPlotHelper.formatPiFraction(lx) else MathPlotHelper.formatNumber(lx)
+                                        nativeCanvas.drawText(labelStr, sx, labelY, tickTextPaint)
                                     }
-                                    lx += gridStep
+                                    lx += gridStepX
                                 }
 
                                 val yTextPaint = android.graphics.Paint(tickTextPaint).apply {
                                     textAlign = android.graphics.Paint.Align.RIGHT
                                 }
                                 var ly = firstGridY
-                                while (ly <= yMax + gridStep) {
+                                while (ly <= yMax + gridStepY) {
                                     if (abs(ly) > 1e-4) {
                                         val sy = toScreenY(ly)
                                         val labelX = (originX - 7f).coerceIn(34f, viewWidth - 6f)
                                         nativeCanvas.drawText(MathPlotHelper.formatNumber(ly), labelX, sy + 6f, yTextPaint)
                                     }
-                                    ly += gridStep
+                                    ly += gridStepY
                                 }
 
                                 // 4. Draw All Visible Functions, Lines, and Circles Simultaneously on the Same Plane
                                 for (item in graphItems) {
                                     if (!item.isVisible) continue
+
+                                    val effExpr = getEffectiveExpr(item)
+                                    val effCircle = getEffectiveCircle(item)
 
                                     if (item.isVerticalLine) {
                                         val sx = toScreenX(item.verticalLineX)
@@ -947,8 +1105,8 @@ fun FloatingGraphWindow(
                                                 cap = StrokeCap.Round
                                             )
                                         }
-                                    } else if (item.isCircle && item.circleData != null) {
-                                        val cData = item.circleData
+                                    } else if (item.isCircle && effCircle != null) {
+                                        val cData = effCircle
                                         val cxScreen = toScreenX(cData.centerX)
                                         val cyScreen = toScreenY(cData.centerY)
                                         val radiusPx = (cData.radius / worldSpanX) * viewWidth
@@ -976,7 +1134,7 @@ fun FloatingGraphWindow(
                                         )
                                     } else {
                                         // Function curve
-                                        val pts = MathPlotHelper.sampleFunctionDynamic(item.cleanExpr, xMin, xMax, steps = 300)
+                                        val pts = MathPlotHelper.sampleFunctionDynamic(effExpr, xMin, xMax, steps = 300)
                                         val path = Path()
                                         var isFirst = true
                                         for (pt in pts) {
@@ -1092,6 +1250,26 @@ fun FloatingGraphWindow(
                                     modifier = Modifier.size(28.dp)
                                 ) {
                                     Icon(Icons.Filled.Remove, contentDescription = "Perkecil", modifier = Modifier.size(14.dp))
+                                }
+
+                                // Toggle Pi-Grid Mode
+                                Surface(
+                                    shape = RoundedCornerShape(7.dp),
+                                    color = if (isPiGridMode) Color(0xFF2563EB).copy(alpha = 0.15f) else Color.Transparent,
+                                    border = if (isPiGridMode) androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2563EB)) else null,
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .clickable { isPiGridMode = !isPiGridMode }
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text(
+                                            text = "π",
+                                            fontSize = 15.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            fontFamily = FontFamily.Serif,
+                                            color = if (isPiGridMode) Color(0xFF2563EB) else textSecondary
+                                        )
+                                    }
                                 }
 
                                 // Reset Center (Home)

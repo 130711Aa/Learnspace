@@ -13,8 +13,10 @@ import kotlin.math.acos
 import kotlin.math.asin
 import kotlin.math.atan
 import kotlin.math.cbrt
+import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.exp
+import kotlin.math.floor
 import kotlin.math.ln
 import kotlin.math.log10
 import kotlin.math.max
@@ -129,7 +131,8 @@ data class MathPlotData(
     val multiCurves: List<MultiPlotCurve> = emptyList(),
     val intersections: List<IntersectionPoint> = emptyList(),
     val isVerticalLine: Boolean = false,
-    val verticalLineX: Float = 0f
+    val verticalLineX: Float = 0f,
+    val isPiGridMode: Boolean = false
 )
 
 /**
@@ -1291,6 +1294,147 @@ object MathPlotHelper {
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // PARAMETER EXTRACTION & DYNAMIC SLIDER SUBSTITUTION (ALA DESMOS)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Extracts all single-letter parameter symbols (e.g. 'a', 'b', 'c', 'k', 'm', 'r') from an equation.
+     * Excludes independent variable 'x', dependent 'y', and base 'e'.
+     */
+    fun extractParameters(expr: String): List<Char> {
+        var clean = expr.trim()
+        if (clean.contains("=")) {
+            val parts = clean.split("=")
+            clean = if (parts[0].trim().lowercase() in listOf("y", "f(x)", "g(x)")) {
+                parts[1].trim()
+            } else {
+                clean
+            }
+        }
+        val stripped = clean.lowercase()
+            .replace("pi", " ")
+            .replace("sqrt", " ")
+            .replace("sin", " ")
+            .replace("cos", " ")
+            .replace("tan", " ")
+            .replace("csc", " ")
+            .replace("sec", " ")
+            .replace("cot", " ")
+            .replace("log", " ")
+            .replace("ln", " ")
+            .replace("abs", " ")
+            .replace("exp", " ")
+
+        val allowedParams = ('a'..'z').toSet() - setOf('x', 'y', 'e')
+        val found = mutableListOf<Char>()
+        for (i in stripped.indices) {
+            val ch = stripped[i]
+            if (ch in allowedParams) {
+                val prev = if (i > 0) stripped[i - 1] else ' '
+                val next = if (i < stripped.length - 1) stripped[i + 1] else ' '
+                if (!prev.isLetter() && !next.isLetter()) {
+                    if (ch !in found) {
+                        found.add(ch)
+                    }
+                }
+            }
+        }
+        return found.sorted()
+    }
+
+    /**
+     * Dynamically substitutes slider parameter values into a mathematical formula expression.
+     */
+    fun substituteParameters(expr: String, params: Map<Char, Float>): String {
+        if (params.isEmpty()) return expr
+        var res = expr
+        for ((param, value) in params) {
+            val pattern = Regex("""(?<![a-zA-Z])$param(?![a-zA-Z])""")
+            val valStr = if (abs(value - value.roundToInt()) < 0.001f) {
+                value.roundToInt().toString()
+            } else {
+                String.format(Locale.US, "%.3f", value).trimEnd('0').trimEnd('.')
+            }
+            res = pattern.replace(res, "($valStr)")
+        }
+        return res
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // PI-BASED GRID & TRIGONOMETRIC FORMATTING
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Checks if a formula expression contains trigonometric functions or pi.
+     */
+    fun isTrigonometric(expr: String): Boolean {
+        val lower = expr.lowercase()
+        return lower.contains("sin") || lower.contains("cos") || lower.contains("tan") ||
+                lower.contains("sec") || lower.contains("csc") || lower.contains("cot") ||
+                lower.contains("pi") || lower.contains("π")
+    }
+
+    /**
+     * Calculates an aesthetically spaced step size in terms of pi fractions for the X-axis grid.
+     */
+    fun calculateNicePiStep(worldSpanX: Float): Float {
+        val piVal = Math.PI.toFloat()
+        return when {
+            worldSpanX >= 16f * piVal -> 4f * piVal
+            worldSpanX >= 8f * piVal -> 2f * piVal
+            worldSpanX >= 4f * piVal -> piVal
+            worldSpanX >= 2f * piVal -> piVal / 2f
+            worldSpanX >= 1f * piVal -> piVal / 4f
+            worldSpanX >= 0.5f * piVal -> piVal / 6f
+            else -> piVal / 12f
+        }
+    }
+
+    private fun gcd(a: Int, b: Int): Int {
+        var x = abs(a)
+        var y = abs(b)
+        while (y != 0) {
+            val t = y
+            y = x % y
+            x = t
+        }
+        return if (x == 0) 1 else x
+    }
+
+    /**
+     * Formats numerical coordinate values as exact textbook pi fractions (e.g. "π/2", "π", "3π/2", "2π").
+     */
+    fun formatPiFraction(value: Float): String {
+        if (abs(value) < 0.005f) return "0"
+        val piVal = Math.PI.toFloat()
+        val q = value / piVal
+
+        val denominators = intArrayOf(1, 2, 3, 4, 6, 12)
+        for (d in denominators) {
+            val n = (q * d).roundToInt()
+            if (abs(q - n.toFloat() / d) < 0.02f) {
+                val g = gcd(n, d)
+                val redN = n / g
+                val redD = d / g
+
+                return when {
+                    redD == 1 -> {
+                        when (redN) {
+                            1 -> "π"
+                            -1 -> "-π"
+                            else -> "${redN}π"
+                        }
+                    }
+                    redN == 1 -> "π/$redD"
+                    redN == -1 -> "-π/$redD"
+                    else -> "${redN}π/$redD"
+                }
+            }
+        }
+        return formatNumber(value)
+    }
+
     /**
      * Dynamically samples the function curve across the visible [xMin, xMax] domain.
      */
@@ -1431,17 +1575,34 @@ object MathPlotHelper {
         }
 
         // 1. Draw Grid Lines and Numerical Labels
-        val xStep = max(1, (xRange / 10).roundToInt())
-        var gx = (plotData.xMin / xStep).toInt() * xStep
-        while (gx <= plotData.xMax) {
-            val sx = toScreenX(gx.toFloat())
-            if (sx in padding..(width - padding)) {
-                canvas.drawLine(sx, padding, sx, height - padding, gridPaint)
-                if (gx != 0) {
-                    canvas.drawText("$gx", sx, toScreenY(0f).coerceIn(padding + 40f, height - padding - 20f) + 36f, textPaint)
+        if (plotData.isPiGridMode) {
+            val piStep = calculateNicePiStep(xRange)
+            val firstGx = (floor(plotData.xMin / piStep) * piStep).toFloat()
+            var gx = firstGx
+            while (gx <= plotData.xMax + piStep) {
+                val sx = toScreenX(gx)
+                if (sx in padding..(width - padding)) {
+                    canvas.drawLine(sx, padding, sx, height - padding, gridPaint)
+                    if (abs(gx) > 1e-4f) {
+                        val piLabel = formatPiFraction(gx)
+                        canvas.drawText(piLabel, sx, toScreenY(0f).coerceIn(padding + 40f, height - padding - 20f) + 36f, textPaint)
+                    }
                 }
+                gx += piStep
             }
-            gx += xStep
+        } else {
+            val xStep = max(1, (xRange / 10).roundToInt())
+            var gx = (plotData.xMin / xStep).toInt() * xStep
+            while (gx <= plotData.xMax) {
+                val sx = toScreenX(gx.toFloat())
+                if (sx in padding..(width - padding)) {
+                    canvas.drawLine(sx, padding, sx, height - padding, gridPaint)
+                    if (gx != 0) {
+                        canvas.drawText("$gx", sx, toScreenY(0f).coerceIn(padding + 40f, height - padding - 20f) + 36f, textPaint)
+                    }
+                }
+                gx += xStep
+            }
         }
 
         val yStep = max(1, (yRange / 8).roundToInt())

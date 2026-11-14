@@ -260,4 +260,42 @@ class MathRecognitionAndSolverTest {
         assertEquals(3f, pts[1].x, 0.01f)
         assertEquals(4f, pts[1].y, 0.05f)
     }
+
+    @Test
+    fun testParameterExtractionAndSubstitution() {
+        // Test extracting parameters
+        val params1 = MathPlotHelper.extractParameters("y = a*x^2 + b*x + c")
+        assertEquals(listOf('a', 'b', 'c'), params1)
+
+        val params2 = MathPlotHelper.extractParameters("y = a*sin(b*x) + d")
+        assertEquals(listOf('a', 'b', 'd'), params2)
+
+        val paramsCircle = MathPlotHelper.extractParameters("(x - h)^2 + (y - k)^2 = r^2")
+        assertEquals(listOf('h', 'k', 'r'), paramsCircle)
+
+        // Test substituting parameters
+        val substituted = MathPlotHelper.substituteParameters("a*x^2 + c", mapOf('a' to 2.5f, 'c' to -3f))
+        assertEquals("(2.5)*x^2 + (-3)", substituted)
+    }
+
+    @Test
+    fun testTrigonometricAndPiGridFormatting() {
+        assertTrue(MathPlotHelper.isTrigonometric("sin(x)"))
+        assertTrue(MathPlotHelper.isTrigonometric("y = 2*cos(x) + 1"))
+        assertFalse(MathPlotHelper.isTrigonometric("y = x^2 + 4"))
+
+        val pi = Math.PI.toFloat()
+        assertEquals("0", MathPlotHelper.formatPiFraction(0f))
+        assertEquals("π", MathPlotHelper.formatPiFraction(pi))
+        assertEquals("-π", MathPlotHelper.formatPiFraction(-pi))
+        assertEquals("π/2", MathPlotHelper.formatPiFraction(pi / 2f))
+        assertEquals("-π/2", MathPlotHelper.formatPiFraction(-pi / 2f))
+        assertEquals("3π/2", MathPlotHelper.formatPiFraction(3f * pi / 2f))
+        assertEquals("2π", MathPlotHelper.formatPiFraction(2f * pi))
+        assertEquals("π/4", MathPlotHelper.formatPiFraction(pi / 4f))
+
+        // Step size calculation
+        val step = MathPlotHelper.calculateNicePiStep(4f * pi)
+        assertTrue(step > 0f)
+    }
 }
