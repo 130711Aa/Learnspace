@@ -298,4 +298,35 @@ class MathRecognitionAndSolverTest {
         val step = MathPlotHelper.calculateNicePiStep(4f * pi)
         assertTrue(step > 0f)
     }
+
+    @Test
+    fun testParametricCircleEquations() {
+        // Test x^2 + y^2 = r (without params -> default r=3)
+        val circleDefault = MathPlotHelper.parseCircle("x^2 + y^2 = r")
+        assertNotNull(circleDefault)
+        assertEquals(0f, circleDefault!!.centerX, 0.001f)
+        assertEquals(0f, circleDefault.centerY, 0.001f)
+        assertEquals(3f, circleDefault.radius, 0.001f)
+
+        // Test x^2 + y^2 = r with slider r = 5
+        val circleWithR = MathPlotHelper.parseCircle("x^2 + y^2 = r", mapOf('r' to 5f))
+        assertNotNull(circleWithR)
+        assertEquals(0f, circleWithR!!.centerX, 0.001f)
+        assertEquals(0f, circleWithR.centerY, 0.001f)
+        assertEquals(5f, circleWithR.radius, 0.001f)
+
+        // Test x^2 + y^2 = r^2 with slider r = 4
+        val circleSq = MathPlotHelper.parseCircle("x^2 + y^2 = r^2", mapOf('r' to 4f))
+        assertNotNull(circleSq)
+        assertEquals(0f, circleSq!!.centerX, 0.001f)
+        assertEquals(0f, circleSq.centerY, 0.001f)
+        assertEquals(4f, circleSq.radius, 0.001f)
+
+        // Test (x - h)^2 + (y - k)^2 = r with h=2, k=-3, r=6
+        val circleHkr = MathPlotHelper.parseCircle("(x - h)^2 + (y - k)^2 = r", mapOf('h' to 2f, 'k' to -3f, 'r' to 6f))
+        assertNotNull(circleHkr)
+        assertEquals(2f, circleHkr!!.centerX, 0.01f)
+        assertEquals(-3f, circleHkr.centerY, 0.01f)
+        assertEquals(6f, circleHkr.radius, 0.01f)
+    }
 }

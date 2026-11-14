@@ -191,7 +191,7 @@ fun FloatingGraphWindow(
         if (circle != null) {
             return GraphPlotItem(
                 rawEquation = trimmed,
-                displayLabel = circle.standardEquation,
+                displayLabel = trimmed,
                 color = color,
                 isCircle = true,
                 circleData = circle,
@@ -281,8 +281,7 @@ fun FloatingGraphWindow(
     fun getEffectiveCircle(item: GraphPlotItem): CircleData? {
         if (!item.isCircle) return null
         if (detectedParams.isEmpty()) return item.circleData
-        val substituted = MathPlotHelper.substituteParameters(item.rawEquation, paramValues)
-        return MathPlotHelper.parseCircle(substituted) ?: item.circleData
+        return MathPlotHelper.parseCircle(item.rawEquation, paramValues) ?: item.circleData
     }
 
     // ── Intersections State ──
@@ -895,7 +894,7 @@ fun FloatingGraphWindow(
                                     detectedParams.forEach { param ->
                                         val curVal = paramValues[param] ?: if (param in listOf('a', 'b', 'm')) 1f else if (param == 'r') 3f else 0f
                                         val minVal = if (param == 'r') 0.5f else -10f
-                                        val maxVal = 10f
+                                        val maxVal = if (param == 'r') 15f else 10f
 
                                         Surface(
                                             shape = RoundedCornerShape(8.dp),

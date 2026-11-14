@@ -206,16 +206,18 @@ object MathPlotHelper {
 
     /**
      * Parses standard or general circle equations into structured CircleData.
+     * Supports both fixed numerical equations and dynamic parameter variables (e.g. 'r', 'h', 'k').
      * Supported formats:
-     * - (x - h)^2 + (y - k)^2 = r^2   (e.g. (x-2)^2 + (y-3)^2 = 16)
+     * - (x - h)^2 + (y - k)^2 = r^2   (e.g. (x-2)^2 + (y-3)^2 = 16 or (x-h)^2 + (y-k)^2 = r^2)
      * - (x + h)^2 + (y + k)^2 = r^2   (e.g. (x+1)^2 + (y-4)^2 = 25)
-     * - x^2 + y^2 = r^2               (e.g. x^2 + y^2 = 25)
+     * - x^2 + y^2 = r                 (e.g. x^2 + y^2 = r, where 'r' is direct radius parameter)
+     * - x^2 + y^2 = r^2               (e.g. x^2 + y^2 = 25 or x^2 + y^2 = r^2)
      * - x^2 + (y - k)^2 = r^2         (e.g. x^2 + (y-2)^2 = 9)
      * - (x - h)^2 + y^2 = r^2         (e.g. (x-3)^2 + y^2 = 4)
      * - General form: x^2 + y^2 + Ax + By + C = 0
      * - General form with RHS: x^2 + y^2 + Ax + By = D
      */
-    fun parseCircle(raw: String): CircleData? {
+    fun parseCircle(raw: String, params: Map<Char, Float> = emptyMap()): CircleData? {
         if (raw.isBlank()) return null
 
         // 1. Normalize LaTeX and syntax
@@ -230,28 +232,76 @@ object MathPlotHelper {
         if (!s.contains('x') || !s.contains('y') || !s.contains('=')) return null
         if (s.contains("^3") || s.contains("^4") || s.contains("z")) return null
 
-        // Check 1: Standard Form (x - h)^2 + (y - k)^2 = R
-        val stdCircle = parseStandardCircle(s, raw)
+        // Determine effective parameter map (with intelligent defaults if not yet populated)
+        val detected = extractParameters(s)
+        val effParams = if (detected.isNotEmpty()) {
+            val map = HashMap<Char, Float>()
+            for (p in detected) {
+                map[p] = params[p] ?: if (p in listOf('a', 'b', 'm')) 1f else if (p == 'r') 3f else 0f
+            }
+            map
+        } else {
+            params
+        }
+
+        // Check 1: Standard Form (x - h)^2 + (y - k)^2 = R (with parameter support)
+        val stdCircle = parseStandardCircle(s, raw, effParams)
         if (stdCircle != null) return stdCircle
 
-        // Check 2: General Form x^2 + y^2 + Ax + By + C = 0
-        val genCircle = parseGeneralCircle(s, raw)
+        // Check 2: General Form x^2 + y^2 + Ax + By + C = 0 (with parameter support)
+        val substituted = if (effParams.isNotEmpty()) substituteParameters(s, effParams) else s
+        val genCircle = parseGeneralCircle(substituted, raw)
         if (genCircle != null) return genCircle
 
         return null
     }
 
-    private fun parseStandardCircle(s: String, rawOriginal: String): CircleData? {
+    private fun parseStandardCircle(s: String, rawOriginal: String, params: Map<Char, Float> = emptyMap()): CircleData? {
         val parts = s.split("=")
         if (parts.size != 2) return null
 
-        val lhs = parts[0]
-        val rhs = parts[1]
+        val rawLhs = parts[0]
+        val rawRhs = parts[1]
 
-        // Evaluate RHS to find R = r^2
-        val rSquared = MathSolver.evaluateExpression(rhs) ?: return null
-        if (rSquared <= 1e-6) return null
-        val radius = sqrt(rSquared).toFloat()
+        // 1. Evaluate radius from RHS
+        // Case A: RHS is explicitly a single radius parameter (e.g. "= r")
+        val radius: Float = if (rawRhs == "r" || rawRhs == "(r)") {
+            val rVal = params['r'] ?: 3f
+            abs(rVal).coerceAtLeast(0.01f)
+        } else {
+            // Substitute params in RHS if any
+            val subRhs = if (params.isNotEmpty()) substituteParameters(rawRhs, params) else rawRhs
+            val rSquared = MathSolver.evaluateExpression(subRhs) ?: return null
+            if (rSquared <= 1e-6) return null
+            sqrt(rSquared).toFloat()
+        }
+
+        // 2. Normalize and substitute LHS
+        val subLhs = if (params.isNotEmpty()) substituteParameters(rawLhs, params) else rawLhs
+
+        // Normalize substituted parentheses:
+        // Replace -(number) or +(number) e.g. -(2) -> -2, +(3) -> +3
+        var lhsNorm = subLhs
+        lhsNorm = Regex("""([+-])\(([+-]?\d+(?:\.\d+)?)\)""").replace(lhsNorm) { mr ->
+            val sign = mr.groupValues[1]
+            val inner = mr.groupValues[2]
+            if (sign == "-") {
+                if (inner.startsWith("-")) "+${inner.drop(1)}"
+                else if (inner.startsWith("+")) "-${inner.drop(1)}"
+                else "-$inner"
+            } else {
+                if (inner.startsWith("+")) "+${inner.drop(1)}"
+                else if (inner.startsWith("-")) inner
+                else "+$inner"
+            }
+        }
+        // Normalize (x-(0))^2 or (x-0)^2 or (x+0)^2 or (x)^2 -> x^2
+        lhsNorm = Regex("""\(([xy])[+-]0(?:\.0+)?\)\^2""").replace(lhsNorm) { mr ->
+            "${mr.groupValues[1]}^2"
+        }
+        lhsNorm = Regex("""\(([xy])\)\^2""").replace(lhsNorm) { mr ->
+            "${mr.groupValues[1]}^2"
+        }
 
         // Match term X: (x - h)^2 or (x + h)^2 or x^2
         var h = 0f
@@ -260,23 +310,23 @@ object MathPlotHelper {
         var foundY = false
 
         // Pattern for (x - a)^2 or (x + a)^2
-        val xParenMatch = Regex("""\((?:x([+-][0-9.]+))\)\^2""").find(lhs)
+        val xParenMatch = Regex("""\((?:x([+-][0-9.]+))\)\^2""").find(lhsNorm)
         if (xParenMatch != null) {
             val signVal = xParenMatch.groupValues[1].toDoubleOrNull() ?: return null
             h = -signVal.toFloat() // (x - 2)^2 -> h = 2
             foundX = true
-        } else if (lhs.contains("x^2") || lhs.contains("(x)^2")) {
+        } else if (lhsNorm.contains("x^2") || lhsNorm.contains("(x)^2")) {
             h = 0f
             foundX = true
         }
 
         // Pattern for (y - b)^2 or (y + b)^2
-        val yParenMatch = Regex("""\((?:y([+-][0-9.]+))\)\^2""").find(lhs)
+        val yParenMatch = Regex("""\((?:y([+-][0-9.]+))\)\^2""").find(lhsNorm)
         if (yParenMatch != null) {
             val signVal = yParenMatch.groupValues[1].toDoubleOrNull() ?: return null
             k = -signVal.toFloat() // (y - 3)^2 -> k = 3
             foundY = true
-        } else if (lhs.contains("y^2") || lhs.contains("(y)^2")) {
+        } else if (lhsNorm.contains("y^2") || lhsNorm.contains("(y)^2")) {
             k = 0f
             foundY = true
         }
