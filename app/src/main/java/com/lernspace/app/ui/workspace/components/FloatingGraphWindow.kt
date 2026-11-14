@@ -988,14 +988,28 @@ fun FloatingGraphWindow(
                                 .fillMaxSize()
                                 .clipToBounds()
                                 .pointerInput(Unit) {
-                                    detectTransformGestures { _, pan, zoom, _ ->
-                                        val dx = pan.x * (worldSpanX / viewWidth)
-                                        val dy = pan.y * (worldSpanY / viewHeight)
-                                        centerWorldX -= dx
-                                        centerWorldY += dy
+                                    detectTransformGestures { centroid, pan, zoom, _ ->
+                                        val isZooming = kotlin.math.abs(zoom - 1f) > 0.005f
 
-                                        if (zoom != 1f) {
-                                            worldSpanX = (worldSpanX / zoom).coerceIn(0.2f, 250f)
+                                        if (isZooming) {
+                                            // Focal-point zoom anchored directly around user's pinch centroid
+                                            val currentSpanX = worldSpanX
+                                            val currentSpanY = currentSpanX / aspectRatio
+                                            val focusWorldX = centerWorldX + (centroid.x - viewWidth / 2f) * (currentSpanX / viewWidth)
+                                            val focusWorldY = centerWorldY - (centroid.y - viewHeight / 2f) * (currentSpanY / viewHeight)
+
+                                            val newSpanX = (currentSpanX / zoom).coerceIn(0.2f, 250f)
+                                            val newSpanY = newSpanX / aspectRatio
+
+                                            centerWorldX = focusWorldX - (centroid.x - viewWidth / 2f) * (newSpanX / viewWidth)
+                                            centerWorldY = focusWorldY + (centroid.y - viewHeight / 2f) * (newSpanY / viewHeight)
+                                            worldSpanX = newSpanX
+                                        } else {
+                                            // Pure 1-finger translation: 1:1 smooth pan without zoom jitter
+                                            val dx = pan.x * (worldSpanX / viewWidth)
+                                            val dy = pan.y * (worldSpanY / viewHeight)
+                                            centerWorldX -= dx
+                                            centerWorldY += dy
                                         }
                                     }
                                 }

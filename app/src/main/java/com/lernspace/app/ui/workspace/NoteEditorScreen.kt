@@ -97,6 +97,7 @@ import com.lernspace.app.core.ai.HandwrittenNoteRecognizer
 import com.lernspace.app.core.math.MathSolver
 import com.lernspace.app.core.math.MathSolution
 import com.lernspace.app.core.math.MathLatexRecognizer
+import com.lernspace.app.core.math.MathRecognitionResult
 import com.lernspace.app.core.math.MathEqualsRecognizer
 import com.lernspace.app.core.math.MathAutoSolveResult
 import com.lernspace.app.core.math.EqualsSignMatch
@@ -1355,6 +1356,54 @@ private fun NotePaneViewport(
     var activeMathAutoSolve by remember { mutableStateOf<MathAutoSolveResult?>(null) }
     var isEvaluatingMathAutoSolve by remember { mutableStateOf(false) }
 
+    // Proactive background recognition as soon as lasso selection completes
+    var proactiveMathResult by remember { mutableStateOf<MathRecognitionResult?>(null) }
+    var isProactiveMathRecognizing by remember { mutableStateOf(false) }
+    var proactiveMathJob by remember { mutableStateOf<Job?>(null) }
+
+    LaunchedEffect(state.lassoSelection) {
+        val sel = state.lassoSelection
+        if (sel == null) {
+            proactiveMathJob?.cancel()
+            proactiveMathResult = null
+            isProactiveMathRecognizing = false
+            return@LaunchedEffect
+        }
+
+        val effectiveStrokes = if (sel.selectedStrokes.isNotEmpty()) {
+            sel.selectedStrokes.toList()
+        } else {
+            state.strokes.filter { LassoHelper.isStrokeInBounds(it, sel.bounds) }
+        }
+
+        if (effectiveStrokes.isEmpty()) {
+            proactiveMathResult = null
+            return@LaunchedEffect
+        }
+
+        val rendererSnapshot = state.canvasStrokeRenderer
+        proactiveMathJob?.cancel()
+        proactiveMathJob = coroutineScope.launch {
+            isProactiveMathRecognizing = true
+            try {
+                val cropBmp = withContext(Dispatchers.Default) {
+                    HandwrittenNoteRecognizer.renderStrokesToBitmap(
+                        strokes = effectiveStrokes,
+                        renderer = rendererSnapshot,
+                        maxDim = 800
+                    )
+                }
+                val result = MathLatexRecognizer.recognizeMath(effectiveStrokes, cropBmp)
+                if (result.latex.isNotBlank()) {
+                    proactiveMathResult = result
+                }
+            } catch (_: Exception) {
+            } finally {
+                isProactiveMathRecognizing = false
+            }
+        }
+    }
+
     LaunchedEffect(lassoAiResponse, lassoAiMode) {
         if (lassoAiMode == LassoAiMode.FORMULA && !lassoAiResponse.isNullOrBlank()) {
             mathSolverResult = MathSolver.solve(lassoAiResponse ?: "")
@@ -1379,30 +1428,38 @@ private fun NotePaneViewport(
         }
 
         if (mode == LassoAiMode.FORMULA && effectiveStrokes.isNotEmpty()) {
-            isAskingLassoAi = true
-            lassoAiJob?.cancel()
-            lassoAiJob = coroutineScope.launch {
-                val cropBmp = withContext(Dispatchers.Default) {
-                    HandwrittenNoteRecognizer.renderStrokesToBitmap(
-                        strokes = effectiveStrokes,
-                        renderer = rendererSnapshot,
-                        maxDim = 800
-                    )
-                }
-                val result = MathLatexRecognizer.recognizeMath(effectiveStrokes, cropBmp)
-                if (result.latex.isNotBlank()) {
-                    lassoAiResponse = result.latex
-                    mathSolverResult = result.solution
-                } else {
-                    val downloaded = MathLatexRecognizer.isOfflineMathModelDownloaded()
-                    if (!downloaded && !GeminiApiClient.isConfigured()) {
-                        lassoAiError = "Model matematika offline (~20 MB) sedang diunduh. Hubungkan Gemini API untuk akurasi instan."
-                        MathLatexRecognizer.downloadOfflineMathModel()
-                    } else {
-                        lassoAiError = "Tidak dapat mengenali tulisan matematika. Pastikan coretan terbaca jelas."
-                    }
-                }
+            val precomputed = proactiveMathResult
+            if (precomputed != null && precomputed.latex.isNotBlank()) {
+                // Instant! Precomputed in background while lasso finished
+                lassoAiResponse = precomputed.latex
+                mathSolverResult = precomputed.solution
                 isAskingLassoAi = false
+            } else {
+                isAskingLassoAi = true
+                lassoAiJob?.cancel()
+                lassoAiJob = coroutineScope.launch {
+                    val cropBmp = withContext(Dispatchers.Default) {
+                        HandwrittenNoteRecognizer.renderStrokesToBitmap(
+                            strokes = effectiveStrokes,
+                            renderer = rendererSnapshot,
+                            maxDim = 800
+                        )
+                    }
+                    val result = MathLatexRecognizer.recognizeMath(effectiveStrokes, cropBmp)
+                    if (result.latex.isNotBlank()) {
+                        lassoAiResponse = result.latex
+                        mathSolverResult = result.solution
+                    } else {
+                        val downloaded = MathLatexRecognizer.isOfflineMathModelDownloaded()
+                        if (!downloaded && !GeminiApiClient.isConfigured()) {
+                            lassoAiError = "Model matematika offline (~20 MB) sedang diunduh. Hubungkan Gemini API untuk akurasi instan."
+                            MathLatexRecognizer.downloadOfflineMathModel()
+                        } else {
+                            lassoAiError = "Tidak dapat mengenali tulisan matematika. Pastikan coretan terbaca jelas."
+                        }
+                    }
+                    isAskingLassoAi = false
+                }
             }
         } else if (!GeminiApiClient.isConfigured()) {
             isAskingLassoAi = false
@@ -2524,6 +2581,29 @@ private fun NotePaneViewport(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     if (hasAiContent) {
+                                        // 📈 Tombol Langsung Buka Grafik jika Terdeteksi Fungsi / Lingkaran
+                                        val mathFormula = proactiveMathResult?.latex?.trim() ?: ""
+                                        val isGraphable = mathFormula.isNotBlank() && MathPlotHelper.isPlottableFunction(mathFormula)
+                                        if (isGraphable) {
+                                            Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = Color(0xFF0284C7),
+                                                modifier = Modifier.clickable {
+                                                    onOpenGraph(mathFormula)
+                                                    state.lassoSelection = null
+                                                }
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                                ) {
+                                                    Icon(Icons.Filled.ShowChart, contentDescription = "Buka Grafik", tint = Color.White, modifier = Modifier.size(13.dp))
+                                                    Text("📈 Buka Grafik", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                                }
+                                            }
+                                        }
+
                                         // AI Tutor (Tombol Utama)
                                         Surface(
                                             shape = RoundedCornerShape(8.dp),
