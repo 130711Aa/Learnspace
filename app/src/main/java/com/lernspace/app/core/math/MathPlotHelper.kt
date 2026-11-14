@@ -197,7 +197,7 @@ object MathPlotHelper {
                 parts[0].trim()
             }
         }
-        return clean.trim()
+        return normalizeMathExpression(clean.trim())
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1349,11 +1349,99 @@ object MathPlotHelper {
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
+     * Normalizes implicit algebraic multiplication (e.g. "ax + 5" -> "a*x + 5", "2x" -> "2*x", "a(x)" -> "a*(x)").
+     * Preserves mathematical function names (sin, cos, tan, sqrt, log, etc.) and constants (pi, e).
+     */
+    fun normalizeMathExpression(expr: String): String {
+        if (expr.isBlank()) return expr
+        val s = expr.trim()
+
+        val reservedWords = listOf(
+            "sqrt", "cbrt", "asin", "acos", "atan", "sinh", "cosh", "tanh",
+            "sin", "cos", "tan", "sec", "csc", "cot", "log", "ln", "abs",
+            "exp", "max", "min", "pi"
+        )
+
+        val sb = StringBuilder()
+        var i = 0
+        var prevCanMul = false
+
+        fun appendMulIfNeeded() {
+            if (prevCanMul) {
+                while (sb.isNotEmpty() && sb.last().isWhitespace()) {
+                    sb.deleteCharAt(sb.length - 1)
+                }
+                sb.append('*')
+            }
+        }
+
+        while (i < s.length) {
+            val c = s[i]
+            when {
+                c.isWhitespace() -> {
+                    sb.append(c)
+                    i++
+                }
+                c in '0'..'9' || c == '.' -> {
+                    appendMulIfNeeded()
+                    while (i < s.length && (s[i] in '0'..'9' || s[i] == '.')) {
+                        sb.append(s[i])
+                        i++
+                    }
+                    prevCanMul = true
+                }
+                c == '(' -> {
+                    appendMulIfNeeded()
+                    sb.append('(')
+                    prevCanMul = false
+                    i++
+                }
+                c == ')' -> {
+                    sb.append(')')
+                    prevCanMul = true
+                    i++
+                }
+                c == '+' || c == '-' || c == '*' || c == '/' || c == '^' || c == '=' || c == ',' -> {
+                    sb.append(c)
+                    prevCanMul = false
+                    i++
+                }
+                c.isLetter() -> {
+                    val remaining = s.substring(i).lowercase(Locale.ROOT)
+                    val matchedFunc = reservedWords.firstOrNull {
+                        remaining.startsWith(it) && (remaining.length == it.length || !remaining[it.length].isLetter())
+                    }
+
+                    if (matchedFunc != null) {
+                        appendMulIfNeeded()
+                        sb.append(s.substring(i, i + matchedFunc.length))
+                        i += matchedFunc.length
+                        prevCanMul = (matchedFunc == "pi" || matchedFunc == "e")
+                    } else {
+                        // Single-letter variable or parameter (e.g. 'a', 'x', 'm', 'y')
+                        appendMulIfNeeded()
+                        sb.append(c)
+                        prevCanMul = true
+                        i++
+                    }
+                }
+                else -> {
+                    sb.append(c)
+                    prevCanMul = false
+                    i++
+                }
+            }
+        }
+        return sb.toString()
+    }
+
+    /**
      * Extracts all single-letter parameter symbols (e.g. 'a', 'b', 'c', 'k', 'm', 'r') from an equation.
      * Excludes independent variable 'x', dependent 'y', and base 'e'.
      */
     fun extractParameters(expr: String): List<Char> {
-        var clean = expr.trim()
+        val normalized = normalizeMathExpression(expr)
+        var clean = normalized.trim()
         if (clean.contains("=")) {
             val parts = clean.split("=")
             clean = if (parts[0].trim().lowercase() in listOf("y", "f(x)", "g(x)")) {
@@ -1363,31 +1451,34 @@ object MathPlotHelper {
             }
         }
         val stripped = clean.lowercase()
-            .replace("pi", " ")
             .replace("sqrt", " ")
+            .replace("cbrt", " ")
+            .replace("asin", " ")
+            .replace("acos", " ")
+            .replace("atan", " ")
+            .replace("sinh", " ")
+            .replace("cosh", " ")
+            .replace("tanh", " ")
             .replace("sin", " ")
             .replace("cos", " ")
             .replace("tan", " ")
-            .replace("csc", " ")
             .replace("sec", " ")
+            .replace("csc", " ")
             .replace("cot", " ")
             .replace("log", " ")
             .replace("ln", " ")
             .replace("abs", " ")
             .replace("exp", " ")
+            .replace("max", " ")
+            .replace("min", " ")
+            .replace("pi", " ")
 
         val allowedParams = ('a'..'z').toSet() - setOf('x', 'y', 'e')
         val found = mutableListOf<Char>()
         for (i in stripped.indices) {
             val ch = stripped[i]
-            if (ch in allowedParams) {
-                val prev = if (i > 0) stripped[i - 1] else ' '
-                val next = if (i < stripped.length - 1) stripped[i + 1] else ' '
-                if (!prev.isLetter() && !next.isLetter()) {
-                    if (ch !in found) {
-                        found.add(ch)
-                    }
-                }
+            if (ch in allowedParams && ch !in found) {
+                found.add(ch)
             }
         }
         return found.sorted()
@@ -1398,7 +1489,8 @@ object MathPlotHelper {
      */
     fun substituteParameters(expr: String, params: Map<Char, Float>): String {
         if (params.isEmpty()) return expr
-        var res = expr
+        val normalized = normalizeMathExpression(expr)
+        var res = normalized
         for ((param, value) in params) {
             val pattern = Regex("""(?<![a-zA-Z])$param(?![a-zA-Z])""")
             val valStr = if (abs(value - value.roundToInt()) < 0.001f) {

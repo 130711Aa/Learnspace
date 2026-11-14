@@ -329,4 +329,27 @@ class MathRecognitionAndSolverTest {
         assertEquals(-3f, circleHkr.centerY, 0.01f)
         assertEquals(6f, circleHkr.radius, 0.01f)
     }
+
+    @Test
+    fun testImplicitMultiplicationAndLinearParameter() {
+        // Test normalization of implicit multiplication
+        assertEquals("a*x + 5", MathPlotHelper.normalizeMathExpression("ax + 5"))
+        assertEquals("y = a*x + 5", MathPlotHelper.normalizeMathExpression("y = ax + 5"))
+        assertEquals("m*x + c", MathPlotHelper.normalizeMathExpression("mx + c"))
+        assertEquals("2*x + 3", MathPlotHelper.normalizeMathExpression("2x + 3"))
+        assertEquals("a*x^2 + b*x + c", MathPlotHelper.normalizeMathExpression("ax^2 + bx + c"))
+        assertEquals("a*sin(b*x)", MathPlotHelper.normalizeMathExpression("a sin(bx)"))
+
+        // Test parameter extraction with implicit multiplication: y = ax + 5 -> ['a']
+        val params = MathPlotHelper.extractParameters("y = ax + 5")
+        assertEquals(listOf('a'), params)
+
+        // Test substitution: ax + 5 with a=2 -> (2)*x + 5
+        val substituted = MathPlotHelper.substituteParameters("ax + 5", mapOf('a' to 2f))
+        assertEquals("(2)*x + 5", substituted)
+
+        // Test dynamic sampling of substituted linear function
+        val samples = MathPlotHelper.sampleFunctionDynamic(substituted, -5f, 5f)
+        assertTrue(samples.isNotEmpty())
+    }
 }

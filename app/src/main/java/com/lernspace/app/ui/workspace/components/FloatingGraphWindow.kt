@@ -238,7 +238,7 @@ fun FloatingGraphWindow(
         val clean = MathPlotHelper.extractFunctionBody(trimmed)
         return GraphPlotItem(
             rawEquation = trimmed,
-            displayLabel = if (clean.startsWith("y=") || clean.startsWith("f(x)")) clean else "y = $clean",
+            displayLabel = if (trimmed.contains("=") || trimmed.startsWith("f(x)")) trimmed else "y = $clean",
             color = color,
             isCircle = false,
             isVerticalLine = false,
