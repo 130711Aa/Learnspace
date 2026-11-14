@@ -2,6 +2,7 @@ package com.lernspace.app.ui.workspace
 
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.widget.Toast
 import java.io.File
 import java.util.UUID
 import androidx.activity.compose.BackHandler
@@ -72,8 +73,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -1221,6 +1224,24 @@ fun NoteEditorScreen(
 // ─────────────────────────────────────────────────────────────────────────────
 // COMPONENT: NotePaneViewport (Clean Full-Height Canvas Viewport)
 // ─────────────────────────────────────────────────────────────────────────────
+private fun cleanLatexFormula(raw: String): String {
+    var text = raw.trim()
+    if (text.startsWith("```latex")) text = text.removePrefix("```latex").trim()
+    else if (text.startsWith("```tex")) text = text.removePrefix("```tex").trim()
+    else if (text.startsWith("```")) text = text.removePrefix("```").trim()
+    if (text.endsWith("```")) text = text.removeSuffix("```").trim()
+    return text
+}
+
+private fun formatLatexForCanvas(raw: String): String {
+    val clean = cleanLatexFormula(raw)
+    return if (clean.startsWith("$") && clean.endsWith("$")) {
+        clean
+    } else {
+        "$$\n$clean\n$$"
+    }
+}
+
 private enum class LassoAiMode(val label: String) {
     AI_TUTOR("AI Tutor"),
     FORMULA("Ubah ke Rumus"),
@@ -1242,6 +1263,7 @@ private fun NotePaneViewport(
 ) {
     val context = LocalContext.current
     val view = LocalView.current
+    val clipboard = LocalClipboardManager.current
     val density = androidx.compose.ui.platform.LocalDensity.current
     val coroutineScope = rememberCoroutineScope()
     var showDeletePageDialog by remember { mutableStateOf(false) }
@@ -2325,6 +2347,7 @@ private fun NotePaneViewport(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     if (hasAiContent) {
+                                        // AI Tutor (Tombol Utama)
                                         Surface(
                                             shape = RoundedCornerShape(8.dp),
                                             color = LernspaceDark,
@@ -2338,12 +2361,13 @@ private fun NotePaneViewport(
                                                 verticalAlignment = Alignment.CenterVertically,
                                                 horizontalArrangement = Arrangement.spacedBy(3.dp)
                                             ) {
-                                                Icon(Icons.Filled.AutoAwesome, contentDescription = "Tanya AI", tint = LernspaceSurfaceCard, modifier = Modifier.size(13.dp))
-                                                Text("Tanya AI", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = LernspaceSurfaceCard)
+                                                Icon(Icons.Filled.AutoAwesome, contentDescription = "AI Tutor", tint = LernspaceSurfaceCard, modifier = Modifier.size(13.dp))
+                                                Text("AI Tutor", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = LernspaceSurfaceCard)
                                             }
                                         }
 
-                                        LassoAiMode.entries.forEach { mode ->
+                                        // Ubah ke Rumus, Cek Jawaban, Soal Serupa
+                                        LassoAiMode.entries.filter { it != LassoAiMode.AI_TUTOR }.forEach { mode ->
                                             Surface(
                                                 shape = RoundedCornerShape(8.dp),
                                                 color = LernspaceSurfaceLow,
@@ -2353,13 +2377,21 @@ private fun NotePaneViewport(
                                                     triggerLassoAi(curSel, "", mode)
                                                 }
                                             ) {
-                                                Text(
-                                                    text = mode.label,
-                                                    fontSize = 11.sp,
-                                                    fontWeight = FontWeight.Medium,
-                                                    color = LernspaceTextPrimary,
-                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                                )
+                                                Row(
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                                ) {
+                                                    if (mode == LassoAiMode.FORMULA) {
+                                                        Icon(Icons.Filled.Functions, contentDescription = null, tint = LernspaceDark, modifier = Modifier.size(12.dp))
+                                                    }
+                                                    Text(
+                                                        text = mode.label,
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Medium,
+                                                        color = LernspaceTextPrimary
+                                                    )
+                                                }
                                             }
                                         }
                                     }
@@ -2924,37 +2956,115 @@ private fun NotePaneViewport(
                     val reply = lassoAiResponse
                     val sel = state.lassoSelection
                     if (!reply.isNullOrBlank() && sel != null && !isAskingLassoAi) {
-                        Button(
-                            onClick = {
-                                val boxW = 760f
-                                val approxLines = reply.lines().sumOf { ((it.length / 44) + 1) }.coerceIn(4, 14)
-                                val boxH = (approxLines * 42f + 56f).coerceIn(220f, 480f)
-                                val insertX = sel.bounds.left.coerceAtLeast(32f)
-                                val insertY = (sel.bounds.bottom + 24f).coerceAtLeast(32f)
-                                state.pushUndoSnapshot()
-                                state.textBoxes.add(
-                                    TextBoxElement(
-                                        x = insertX,
-                                        y = insertY,
-                                        width = boxW,
-                                        height = boxH,
-                                        text = reply,
-                                        isSelected = false,
-                                        fontSize = 30f,
-                                        hasBackground = true
-                                    )
-                                )
-                                state.saveActivePageData()
-                                showLassoAiDialog = false
-                                state.lassoSelection = null
-                            },
-                            shape = RoundedCornerShape(8.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = LernspaceDark,
-                                contentColor = LernspaceSurfaceCard
-                            )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text("Sisipkan ke Kanvas")
+                            if (lassoAiMode == LassoAiMode.FORMULA) {
+                                // 1. Salin LaTeX
+                                OutlinedButton(
+                                    onClick = {
+                                        val clean = cleanLatexFormula(reply)
+                                        clipboard.setText(AnnotatedString(clean))
+                                        Toast.makeText(context, "Rumus LaTeX disalin", Toast.LENGTH_SHORT).show()
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = BorderStroke(1.dp, LernspaceBorder),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp), tint = LernspaceTextPrimary)
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Salin LaTeX", fontSize = 12.sp, color = LernspaceTextPrimary)
+                                }
+
+                                // 2. Gantikan Tulisan (In-Place Replace)
+                                Button(
+                                    onClick = {
+                                        val formatted = formatLatexForCanvas(reply)
+                                        state.pushUndoSnapshot()
+                                        // Hapus goresan tulisan tangan asli yang dilingkari
+                                        state.strokes.removeAll(sel.selectedStrokes)
+                                        // Tempatkan rumus digital di posisi bounding box tulisan
+                                        val boxW = maxOf(sel.bounds.width + 48f, 220f)
+                                        val boxH = maxOf(sel.bounds.height + 28f, 80f)
+                                        state.textBoxes.add(
+                                            TextBoxElement(
+                                                x = sel.bounds.left.coerceAtLeast(16f),
+                                                y = sel.bounds.top.coerceAtLeast(16f),
+                                                width = boxW,
+                                                height = boxH,
+                                                text = formatted,
+                                                isSelected = false,
+                                                fontSize = 32f,
+                                                hasBackground = false
+                                            )
+                                        )
+                                        state.saveActivePageData()
+                                        showLassoAiDialog = false
+                                        state.lassoSelection = null
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = LernspaceDark,
+                                        contentColor = LernspaceSurfaceCard
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(Icons.Filled.AutoFixHigh, contentDescription = null, modifier = Modifier.size(14.dp), tint = LernspaceSurfaceCard)
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Gantikan Tulisan", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            } else {
+                                // Salin Teks Penjelasan
+                                OutlinedButton(
+                                    onClick = {
+                                        clipboard.setText(AnnotatedString(reply))
+                                        Toast.makeText(context, "Teks disalin", Toast.LENGTH_SHORT).show()
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = BorderStroke(1.dp, LernspaceBorder),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp), tint = LernspaceTextPrimary)
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Salin", fontSize = 12.sp, color = LernspaceTextPrimary)
+                                }
+
+                                // Sisipkan ke Kanvas
+                                Button(
+                                    onClick = {
+                                        val boxW = 760f
+                                        val approxLines = reply.lines().sumOf { ((it.length / 44) + 1) }.coerceIn(4, 14)
+                                        val boxH = (approxLines * 42f + 56f).coerceIn(220f, 480f)
+                                        val insertX = sel.bounds.left.coerceAtLeast(32f)
+                                        val insertY = (sel.bounds.bottom + 24f).coerceAtLeast(32f)
+                                        state.pushUndoSnapshot()
+                                        state.textBoxes.add(
+                                            TextBoxElement(
+                                                x = insertX,
+                                                y = insertY,
+                                                width = boxW,
+                                                height = boxH,
+                                                text = reply,
+                                                isSelected = false,
+                                                fontSize = 30f,
+                                                hasBackground = true
+                                            )
+                                        )
+                                        state.saveActivePageData()
+                                        showLassoAiDialog = false
+                                        state.lassoSelection = null
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = LernspaceDark,
+                                        contentColor = LernspaceSurfaceCard
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                ) {
+                                    Text("Sisipkan ke Kanvas", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
                         }
                     }
                 },
@@ -2971,10 +3081,46 @@ private fun NotePaneViewport(
                             Text("Batal", color = AccentRed, fontWeight = FontWeight.Bold)
                         }
                     } else {
-                        TextButton(
-                            onClick = { showLassoAiDialog = false }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            Text("Tutup", color = LernspaceTextSecondary)
+                            val reply = lassoAiResponse
+                            val sel = state.lassoSelection
+                            if (!reply.isNullOrBlank() && sel != null && lassoAiMode == LassoAiMode.FORMULA) {
+                                TextButton(
+                                    onClick = {
+                                        val formatted = formatLatexForCanvas(reply)
+                                        val insertX = sel.bounds.left.coerceAtLeast(32f)
+                                        val insertY = (sel.bounds.bottom + 20f).coerceAtLeast(32f)
+                                        val boxW = maxOf(sel.bounds.width + 48f, 220f)
+                                        val boxH = maxOf(sel.bounds.height + 28f, 80f)
+                                        state.pushUndoSnapshot()
+                                        state.textBoxes.add(
+                                            TextBoxElement(
+                                                x = insertX,
+                                                y = insertY,
+                                                width = boxW,
+                                                height = boxH,
+                                                text = formatted,
+                                                isSelected = false,
+                                                fontSize = 30f,
+                                                hasBackground = true
+                                            )
+                                        )
+                                        state.saveActivePageData()
+                                        showLassoAiDialog = false
+                                        state.lassoSelection = null
+                                    }
+                                ) {
+                                    Text("Sisipkan di Bawah", fontSize = 12.sp, color = LernspaceTextSecondary)
+                                }
+                            }
+                            TextButton(
+                                onClick = { showLassoAiDialog = false }
+                            ) {
+                                Text("Tutup", color = LernspaceTextSecondary)
+                            }
                         }
                     }
                 },
