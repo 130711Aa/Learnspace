@@ -80,7 +80,8 @@ data class ImageElement(
     val bitmap: ImageBitmap,
     var width: Float = 260f,
     var height: Float = 200f,
-    var isSelected: Boolean = true
+    var isSelected: Boolean = true,
+    var isLocked: Boolean = false
 )
 
 /**

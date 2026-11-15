@@ -3,8 +3,10 @@ package com.lernspace.app.ui.workspace.components
 import android.graphics.Bitmap
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -13,6 +15,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -22,6 +25,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -82,6 +86,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -94,6 +99,8 @@ import com.lernspace.app.core.math.KeyPointType
 import com.lernspace.app.core.math.MathPlotData
 import com.lernspace.app.core.math.MathPlotHelper
 import com.lernspace.app.core.math.MultiPlotCurve
+import com.lernspace.app.core.math.RiemannType
+import com.lernspace.app.core.math.DefiniteIntegralData
 import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.floor
@@ -130,7 +137,12 @@ data class GraphPlotItem(
     val isVerticalLine: Boolean = false,
     val verticalLineX: Float = 0f,
     val cleanExpr: String = "",
-    val keyPoints: List<KeyPoint> = emptyList()
+    val keyPoints: List<KeyPoint> = emptyList(),
+    val hasIntegral: Boolean = false,
+    val integralLowerA: Float = 0f,
+    val integralUpperB: Float = 2f,
+    val integralRiemannType: RiemannType = RiemannType.SMOOTH,
+    val integralPartitions: Int = 12
 )
 
 /**
@@ -184,9 +196,49 @@ fun FloatingGraphWindow(
     var selectedItemId by remember { mutableStateOf<String?>(null) }
     var inputEquationText by remember { mutableStateOf("") }
 
+    // ── Definite Integral State ──
+    var showIntegral by remember { mutableStateOf(false) }
+    var integralLowerA by remember { mutableFloatStateOf(0f) }
+    var integralUpperB by remember { mutableFloatStateOf(2f) }
+    var integralRiemannType by remember { mutableStateOf(RiemannType.SMOOTH) }
+    var integralPartitions by remember { mutableFloatStateOf(10f) }
+    var inputLowerAText by remember { mutableStateOf("0") }
+    var inputUpperBText by remember { mutableStateOf("2") }
+
+    LaunchedEffect(integralLowerA) {
+        val str = MathPlotHelper.formatNumber(integralLowerA)
+        if (inputLowerAText.toFloatOrNull() != integralLowerA) {
+            inputLowerAText = str
+        }
+    }
+    LaunchedEffect(integralUpperB) {
+        val str = MathPlotHelper.formatNumber(integralUpperB)
+        if (inputUpperBText.toFloatOrNull() != integralUpperB) {
+            inputUpperBText = str
+        }
+    }
+
     // Helper to parse any raw input into a GraphPlotItem
     fun parseToItem(raw: String, color: Color): GraphPlotItem {
         val trimmed = raw.trim()
+
+        val parsedInt = MathPlotHelper.parseDefiniteIntegral(trimmed)
+        if (parsedInt != null) {
+            val clean = parsedInt.functionExpr
+            return GraphPlotItem(
+                rawEquation = "∫ $clean dx",
+                displayLabel = if (clean.startsWith("y=") || clean.startsWith("f(x)")) clean else "y = $clean",
+                color = color,
+                isCircle = false,
+                isVerticalLine = false,
+                cleanExpr = clean,
+                keyPoints = MathPlotHelper.findKeyPoints(clean, -50f, 50f),
+                hasIntegral = true,
+                integralLowerA = parsedInt.lowerBound,
+                integralUpperB = parsedInt.upperBound
+            )
+        }
+
         val circle = MathPlotHelper.parseCircle(trimmed)
         if (circle != null) {
             return GraphPlotItem(
@@ -317,13 +369,15 @@ fun FloatingGraphWindow(
         }
     }
 
+
     // ── Window Floating Position & Sizing State ──
-    var windowOffsetX by remember { mutableFloatStateOf(60f) }
-    var windowOffsetY by remember { mutableFloatStateOf(70f) }
-    var windowWidthDp by remember { mutableFloatStateOf(480f) }
-    var windowHeightDp by remember { mutableFloatStateOf(440f) }
-    var savedCustomWidthDp by remember { mutableFloatStateOf(480f) }
-    var savedCustomHeightDp by remember { mutableFloatStateOf(440f) }
+    var isSidebarOpen by remember { mutableStateOf(true) }
+    var windowOffsetX by remember { mutableFloatStateOf(50f) }
+    var windowOffsetY by remember { mutableFloatStateOf(60f) }
+    var windowWidthDp by remember { mutableFloatStateOf(620f) }
+    var windowHeightDp by remember { mutableFloatStateOf(460f) }
+    var savedCustomWidthDp by remember { mutableFloatStateOf(620f) }
+    var savedCustomHeightDp by remember { mutableFloatStateOf(460f) }
 
     var isMinimized by remember { mutableStateOf(false) }
     var isExpanded by remember { mutableStateOf(false) }
@@ -332,6 +386,13 @@ fun FloatingGraphWindow(
     LaunchedEffect(equationRaw) {
         val targetEq = equationRaw.trim()
         if (targetEq.isNotBlank()) {
+            val parsedInt = MathPlotHelper.parseDefiniteIntegral(targetEq)
+            if (parsedInt != null) {
+                showIntegral = true
+                integralLowerA = parsedInt.lowerBound
+                integralUpperB = parsedInt.upperBound
+            }
+
             val existing = graphItems.firstOrNull { it.rawEquation == targetEq }
             if (existing != null) {
                 selectedItemId = existing.id
@@ -463,6 +524,100 @@ fun FloatingGraphWindow(
         val currentW = if (isExpanded) (parentWDp - 24f).coerceAtLeast(340f) else windowWidthDp
         val currentH = if (isExpanded) (parentHDp - 36f).coerceAtLeast(280f) else windowHeightDp
 
+        val insertCurrentToNote: () -> Unit = {
+            val activeIntegrals = graphItems.filter { it.isVisible && it.hasIntegral && !it.isCircle && !it.isVerticalLine }.map { item ->
+                val effExpr = getEffectiveExpr(item)
+                val res = MathPlotHelper.calculateDefiniteIntegral(effExpr, item.integralLowerA, item.integralUpperB)
+                DefiniteIntegralData(
+                    functionExpr = effExpr,
+                    displayLabel = item.displayLabel,
+                    lowerBoundA = item.integralLowerA,
+                    upperBoundB = item.integralUpperB,
+                    integralValue = res.netIntegral,
+                    totalArea = res.totalArea,
+                    colorArgb = item.color.toArgb(),
+                    riemannType = item.integralRiemannType,
+                    partitionCount = item.integralPartitions
+                )
+            }
+
+            // Compute optimal auto-framed bounds ensuring all vertices max/min, roots, and integral regions are fully visible
+            val metaCurves = graphItems.filter { it.isVisible }.map { item ->
+                val effExpr = getEffectiveExpr(item)
+                MultiPlotCurve(
+                    label = item.displayLabel,
+                    colorArgb = item.color.toArgb(),
+                    points = emptyList(),
+                    circleData = getEffectiveCircle(item),
+                    keyPoints = item.keyPoints,
+                    isVerticalLine = item.isVerticalLine,
+                    verticalLineX = item.verticalLineX
+                )
+            }
+            val optimal = MathPlotHelper.calculateOptimalSnapshotBounds(
+                curves = metaCurves,
+                circleData = activeItem?.let { getEffectiveCircle(it) },
+                definiteIntegrals = activeIntegrals,
+                targetAspect = 1600f / 1200f
+            )
+
+            // Re-sample curves across optimal bounds with high resolution (500 steps)
+            val visibleCurves = graphItems.filter { it.isVisible }.map { item ->
+                val effExpr = getEffectiveExpr(item)
+                val effCircle = getEffectiveCircle(item)
+                MultiPlotCurve(
+                    label = MathPlotHelper.formatFormulaForDisplay(
+                        if (detectedParams.isNotEmpty()) {
+                            "${item.displayLabel} (${MathPlotHelper.extractFunctionBody(effExpr)})"
+                        } else {
+                            item.displayLabel
+                        }
+                    ),
+                    colorArgb = item.color.toArgb(),
+                    points = if (item.isCircle || item.isVerticalLine) emptyList() else MathPlotHelper.sampleFunctionDynamic(
+                        effExpr,
+                        optimal.xMin,
+                        optimal.xMax,
+                        steps = 500
+                    ),
+                    circleData = effCircle,
+                    keyPoints = item.keyPoints,
+                    isVerticalLine = item.isVerticalLine,
+                    verticalLineX = item.verticalLineX
+                )
+            }
+
+            val plotData = MathPlotData(
+                functionExpression = activeItem?.let { getEffectiveExpr(it) } ?: "",
+                xMin = optimal.xMin,
+                xMax = optimal.xMax,
+                yMin = optimal.yMin,
+                yMax = optimal.yMax,
+                circleData = activeItem?.let { getEffectiveCircle(it) },
+                multiCurves = visibleCurves,
+                intersections = if (showIntersections) intersections else emptyList(),
+                isVerticalLine = activeItem?.isVerticalLine ?: false,
+                verticalLineX = activeItem?.verticalLineX ?: 0f,
+                isPiGridMode = isPiGridMode,
+                definiteIntegrals = activeIntegrals
+            )
+
+            val highResBmp = MathPlotHelper.renderGraphBitmap(
+                plotData = plotData,
+                width = 1600,
+                height = 1200,
+                isDarkTheme = isDarkTheme
+            )
+
+            val visibleEquations = mutableListOf<String>()
+            for (intData in activeIntegrals) {
+                visibleEquations.add(MathPlotHelper.formatDefiniteIntegralLatex(intData))
+            }
+            visibleEquations.addAll(graphItems.filter { it.isVisible }.map { it.rawEquation })
+
+            onInsertGraphToNote(highResBmp, visibleEquations)
+        }
+
         Surface(
             modifier = Modifier
                 .offset { IntOffset(windowOffsetX.roundToInt(), windowOffsetY.roundToInt()) }
@@ -476,7 +631,7 @@ fun FloatingGraphWindow(
             Box(modifier = Modifier.fillMaxSize()) {
                 Column(modifier = Modifier.fillMaxSize()) {
 
-                    // ── Header Bar: Title, Move Handle & Window Actions ──
+                    // ── Header Bar: Title, Aljabar Toggle, Sisipkan & Window Actions ──
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -490,11 +645,11 @@ fun FloatingGraphWindow(
                                     windowOffsetY = (windowOffsetY + dragAmount.y).coerceIn(8f, max(8f, parentH - winPxH))
                                 }
                             }
-                            .padding(horizontal = 12.dp, vertical = 7.dp),
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        // Title & Drag indicator
+                        // Title, Drag Handle & Sidebar Toggle
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -512,67 +667,46 @@ fun FloatingGraphWindow(
                                 fontSize = 13.sp,
                                 color = textPrimary
                             )
+
+                            // GeoGebra-style Algebra Sidebar Toggle Button
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = if (isSidebarOpen) Color(0xFF2563EB).copy(alpha = 0.14f) else inputBg,
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp,
+                                    if (isSidebarOpen) Color(0xFF2563EB) else borderColor
+                                ),
+                                modifier = Modifier.clickable { isSidebarOpen = !isSidebarOpen }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        Icons.AutoMirrored.Filled.ShowChart,
+                                        contentDescription = "Aljabar",
+                                        tint = if (isSidebarOpen) Color(0xFF2563EB) else textSecondary,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Text(
+                                        text = "Aljabar",
+                                        fontSize = 10.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (isSidebarOpen) Color(0xFF2563EB) else textSecondary
+                                    )
+                                }
+                            }
                         }
 
-                        // Action Controls: Sisipkan, Expand, Minimize, Close
+                        // Action Controls: Single Sisipkan Button, Expand, Minimize, Close
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            // Sisipkan snapshot to canvas
+                            // Single Unified Sisipkan button
                             Button(
-                                onClick = {
-                                    val visibleCurves = graphItems.filter { it.isVisible }.map { item ->
-                                        val effExpr = getEffectiveExpr(item)
-                                        val effCircle = getEffectiveCircle(item)
-                                        MultiPlotCurve(
-                                            label = MathPlotHelper.formatFormulaForDisplay(
-                                                if (detectedParams.isNotEmpty()) {
-                                                    "${item.displayLabel} (${MathPlotHelper.extractFunctionBody(effExpr)})"
-                                                } else {
-                                                    item.displayLabel
-                                                }
-                                            ),
-                                            colorArgb = item.color.toArgb(),
-                                            points = if (item.isCircle || item.isVerticalLine) emptyList() else MathPlotHelper.sampleFunctionDynamic(
-                                                effExpr,
-                                                centerWorldX - worldSpanX / 2f,
-                                                centerWorldX + worldSpanX / 2f,
-                                                steps = 400
-                                            ),
-                                            circleData = effCircle,
-                                            keyPoints = item.keyPoints,
-                                            isVerticalLine = item.isVerticalLine,
-                                            verticalLineX = item.verticalLineX
-                                        )
-                                    }
-
-                                    val aspect = (currentW / currentH).coerceAtLeast(0.5f)
-                                    val spanY = worldSpanX / aspect
-
-                                    val plotData = MathPlotData(
-                                        functionExpression = activeItem?.let { getEffectiveExpr(it) } ?: "",
-                                        xMin = centerWorldX - worldSpanX / 2f,
-                                        xMax = centerWorldX + worldSpanX / 2f,
-                                        yMin = centerWorldY - spanY / 2f,
-                                        yMax = centerWorldY + spanY / 2f,
-                                        circleData = activeItem?.let { getEffectiveCircle(it) },
-                                        multiCurves = visibleCurves,
-                                        intersections = if (showIntersections) intersections else emptyList(),
-                                        isVerticalLine = activeItem?.isVerticalLine ?: false,
-                                        verticalLineX = activeItem?.verticalLineX ?: 0f,
-                                        isPiGridMode = isPiGridMode
-                                    )
-
-                                    val highResBmp = MathPlotHelper.renderGraphBitmap(
-                                        plotData = plotData,
-                                        width = 1600,
-                                        height = 1200,
-                                        isDarkTheme = isDarkTheme
-                                    )
-                                    val visibleEquations = graphItems.filter { it.isVisible }.map { it.rawEquation }
-                                    onInsertGraphToNote(highResBmp, visibleEquations)
-                                },
+                                onClick = { insertCurrentToNote() },
                                 shape = RoundedCornerShape(7.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
                                 contentPadding = PaddingValues(horizontal = 9.dp, vertical = 4.dp),
@@ -624,343 +758,613 @@ fun FloatingGraphWindow(
                         }
                     }
 
-                    // ── Manual Input & Equations Management Bar ──
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        color = cardBg,
-                        border = androidx.compose.foundation.BorderStroke(0.5.dp, borderColor)
-                    ) {
-                        Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)) {
-                            // Input Field Row
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(inputBg)
-                                    .border(1.dp, borderColor, RoundedCornerShape(8.dp))
-                                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                // Formula input text field
-                                Box(modifier = Modifier.weight(1f)) {
-                                    if (inputEquationText.isEmpty()) {
-                                        Text(
-                                            text = "Ketik persamaan (cth: y = x^2 - 4 atau x^2 + y^2 = 16)...",
-                                            color = textSecondary.copy(alpha = 0.7f),
-                                            fontSize = 11.5.sp
-                                        )
-                                    }
-                                    BasicTextField(
-                                        value = inputEquationText,
-                                        onValueChange = { inputEquationText = it },
-                                        singleLine = true,
-                                        textStyle = TextStyle(
-                                            color = textPrimary,
-                                            fontSize = 12.sp,
-                                            fontFamily = FontFamily.Monospace,
-                                            fontWeight = FontWeight.Medium
-                                        ),
-                                        cursorBrush = SolidColor(Color(0xFF2563EB)),
-                                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                        keyboardActions = KeyboardActions(onDone = {
-                                            if (inputEquationText.isNotBlank()) {
-                                                val c = GEOGEBRA_PALETTE[graphItems.size % GEOGEBRA_PALETTE.size]
-                                                val item = parseToItem(inputEquationText, c)
-                                                graphItems.add(item)
-                                                selectedItemId = item.id
-                                                inputEquationText = ""
-                                            }
-                                        }),
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                }
-
-                                // Add button
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = if (inputEquationText.isNotBlank()) Color(0xFF2563EB) else cardBg,
-                                    border = androidx.compose.foundation.BorderStroke(
-                                        1.dp,
-                                        if (inputEquationText.isNotBlank()) Color(0xFF2563EB) else borderColor
-                                    ),
-                                    modifier = Modifier.clickable(enabled = inputEquationText.isNotBlank()) {
-                                        val c = GEOGEBRA_PALETTE[graphItems.size % GEOGEBRA_PALETTE.size]
-                                        val item = parseToItem(inputEquationText, c)
-                                        graphItems.add(item)
-                                        selectedItemId = item.id
-                                        inputEquationText = ""
-                                    }
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(3.dp)
-                                    ) {
-                                        Icon(
-                                            Icons.Filled.Add,
-                                            contentDescription = "Tambah",
-                                            tint = if (inputEquationText.isNotBlank()) Color.White else textSecondary,
-                                            modifier = Modifier.size(13.dp)
-                                        )
-                                        Text(
-                                            text = "Tambah",
-                                            fontSize = 10.5.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = if (inputEquationText.isNotBlank()) Color.White else textSecondary
-                                        )
-                                    }
-                                }
-                            }
-
-                            // ── Quick Math Keypad Strip (One-Tap Fast Input) ──
-                            val mathKeys = remember {
-                                listOf("x", "y", "x²", "x³", "+", "-", "·", "=", "/", "√", "sin", "cos", "tan", "(", ")", "π", "⌫", "C")
-                            }
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = 4.dp)
-                                    .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                mathKeys.forEach { key ->
-                                    Surface(
-                                        shape = RoundedCornerShape(5.dp),
-                                        color = if (key == "C" || key == "⌫") cardBg else inputBg,
-                                        border = androidx.compose.foundation.BorderStroke(
-                                            0.8.dp,
-                                            if (key == "C" || key == "⌫") borderColor else borderColor
-                                        ),
-                                        modifier = Modifier.clickable {
-                                            when (key) {
-                                                "x" -> inputEquationText += "x"
-                                                "y" -> inputEquationText += "y"
-                                                "x²" -> inputEquationText += "^2"
-                                                "x³" -> inputEquationText += "^3"
-                                                "+" -> inputEquationText += "+"
-                                                "-" -> inputEquationText += "-"
-                                                "·" -> inputEquationText += "*"
-                                                "=" -> inputEquationText += "="
-                                                "/" -> inputEquationText += "/"
-                                                "√" -> inputEquationText += "sqrt("
-                                                "sin" -> inputEquationText += "sin("
-                                                "cos" -> inputEquationText += "cos("
-                                                "tan" -> inputEquationText += "tan("
-                                                "(" -> inputEquationText += "("
-                                                ")" -> inputEquationText += ")"
-                                                "π" -> inputEquationText += "pi"
-                                                "⌫" -> if (inputEquationText.isNotEmpty()) inputEquationText = inputEquationText.dropLast(1)
-                                                "C" -> inputEquationText = ""
-                                            }
-                                        }
-                                    ) {
-                                        Text(
-                                            text = key,
-                                            fontSize = 11.sp,
-                                            fontWeight = if (key in listOf("x", "y", "x²", "x³", "π")) FontWeight.Bold else FontWeight.Medium,
-                                            color = if (key == "C") Color(0xFFDC2626) else if (key == "⌫") Color(0xFFD97706) else textPrimary,
-                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp)
-                                        )
-                                    }
-                                }
-                            }
-
-                            // Equations List Chips (Collapsible / Scrollable)
-                            if (graphItems.isNotEmpty()) {
-                                Spacer(Modifier.height(4.dp))
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .horizontalScroll(rememberScrollState()),
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    // Intersections Toggle Pill when >= 2 curves are visible
-                                    if (visibleCurvesDef.size >= 2) {
-                                        Surface(
-                                            shape = RoundedCornerShape(6.dp),
-                                            color = if (showIntersections) Color(0xFF2563EB).copy(alpha = 0.12f) else inputBg,
-                                            border = androidx.compose.foundation.BorderStroke(
-                                                1.dp,
-                                                if (showIntersections) Color(0xFF2563EB) else borderColor
-                                            ),
-                                            modifier = Modifier.clickable { showIntersections = !showIntersections }
-                                        ) {
-                                            Row(
-                                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.5.dp),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(3.dp)
-                                            ) {
-                                                Text(
-                                                    text = if (intersections.isNotEmpty()) "🎯 Potong (${intersections.size})" else "🎯 Potong",
-                                                    fontSize = 11.sp,
-                                                    fontWeight = if (showIntersections) FontWeight.Bold else FontWeight.Medium,
-                                                    color = if (showIntersections) Color(0xFF2563EB) else textSecondary
-                                                )
-                                            }
-                                        }
-                                    }
-
-                                    graphItems.forEachIndexed { index, item ->
-                                        val isSelected = item.id == selectedItemId
-                                        val chipBg = if (!item.isVisible) inputBg.copy(alpha = 0.5f) else if (isSelected) item.color.copy(alpha = 0.12f) else inputBg
-                                        val chipBorder = if (!item.isVisible) borderColor.copy(alpha = 0.6f) else item.color
-
-                                        Surface(
-                                            shape = RoundedCornerShape(6.dp),
-                                            color = chipBg,
-                                            border = androidx.compose.foundation.BorderStroke(1.dp, chipBorder),
-                                            modifier = Modifier.clickable {
-                                                graphItems[index] = item.copy(isVisible = !item.isVisible)
-                                                selectedItemId = item.id
-                                            }
-                                        ) {
-                                            Row(
-                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.5.dp),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                            ) {
-                                                // Equation text styled with curve color
-                                                Text(
-                                                    text = MathPlotHelper.formatFormulaForDisplay(item.displayLabel),
-                                                    fontSize = 11.5.sp,
-                                                    fontWeight = if (item.isVisible) FontWeight.Bold else FontWeight.Normal,
-                                                    color = if (item.isVisible) item.color else textSecondary,
-                                                    fontFamily = FontFamily.Monospace
-                                                )
-
-                                                // Delete button (✕)
-                                                Icon(
-                                                    Icons.Filled.Close,
-                                                    contentDescription = "Hapus",
-                                                    tint = textSecondary,
-                                                    modifier = Modifier
-                                                        .size(12.dp)
-                                                        .clickable {
-                                                            graphItems.removeAt(index)
-                                                            if (selectedItemId == item.id) {
-                                                                selectedItemId = graphItems.firstOrNull()?.id
-                                                            }
-                                                        }
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // ── Interactive Parameter Sliders Panel (Ala Desmos) ──
-                    if (detectedParams.isNotEmpty()) {
-                        Surface(
-                            modifier = Modifier.fillMaxWidth(),
-                            color = cardBg,
-                            border = androidx.compose.foundation.BorderStroke(0.5.dp, borderColor)
+                    // ── Main Workspace Body: Left Sidebar + Right Canvas ──
+                    Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        // ── Left Collapsible Sidebar (GeoGebra Algebra Pane) ──
+                        AnimatedVisibility(
+                            visible = isSidebarOpen,
+                            enter = expandHorizontally(),
+                            exit = shrinkHorizontally()
                         ) {
-                            Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
+                            Surface(
+                                modifier = Modifier
+                                    .width(280.dp)
+                                    .fillMaxHeight(),
+                                color = cardBg,
+                                border = androidx.compose.foundation.BorderStroke(0.5.dp, borderColor)
+                            ) {
+                                Column(modifier = Modifier.fillMaxSize()) {
+                                    // Sidebar Header Tools (Title, Intersections toggle)
                                     Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            text = "🎛️ Parameter Interaktif",
+                                            text = "Persamaan (${graphItems.size})",
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Bold,
-                                            color = textPrimary
+                                            color = textSecondary
                                         )
-                                        Text(
-                                            text = "(${detectedParams.size})",
-                                            fontSize = 10.5.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            color = Color(0xFF2563EB)
-                                        )
-                                    }
-                                }
-                                Spacer(Modifier.height(3.dp))
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .horizontalScroll(rememberScrollState()),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    detectedParams.forEach { param ->
-                                        val curVal = paramValues[param] ?: if (param in listOf('a', 'b', 'm')) 1f else if (param == 'r') 3f else 0f
-                                        val minVal = if (param == 'r') 0.5f else -10f
-                                        val maxVal = if (param == 'r') 15f else 10f
 
-                                        Surface(
-                                            shape = RoundedCornerShape(8.dp),
-                                            color = inputBg,
-                                            border = androidx.compose.foundation.BorderStroke(1.dp, borderColor),
-                                            modifier = Modifier.width(180.dp)
-                                        ) {
-                                            Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)) {
-                                                Row(
-                                                    modifier = Modifier.fillMaxWidth(),
-                                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                                    verticalAlignment = Alignment.CenterVertically
-                                                ) {
+                                        if (visibleCurvesDef.size >= 2) {
+                                            Surface(
+                                                shape = RoundedCornerShape(5.dp),
+                                                color = if (showIntersections) Color(0xFF2563EB).copy(alpha = 0.15f) else inputBg,
+                                                border = androidx.compose.foundation.BorderStroke(
+                                                    0.8.dp,
+                                                    if (showIntersections) Color(0xFF2563EB) else borderColor
+                                                ),
+                                                modifier = Modifier.clickable { showIntersections = !showIntersections }
+                                            ) {
+                                                Text(
+                                                    text = if (intersections.isNotEmpty()) "🎯 Titik Potong (${intersections.size})" else "🎯 Potong",
+                                                    fontSize = 10.sp,
+                                                    fontWeight = if (showIntersections) FontWeight.Bold else FontWeight.Medium,
+                                                    color = if (showIntersections) Color(0xFF2563EB) else textSecondary,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    // Scrollable Equations List with Per-Item Integral Controls
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .fillMaxWidth()
+                                            .verticalScroll(rememberScrollState())
+                                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        if (graphItems.isEmpty()) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(vertical = 24.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    text = "Belum ada persamaan.\nKetik persamaan di bawah.",
+                                                    fontSize = 11.5.sp,
+                                                    color = textSecondary.copy(alpha = 0.7f),
+                                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                                )
+                                            }
+                                        }
+
+                                        // Parameter Sliders inside Sidebar if any exist
+                                        if (detectedParams.isNotEmpty()) {
+                                            Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = inputBg,
+                                                border = androidx.compose.foundation.BorderStroke(0.8.dp, borderColor),
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Column(modifier = Modifier.padding(8.dp)) {
                                                     Text(
-                                                        text = "$param = ${MathPlotHelper.formatNumber(curVal)}",
-                                                        fontSize = 11.5.sp,
+                                                        text = "🎛️ Parameter Slider",
+                                                        fontSize = 10.5.sp,
                                                         fontWeight = FontWeight.Bold,
-                                                        fontFamily = FontFamily.Monospace,
                                                         color = Color(0xFF2563EB)
                                                     )
-                                                    Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                                                        Surface(
-                                                            shape = RoundedCornerShape(4.dp),
-                                                            color = cardBg,
-                                                            border = androidx.compose.foundation.BorderStroke(0.5.dp, borderColor),
-                                                            modifier = Modifier.clickable {
-                                                                paramValues[param] = (curVal - 0.5f).coerceIn(minVal, maxVal)
-                                                            }
+                                                    Spacer(Modifier.height(4.dp))
+                                                    detectedParams.forEach { param ->
+                                                        val curVal = paramValues[param] ?: if (param in listOf('a', 'b', 'm')) 1f else if (param == 'r') 3f else 0f
+                                                        val minVal = if (param == 'r') 0.5f else -10f
+                                                        val maxVal = if (param == 'r') 15f else 10f
+                                                        Row(
+                                                            modifier = Modifier.fillMaxWidth(),
+                                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                                            verticalAlignment = Alignment.CenterVertically
                                                         ) {
-                                                            Text("-", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = textPrimary, modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp))
+                                                            Text(
+                                                                text = "$param = ${MathPlotHelper.formatNumber(curVal)}",
+                                                                fontSize = 11.sp,
+                                                                fontWeight = FontWeight.Bold,
+                                                                fontFamily = FontFamily.Monospace,
+                                                                color = textPrimary
+                                                            )
+                                                            Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                                                                Surface(
+                                                                    shape = RoundedCornerShape(4.dp),
+                                                                    color = cardBg,
+                                                                    border = androidx.compose.foundation.BorderStroke(0.5.dp, borderColor),
+                                                                    modifier = Modifier.clickable {
+                                                                        paramValues[param] = (curVal - 0.5f).coerceIn(minVal, maxVal)
+                                                                    }
+                                                                ) {
+                                                                    Text("-", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = textPrimary, modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp))
+                                                                }
+                                                                Surface(
+                                                                    shape = RoundedCornerShape(4.dp),
+                                                                    color = cardBg,
+                                                                    border = androidx.compose.foundation.BorderStroke(0.5.dp, borderColor),
+                                                                    modifier = Modifier.clickable {
+                                                                        paramValues[param] = (curVal + 0.5f).coerceIn(minVal, maxVal)
+                                                                    }
+                                                                ) {
+                                                                    Text("+", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = textPrimary, modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp))
+                                                                }
+                                                            }
                                                         }
-                                                        Surface(
-                                                            shape = RoundedCornerShape(4.dp),
-                                                            color = cardBg,
-                                                            border = androidx.compose.foundation.BorderStroke(0.5.dp, borderColor),
-                                                            modifier = Modifier.clickable {
-                                                                paramValues[param] = (curVal + 0.5f).coerceIn(minVal, maxVal)
-                                                            }
+                                                        androidx.compose.material3.Slider(
+                                                            value = curVal,
+                                                            onValueChange = { newVal ->
+                                                                paramValues[param] = ((newVal * 10f).roundToInt() / 10f).coerceIn(minVal, maxVal)
+                                                            },
+                                                            valueRange = minVal..maxVal,
+                                                            modifier = Modifier.height(24.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        // Function Cards List
+                                        graphItems.forEachIndexed { index, item ->
+                                            val isSelected = item.id == selectedItemId
+                                            Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = inputBg,
+                                                border = androidx.compose.foundation.BorderStroke(
+                                                    if (isSelected) 1.5.dp else 0.8.dp,
+                                                    if (isSelected) item.color else borderColor
+                                                ),
+                                                modifier = Modifier.fillMaxWidth().clickable {
+                                                    selectedItemId = item.id
+                                                }
+                                            ) {
+                                                Column(modifier = Modifier.padding(8.dp)) {
+                                                    // Header of Card: Dot, Formula text, Integral Toggle & Delete
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.SpaceBetween
+                                                    ) {
+                                                        Row(
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                            modifier = Modifier.weight(1f)
                                                         ) {
-                                                            Text("+", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = textPrimary, modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp))
+                                                            // Visibility Dot
+                                                            Surface(
+                                                                shape = CircleShape,
+                                                                color = if (item.isVisible) item.color else textSecondary.copy(alpha = 0.3f),
+                                                                border = androidx.compose.foundation.BorderStroke(
+                                                                    1.dp,
+                                                                    if (item.isVisible) item.color else textSecondary
+                                                                ),
+                                                                modifier = Modifier
+                                                                    .size(14.dp)
+                                                                    .clickable {
+                                                                        graphItems[index] = item.copy(isVisible = !item.isVisible)
+                                                                    }
+                                                            ) {}
+
+                                                            // Formula Text
+                                                            Text(
+                                                                text = MathPlotHelper.formatFormulaForDisplay(item.displayLabel),
+                                                                fontSize = 12.sp,
+                                                                fontWeight = FontWeight.Bold,
+                                                                fontFamily = FontFamily.Monospace,
+                                                                color = if (item.isVisible) item.color else textSecondary,
+                                                                maxLines = 2,
+                                                                overflow = TextOverflow.Ellipsis
+                                                            )
+                                                        }
+
+                                                        // Controls: Toggle Integral & Delete
+                                                        Row(
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                        ) {
+                                                            if (!item.isCircle && !item.isVerticalLine) {
+                                                                Surface(
+                                                                    shape = RoundedCornerShape(4.dp),
+                                                                    color = if (item.hasIntegral) item.color.copy(alpha = 0.15f) else cardBg,
+                                                                    border = androidx.compose.foundation.BorderStroke(
+                                                                        0.8.dp,
+                                                                        if (item.hasIntegral) item.color else borderColor
+                                                                    ),
+                                                                    modifier = Modifier.clickable {
+                                                                        graphItems[index] = item.copy(hasIntegral = !item.hasIntegral)
+                                                                    }
+                                                                ) {
+                                                                    Text(
+                                                                        text = "∫",
+                                                                        fontSize = 11.5.sp,
+                                                                        fontWeight = FontWeight.Bold,
+                                                                        color = if (item.hasIntegral) item.color else textSecondary,
+                                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+                                                                    )
+                                                                }
+                                                            }
+
+                                                            // Delete ✕
+                                                            Icon(
+                                                                Icons.Filled.Close,
+                                                                contentDescription = "Hapus",
+                                                                tint = textSecondary,
+                                                                modifier = Modifier
+                                                                    .size(15.dp)
+                                                                    .clickable {
+                                                                        graphItems.removeAt(index)
+                                                                        if (selectedItemId == item.id) {
+                                                                            selectedItemId = graphItems.firstOrNull()?.id
+                                                                        }
+                                                                    }
+                                                            )
+                                                        }
+                                                    }
+
+                                                    // ── Definite Integral Sub-Panel for this specific function ──
+                                                    if (item.hasIntegral && !item.isCircle && !item.isVerticalLine) {
+                                                        val effExpr = getEffectiveExpr(item)
+                                                        val intResult = remember(effExpr, item.integralLowerA, item.integralUpperB) {
+                                                            MathPlotHelper.calculateDefiniteIntegral(effExpr, item.integralLowerA, item.integralUpperB)
+                                                        }
+
+                                                        Spacer(Modifier.height(6.dp))
+                                                        Surface(
+                                                            shape = RoundedCornerShape(6.dp),
+                                                            color = item.color.copy(alpha = 0.08f),
+                                                            border = androidx.compose.foundation.BorderStroke(0.8.dp, item.color.copy(alpha = 0.35f)),
+                                                            modifier = Modifier.fillMaxWidth()
+                                                        ) {
+                                                            Column(modifier = Modifier.padding(6.dp)) {
+                                                                // Evaluated result label
+                                                                Row(
+                                                                    modifier = Modifier.fillMaxWidth(),
+                                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                                    verticalAlignment = Alignment.CenterVertically
+                                                                ) {
+                                                                    Text(
+                                                                        text = "∫ f(x) dx",
+                                                                        fontSize = 10.5.sp,
+                                                                        fontWeight = FontWeight.Bold,
+                                                                        color = item.color
+                                                                    )
+                                                                    Text(
+                                                                        text = "= ${MathPlotHelper.formatNumber(intResult.netIntegral.toFloat())}",
+                                                                        fontSize = 11.sp,
+                                                                        fontWeight = FontWeight.Bold,
+                                                                        fontFamily = FontFamily.Monospace,
+                                                                        color = item.color
+                                                                    )
+                                                                }
+
+                                                                Spacer(Modifier.height(4.dp))
+
+                                                                // Bounds Row: a and b manual input + steppers
+                                                                Row(
+                                                                    modifier = Modifier.fillMaxWidth(),
+                                                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                                                    verticalAlignment = Alignment.CenterVertically
+                                                                ) {
+                                                                    // Batas Bawah a
+                                                                    var rawAText by remember(item.id, item.integralLowerA) {
+                                                                        mutableStateOf(MathPlotHelper.formatNumber(item.integralLowerA))
+                                                                    }
+                                                                    Surface(
+                                                                        shape = RoundedCornerShape(5.dp),
+                                                                        color = cardBg,
+                                                                        border = androidx.compose.foundation.BorderStroke(0.8.dp, borderColor),
+                                                                        modifier = Modifier.weight(1f)
+                                                                    ) {
+                                                                        Row(
+                                                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                                                                            verticalAlignment = Alignment.CenterVertically
+                                                                        ) {
+                                                                            Text("a=", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = textSecondary)
+                                                                            BasicTextField(
+                                                                                value = rawAText,
+                                                                                onValueChange = { newVal ->
+                                                                                    val clean = newVal.trim()
+                                                                                    if (clean.isEmpty() || clean == "-" || clean.matches(Regex("""^-?\d*\.?\d*$"""))) {
+                                                                                        rawAText = clean
+                                                                                        clean.toFloatOrNull()?.let { newA ->
+                                                                                            graphItems[index] = item.copy(integralLowerA = newA)
+                                                                                        }
+                                                                                    }
+                                                                                },
+                                                                                textStyle = TextStyle(fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = textPrimary, fontFamily = FontFamily.Monospace),
+                                                                                singleLine = true,
+                                                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                                                                modifier = Modifier.weight(1f).padding(horizontal = 2.dp)
+                                                                            )
+                                                                            Row(horizontalArrangement = Arrangement.spacedBy(1.dp)) {
+                                                                                Text(
+                                                                                    "-",
+                                                                                    fontSize = 10.sp,
+                                                                                    fontWeight = FontWeight.Bold,
+                                                                                    color = textPrimary,
+                                                                                    modifier = Modifier.clickable {
+                                                                                        val newA = ((item.integralLowerA - 0.5f) * 10f).roundToInt() / 10f
+                                                                                        rawAText = MathPlotHelper.formatNumber(newA)
+                                                                                        graphItems[index] = item.copy(integralLowerA = newA)
+                                                                                    }.padding(horizontal = 3.dp)
+                                                                                )
+                                                                                Text(
+                                                                                    "+",
+                                                                                    fontSize = 10.sp,
+                                                                                    fontWeight = FontWeight.Bold,
+                                                                                    color = textPrimary,
+                                                                                    modifier = Modifier.clickable {
+                                                                                        val newA = ((item.integralLowerA + 0.5f) * 10f).roundToInt() / 10f
+                                                                                        rawAText = MathPlotHelper.formatNumber(newA)
+                                                                                        graphItems[index] = item.copy(integralLowerA = newA)
+                                                                                    }.padding(horizontal = 3.dp)
+                                                                                )
+                                                                            }
+                                                                        }
+                                                                    }
+
+                                                                    // Batas Atas b
+                                                                    var rawBText by remember(item.id, item.integralUpperB) {
+                                                                        mutableStateOf(MathPlotHelper.formatNumber(item.integralUpperB))
+                                                                    }
+                                                                    Surface(
+                                                                        shape = RoundedCornerShape(5.dp),
+                                                                        color = cardBg,
+                                                                        border = androidx.compose.foundation.BorderStroke(0.8.dp, borderColor),
+                                                                        modifier = Modifier.weight(1f)
+                                                                    ) {
+                                                                        Row(
+                                                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                                                                            verticalAlignment = Alignment.CenterVertically
+                                                                        ) {
+                                                                            Text("b=", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = textSecondary)
+                                                                            BasicTextField(
+                                                                                value = rawBText,
+                                                                                onValueChange = { newVal ->
+                                                                                    val clean = newVal.trim()
+                                                                                    if (clean.isEmpty() || clean == "-" || clean.matches(Regex("""^-?\d*\.?\d*$"""))) {
+                                                                                        rawBText = clean
+                                                                                        clean.toFloatOrNull()?.let { newB ->
+                                                                                            graphItems[index] = item.copy(integralUpperB = newB)
+                                                                                        }
+                                                                                    }
+                                                                                },
+                                                                                textStyle = TextStyle(fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = textPrimary, fontFamily = FontFamily.Monospace),
+                                                                                singleLine = true,
+                                                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                                                                modifier = Modifier.weight(1f).padding(horizontal = 2.dp)
+                                                                            )
+                                                                            Row(horizontalArrangement = Arrangement.spacedBy(1.dp)) {
+                                                                                Text(
+                                                                                    "-",
+                                                                                    fontSize = 10.sp,
+                                                                                    fontWeight = FontWeight.Bold,
+                                                                                    color = textPrimary,
+                                                                                    modifier = Modifier.clickable {
+                                                                                        val newB = ((item.integralUpperB - 0.5f) * 10f).roundToInt() / 10f
+                                                                                        rawBText = MathPlotHelper.formatNumber(newB)
+                                                                                        graphItems[index] = item.copy(integralUpperB = newB)
+                                                                                    }.padding(horizontal = 3.dp)
+                                                                                )
+                                                                                Text(
+                                                                                    "+",
+                                                                                    fontSize = 10.sp,
+                                                                                    fontWeight = FontWeight.Bold,
+                                                                                    color = textPrimary,
+                                                                                    modifier = Modifier.clickable {
+                                                                                        val newB = ((item.integralUpperB + 0.5f) * 10f).roundToInt() / 10f
+                                                                                        rawBText = MathPlotHelper.formatNumber(newB)
+                                                                                        graphItems[index] = item.copy(integralUpperB = newB)
+                                                                                    }.padding(horizontal = 3.dp)
+                                                                                )
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+
+                                                                // Quick Presets Row
+                                                                Spacer(Modifier.height(3.dp))
+                                                                Row(
+                                                                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                                                                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                                                    verticalAlignment = Alignment.CenterVertically
+                                                                ) {
+                                                                    listOf(
+                                                                        Pair(0f, 1f),
+                                                                        Pair(0f, 2f),
+                                                                        Pair(-1f, 1f),
+                                                                        Pair(-2f, 2f)
+                                                                    ).forEach { (pa, pb) ->
+                                                                        val isCur = abs(item.integralLowerA - pa) < 0.05f && abs(item.integralUpperB - pb) < 0.05f
+                                                                        Surface(
+                                                                            shape = RoundedCornerShape(4.dp),
+                                                                            color = if (isCur) item.color.copy(alpha = 0.25f) else cardBg,
+                                                                            border = androidx.compose.foundation.BorderStroke(0.5.dp, borderColor),
+                                                                            modifier = Modifier.clickable {
+                                                                                graphItems[index] = item.copy(integralLowerA = pa, integralUpperB = pb)
+                                                                            }
+                                                                        ) {
+                                                                            Text(
+                                                                                text = "[${MathPlotHelper.formatNumber(pa)}, ${MathPlotHelper.formatNumber(pb)}]",
+                                                                                fontSize = 9.sp,
+                                                                                fontWeight = FontWeight.Medium,
+                                                                                color = textPrimary,
+                                                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.5.dp)
+                                                                            )
+                                                                        }
+                                                                    }
+                                                                }
+
+                                                                // Riemann Type selector (Smooth vs Numerical)
+                                                                Spacer(Modifier.height(3.dp))
+                                                                Row(
+                                                                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                                                                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                                                    verticalAlignment = Alignment.CenterVertically
+                                                                ) {
+                                                                    RiemannType.values().forEach { rType ->
+                                                                        val isSel = item.integralRiemannType == rType
+                                                                        Surface(
+                                                                            shape = RoundedCornerShape(4.dp),
+                                                                            color = if (isSel) item.color else cardBg,
+                                                                            border = androidx.compose.foundation.BorderStroke(0.5.dp, if (isSel) item.color else borderColor),
+                                                                            modifier = Modifier.clickable {
+                                                                                graphItems[index] = item.copy(integralRiemannType = rType)
+                                                                            }
+                                                                        ) {
+                                                                            Text(
+                                                                                text = rType.label,
+                                                                                fontSize = 8.5.sp,
+                                                                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
+                                                                                color = if (isSel) Color.White else textPrimary,
+                                                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.5.dp)
+                                                                            )
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
                                                         }
                                                     }
                                                 }
-                                                androidx.compose.material3.Slider(
-                                                    value = curVal,
-                                                    onValueChange = { newVal ->
-                                                        paramValues[param] = ((newVal * 10f).roundToInt() / 10f).coerceIn(minVal, maxVal)
-                                                    },
-                                                    valueRange = minVal..maxVal,
-                                                    modifier = Modifier.height(26.dp)
-                                                )
+                                            }
+                                        }
+                                    }
+
+                                    // ── Bottom Input Field & Quick Math Keypad Strip ──
+                                    Surface(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        color = cardBg,
+                                        border = androidx.compose.foundation.BorderStroke(0.5.dp, borderColor)
+                                    ) {
+                                        Column(modifier = Modifier.padding(6.dp)) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clip(RoundedCornerShape(6.dp))
+                                                    .background(inputBg)
+                                                    .border(1.dp, borderColor, RoundedCornerShape(6.dp))
+                                                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Box(modifier = Modifier.weight(1f)) {
+                                                    if (inputEquationText.isEmpty()) {
+                                                        Text(
+                                                            text = "+ Input persamaan...",
+                                                            color = textSecondary.copy(alpha = 0.7f),
+                                                            fontSize = 11.sp
+                                                        )
+                                                    }
+                                                    BasicTextField(
+                                                        value = inputEquationText,
+                                                        onValueChange = { inputEquationText = it },
+                                                        singleLine = true,
+                                                        textStyle = TextStyle(
+                                                            color = textPrimary,
+                                                            fontSize = 11.5.sp,
+                                                            fontFamily = FontFamily.Monospace,
+                                                            fontWeight = FontWeight.Medium
+                                                        ),
+                                                        cursorBrush = SolidColor(Color(0xFF2563EB)),
+                                                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                                        keyboardActions = KeyboardActions(onDone = {
+                                                            if (inputEquationText.isNotBlank()) {
+                                                                val c = GEOGEBRA_PALETTE[graphItems.size % GEOGEBRA_PALETTE.size]
+                                                                val newItem = parseToItem(inputEquationText, c)
+                                                                graphItems.add(newItem)
+                                                                selectedItemId = newItem.id
+                                                                inputEquationText = ""
+                                                            }
+                                                        }),
+                                                        modifier = Modifier.fillMaxWidth()
+                                                    )
+                                                }
+
+                                                // Add (+) button
+                                                Surface(
+                                                    shape = RoundedCornerShape(5.dp),
+                                                    color = if (inputEquationText.isNotBlank()) Color(0xFF2563EB) else cardBg,
+                                                    border = androidx.compose.foundation.BorderStroke(
+                                                        0.8.dp,
+                                                        if (inputEquationText.isNotBlank()) Color(0xFF2563EB) else borderColor
+                                                    ),
+                                                    modifier = Modifier.clickable(enabled = inputEquationText.isNotBlank()) {
+                                                        val c = GEOGEBRA_PALETTE[graphItems.size % GEOGEBRA_PALETTE.size]
+                                                        val newItem = parseToItem(inputEquationText, c)
+                                                        graphItems.add(newItem)
+                                                        selectedItemId = newItem.id
+                                                        inputEquationText = ""
+                                                    }
+                                                ) {
+                                                    Icon(
+                                                        Icons.Filled.Add,
+                                                        contentDescription = "Tambah",
+                                                        tint = if (inputEquationText.isNotBlank()) Color.White else textSecondary,
+                                                        modifier = Modifier.padding(3.dp).size(14.dp)
+                                                    )
+                                                }
+                                            }
+
+                                            // Quick Math Keypad Strip
+                                            val mathKeys = remember {
+                                                listOf("x", "y", "x²", "x³", "+", "-", "·", "=", "/", "√", "sin", "cos", "(", ")", "π", "⌫", "C")
+                                            }
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(top = 4.dp)
+                                                    .horizontalScroll(rememberScrollState()),
+                                                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                mathKeys.forEach { key ->
+                                                    Surface(
+                                                        shape = RoundedCornerShape(4.dp),
+                                                        color = if (key == "C" || key == "⌫") cardBg else inputBg,
+                                                        border = androidx.compose.foundation.BorderStroke(0.6.dp, borderColor),
+                                                        modifier = Modifier.clickable {
+                                                            when (key) {
+                                                                "x" -> inputEquationText += "x"
+                                                                "y" -> inputEquationText += "y"
+                                                                "x²" -> inputEquationText += "^2"
+                                                                "x³" -> inputEquationText += "^3"
+                                                                "+" -> inputEquationText += "+"
+                                                                "-" -> inputEquationText += "-"
+                                                                "·" -> inputEquationText += "*"
+                                                                "=" -> inputEquationText += "="
+                                                                "/" -> inputEquationText += "/"
+                                                                "√" -> inputEquationText += "sqrt("
+                                                                "sin" -> inputEquationText += "sin("
+                                                                "cos" -> inputEquationText += "cos("
+                                                                "(" -> inputEquationText += "("
+                                                                ")" -> inputEquationText += ")"
+                                                                "π" -> inputEquationText += "pi"
+                                                                "⌫" -> if (inputEquationText.isNotEmpty()) inputEquationText = inputEquationText.dropLast(1)
+                                                                "C" -> inputEquationText = ""
+                                                            }
+                                                        }
+                                                    ) {
+                                                        Text(
+                                                            text = key,
+                                                            fontSize = 10.sp,
+                                                            fontWeight = if (key in listOf("x", "y", "x²", "x³", "π")) FontWeight.Bold else FontWeight.Medium,
+                                                            color = if (key == "C") Color(0xFFDC2626) else if (key == "⌫") Color(0xFFD97706) else textPrimary,
+                                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                        )
+                                                    }
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
                         }
-                    }
 
-                    // ── Cartesian Graph Viewport Area (Strictly Clipped) ──
-                    BoxWithConstraints(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth()
-                            .clipToBounds() // CRITICAL: strictly clips viewport so graph lines NEVER bleed through header
-                    ) {
+                        // ── Cartesian Graph Viewport Area (Strictly Clipped) ──
+                        BoxWithConstraints(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .clipToBounds() // CRITICAL: strictly clips viewport so graph lines NEVER bleed through header
+                        ) {
                         val viewWidth = constraints.maxWidth.toFloat().coerceAtLeast(100f)
                         val viewHeight = constraints.maxHeight.toFloat().coerceAtLeast(100f)
                         val aspectRatio = (viewWidth / viewHeight).coerceAtLeast(0.1f)
@@ -1091,6 +1495,127 @@ fun FloatingGraphWindow(
                                         nativeCanvas.drawText(MathPlotHelper.formatNumber(ly), labelX, sy + 6f, yTextPaint)
                                     }
                                     ly += gridStepY
+                                }
+
+                                // 3.5 Draw Definite Integral Shading for All Active Functions simultaneously on Canvas
+                                val activeIntegralItems = graphItems.filter { it.isVisible && it.hasIntegral && !it.isCircle && !it.isVerticalLine }
+                                for (intItem in activeIntegralItems) {
+                                    val effExpr = getEffectiveExpr(intItem)
+                                    val a = intItem.integralLowerA
+                                    val b = intItem.integralUpperB
+                                    val xStart = minOf(a, b)
+                                    val xEnd = maxOf(a, b)
+                                    val compiled = MathPlotHelper.compile(effExpr)
+
+                                    if (compiled != null && xEnd - xStart > 1e-4f) {
+                                        val intColor = intItem.color
+                                        val shadeColor = intColor.copy(alpha = 0.28f)
+                                        val syZero = toScreenY(0f)
+
+                                        if (intItem.integralRiemannType == RiemannType.SMOOTH) {
+                                            val shadePath = Path()
+                                            shadePath.moveTo(toScreenX(xStart), syZero)
+                                            val sampleSteps = 150
+                                            val dx = (xEnd - xStart) / sampleSteps
+                                            for (step in 0..sampleSteps) {
+                                                val curX = xStart + step * dx
+                                                val curY = compiled.eval(curX.toDouble()).takeIf { !it.isNaN() && !it.isInfinite() }?.toFloat() ?: 0f
+                                                shadePath.lineTo(toScreenX(curX), toScreenY(curY))
+                                            }
+                                            shadePath.lineTo(toScreenX(xEnd), syZero)
+                                            shadePath.close()
+                                            drawPath(shadePath, color = shadeColor)
+                                        } else {
+                                            val n = intItem.integralPartitions.coerceIn(2, 60)
+                                            val dx = (xEnd - xStart) / n
+                                            for (i in 0 until n) {
+                                                val x0 = xStart + i * dx
+                                                val x1 = x0 + dx
+                                                when (intItem.integralRiemannType) {
+                                                    RiemannType.TRAPEZOIDAL -> {
+                                                        val y0 = compiled.eval(x0.toDouble()).takeIf { !it.isNaN() && !it.isInfinite() }?.toFloat() ?: 0f
+                                                        val y1 = compiled.eval(x1.toDouble()).takeIf { !it.isNaN() && !it.isInfinite() }?.toFloat() ?: 0f
+                                                        val trapPath = Path().apply {
+                                                            moveTo(toScreenX(x0), syZero)
+                                                            lineTo(toScreenX(x0), toScreenY(y0))
+                                                            lineTo(toScreenX(x1), toScreenY(y1))
+                                                            lineTo(toScreenX(x1), syZero)
+                                                            close()
+                                                        }
+                                                        drawPath(trapPath, color = shadeColor)
+                                                        drawPath(trapPath, color = intColor.copy(alpha = 0.5f), style = Stroke(width = 1.2f))
+                                                    }
+                                                    else -> {
+                                                        val evalX = when (intItem.integralRiemannType) {
+                                                            RiemannType.LEFT -> x0
+                                                            RiemannType.RIGHT -> x1
+                                                            else -> (x0 + x1) / 2f
+                                                        }
+                                                        val yH = compiled.eval(evalX.toDouble()).takeIf { !it.isNaN() && !it.isInfinite() }?.toFloat() ?: 0f
+                                                        val sLeft = toScreenX(x0)
+                                                        val sRight = toScreenX(x1)
+                                                        val sTop = minOf(syZero, toScreenY(yH))
+                                                        val sHeight = abs(syZero - toScreenY(yH))
+                                                        drawRect(
+                                                            color = shadeColor,
+                                                            topLeft = Offset(sLeft, sTop),
+                                                            size = androidx.compose.ui.geometry.Size(sRight - sLeft, sHeight)
+                                                        )
+                                                        drawRect(
+                                                            color = intColor.copy(alpha = 0.5f),
+                                                            topLeft = Offset(sLeft, sTop),
+                                                            size = androidx.compose.ui.geometry.Size(sRight - sLeft, sHeight),
+                                                            style = Stroke(width = 1.2f)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        // Dashed Boundary lines at a and b
+                                        val ya = compiled.eval(a.toDouble()).takeIf { !it.isNaN() && !it.isInfinite() }?.toFloat() ?: 0f
+                                        val yb = compiled.eval(b.toDouble()).takeIf { !it.isNaN() && !it.isInfinite() }?.toFloat() ?: 0f
+                                        val sxa = toScreenX(a)
+                                        val sxb = toScreenX(b)
+
+                                        drawLine(
+                                            color = intColor,
+                                            start = Offset(sxa, syZero),
+                                            end = Offset(sxa, toScreenY(ya)),
+                                            strokeWidth = 2.2f,
+                                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f), 0f)
+                                        )
+                                        drawLine(
+                                            color = intColor,
+                                            start = Offset(sxb, syZero),
+                                            end = Offset(sxb, toScreenY(yb)),
+                                            strokeWidth = 2.2f,
+                                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f), 0f)
+                                        )
+
+                                        drawCircle(color = intColor, radius = 4.5f, center = Offset(sxa, toScreenY(ya)))
+                                        drawCircle(color = Color.White, radius = 4.5f, center = Offset(sxa, toScreenY(ya)), style = Stroke(width = 1.5f))
+                                        drawCircle(color = intColor, radius = 4.5f, center = Offset(sxb, toScreenY(yb)))
+                                        drawCircle(color = Color.White, radius = 4.5f, center = Offset(sxb, toScreenY(yb)), style = Stroke(width = 1.5f))
+
+                                        // GeoGebra-style evaluated label on canvas (e.g. ∫ = 1.83)
+                                        val intRes = MathPlotHelper.calculateDefiniteIntegral(effExpr, a, b)
+                                        val labelVal = "∫ = ${MathPlotHelper.formatNumber(intRes.netIntegral.toFloat())}"
+                                        val valPaint = android.graphics.Paint().apply {
+                                            color = android.graphics.Color.rgb(
+                                                (intColor.red * 255).toInt(),
+                                                (intColor.green * 255).toInt(),
+                                                (intColor.blue * 255).toInt()
+                                            )
+                                            textSize = 20f
+                                            isFakeBoldText = true
+                                            isAntiAlias = true
+                                            textAlign = android.graphics.Paint.Align.CENTER
+                                        }
+                                        val midX = (sxa + sxb) / 2f
+                                        val midY = (toScreenY(0f) + toScreenY((ya + yb) / 2f)) / 2f
+                                        nativeCanvas.drawText(labelVal, midX, midY.coerceIn(24f, viewHeight - 24f), valPaint)
+                                    }
                                 }
 
                                 // 4. Draw All Visible Functions, Lines, and Circles Simultaneously on the Same Plane
@@ -1293,6 +1818,7 @@ fun FloatingGraphWindow(
                         }
                     }
                 }
+            }
 
                 // ── 3. Freeform Continuous Corner Drag-Resize Handle (Bottom-Right) ──
                 Box(

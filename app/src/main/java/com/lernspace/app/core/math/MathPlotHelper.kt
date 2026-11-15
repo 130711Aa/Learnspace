@@ -132,7 +132,45 @@ data class MathPlotData(
     val intersections: List<IntersectionPoint> = emptyList(),
     val isVerticalLine: Boolean = false,
     val verticalLineX: Float = 0f,
-    val isPiGridMode: Boolean = false
+    val isPiGridMode: Boolean = false,
+    val definiteIntegral: DefiniteIntegralData? = null,
+    val definiteIntegrals: List<DefiniteIntegralData> = emptyList()
+) {
+    val allDefiniteIntegrals: List<DefiniteIntegralData>
+        get() = if (definiteIntegrals.isNotEmpty()) definiteIntegrals
+                else definiteIntegral?.let { listOf(it) } ?: emptyList()
+}
+
+enum class RiemannType(val label: String) {
+    SMOOTH("Arsiran Kontinu"),
+    MIDPOINT("Riemann Tengah"),
+    TRAPEZOIDAL("Trapesium"),
+    LEFT("Riemann Kiri"),
+    RIGHT("Riemann Kanan")
+}
+
+data class DefiniteIntegralData(
+    val functionExpr: String,
+    val displayLabel: String = "",
+    val lowerBoundA: Float = 0f,
+    val upperBoundB: Float = 2f,
+    val integralValue: Double = 0.0,
+    val totalArea: Double = 0.0,
+    val colorArgb: Int = 0xFF2563EB.toInt(),
+    val riemannType: RiemannType = RiemannType.SMOOTH,
+    val partitionCount: Int = 12
+)
+
+data class DefiniteIntegralResult(
+    val netIntegral: Double,
+    val totalArea: Double,
+    val isSuccess: Boolean = true
+)
+
+data class ParsedDefiniteIntegral(
+    val functionExpr: String,
+    val lowerBound: Float = 0f,
+    val upperBound: Float = 2f
 )
 
 /**
@@ -158,9 +196,10 @@ fun interface CompiledExpr {
 object MathPlotHelper {
 
     /**
-     * Checks if a math/LaTeX string represents a plottable equation (circle, linear equation, or 2D function of 'x').
+     * Checks if a math/LaTeX string represents a plottable equation (circle, linear equation, 2D function of 'x', or definite integral).
      */
     fun isPlottableFunction(raw: String): Boolean {
+        if (parseDefiniteIntegral(raw) != null) return true
         if (parseCircle(raw) != null) return true
         if (parseLinearEquation(raw) != null) return true
 
@@ -173,9 +212,84 @@ object MathPlotHelper {
     }
 
     /**
+     * Parses definite integral syntax from LaTeX (\int_{a}^{b} f(x) dx) or standard notations (∫[a, b] f(x) dx, int(f(x), a, b)).
+     */
+    fun parseDefiniteIntegral(raw: String): ParsedDefiniteIntegral? {
+        val trimmed = raw.trim()
+        if (!trimmed.contains("int", ignoreCase = true) && !trimmed.contains("∫")) {
+            return null
+        }
+
+        // 1. LaTeX format: \int_{a}^{b} f(x) dx or \int_a^b f(x) dx
+        val latexRegex = Regex("""\\int(?:_\{?([+-]?\d*\.?\d+)\}?)?(?:\^\{?([+-]?\d*\.?\d+)\}?)?\s*(.*?)(?:d\s*x|$)""", RegexOption.IGNORE_CASE)
+        val matchLatex = latexRegex.find(trimmed)
+        if (matchLatex != null) {
+            val aStr = matchLatex.groupValues[1]
+            val bStr = matchLatex.groupValues[2]
+            var body = matchLatex.groupValues[3].trim()
+            if (body.endsWith("dx", ignoreCase = true)) {
+                body = body.dropLast(2).trim()
+            }
+            if (body.isNotBlank()) {
+                val aVal = aStr.toFloatOrNull() ?: 0f
+                val bVal = bStr.toFloatOrNull() ?: 2f
+                return ParsedDefiniteIntegral(
+                    functionExpr = extractFunctionBody(body),
+                    lowerBound = aVal,
+                    upperBound = bVal
+                )
+            }
+        }
+
+        // 2. Unicode integral: ∫[a, b] f(x) or ∫ a..b f(x) or ∫ f(x) dx
+        val unicodeRegex = Regex("""∫\s*(?:\[\s*([+-]?\d*\.?\d+)\s*,\s*([+-]?\d*\.?\d+)\s*\]|([+-]?\d*\.?\d+)\s*\.\.\s*([+-]?\d*\.?\d+))?\s*(.*?)(?:d\s*x|$)""", RegexOption.IGNORE_CASE)
+        val matchUni = unicodeRegex.find(trimmed)
+        if (matchUni != null) {
+            val aStr = matchUni.groupValues[1].ifEmpty { matchUni.groupValues[3] }
+            val bStr = matchUni.groupValues[2].ifEmpty { matchUni.groupValues[4] }
+            var body = matchUni.groupValues[5].trim()
+            if (body.endsWith("dx", ignoreCase = true)) {
+                body = body.dropLast(2).trim()
+            }
+            if (body.isNotBlank()) {
+                val aVal = aStr.toFloatOrNull() ?: 0f
+                val bVal = bStr.toFloatOrNull() ?: 2f
+                return ParsedDefiniteIntegral(
+                    functionExpr = extractFunctionBody(body),
+                    lowerBound = aVal,
+                    upperBound = bVal
+                )
+            }
+        }
+
+        // 3. Functional syntax: int(f(x), a, b) or integral(f(x), a, b)
+        val funcRegex = Regex("""(?:int|integral)\s*\(\s*(.*?)\s*,\s*([+-]?\d*\.?\d+)\s*,\s*([+-]?\d*\.?\d+)\s*\)""", RegexOption.IGNORE_CASE)
+        val matchFunc = funcRegex.find(trimmed)
+        if (matchFunc != null) {
+            val body = matchFunc.groupValues[1].trim()
+            val aVal = matchFunc.groupValues[2].toFloatOrNull() ?: 0f
+            val bVal = matchFunc.groupValues[3].toFloatOrNull() ?: 2f
+            if (body.isNotBlank()) {
+                return ParsedDefiniteIntegral(
+                    functionExpr = extractFunctionBody(body),
+                    lowerBound = aVal,
+                    upperBound = bVal
+                )
+            }
+        }
+
+        return null
+    }
+
+    /**
      * Extracts the core function expression body (e.g. "x^2 - 4" from "y = x^2 - 4").
      */
     fun extractFunctionBody(raw: String): String {
+        val parsedInt = parseDefiniteIntegral(raw)
+        if (parsedInt != null) {
+            return parsedInt.functionExpr
+        }
+
         // If it's a circle, return the standard equation representation
         val circle = parseCircle(raw)
         if (circle != null) {
@@ -1658,6 +1772,230 @@ object MathPlotHelper {
     }
 
     /**
+     * Calculates definite integral \int_{a}^{b} f(x) dx using high-precision Simpson's 1/3 numerical quadrature.
+     * Also computes geometric total area |f(x)|.
+     */
+    fun calculateDefiniteIntegral(
+        exprStr: String,
+        a: Float,
+        b: Float,
+        steps: Int = 1000
+    ): DefiniteIntegralResult {
+        val clean = extractFunctionBody(exprStr)
+        val compiled = compile(clean) ?: return DefiniteIntegralResult(0.0, 0.0, false)
+        val start = minOf(a, b).toDouble()
+        val end = maxOf(a, b).toDouble()
+        val sign = if (a <= b) 1.0 else -1.0
+        val dist = end - start
+        if (dist <= 1e-7) {
+            return DefiniteIntegralResult(0.0, 0.0, true)
+        }
+
+        val n = if (steps % 2 != 0) steps + 1 else steps
+        val h = dist / n
+
+        var netSum = 0.0
+        var areaSum = 0.0
+
+        val y0 = compiled.eval(start).takeIf { !it.isNaN() && !it.isInfinite() } ?: 0.0
+        val yn = compiled.eval(end).takeIf { !it.isNaN() && !it.isInfinite() } ?: 0.0
+        netSum += y0 + yn
+        areaSum += abs(y0) + abs(yn)
+
+        for (i in 1 until n) {
+            val x = start + i * h
+            val y = compiled.eval(x).takeIf { !it.isNaN() && !it.isInfinite() } ?: 0.0
+            val w = if (i % 2 == 1) 4.0 else 2.0
+            netSum += w * y
+            areaSum += w * abs(y)
+        }
+
+        val netIntegral = (h / 3.0) * netSum * sign
+        val totalArea = (h / 3.0) * areaSum
+
+        return DefiniteIntegralResult(
+            netIntegral = if (abs(netIntegral) < 1e-10) 0.0 else netIntegral,
+            totalArea = if (abs(totalArea) < 1e-10) 0.0 else totalArea,
+            isSuccess = true
+        )
+    }
+
+    /**
+     * Formats a clean, publication-ready LaTeX equation string representing the definite integral
+     * along with its evaluated numerical quadrature result (and geometric area if signed difference exists).
+     */
+    fun formatDefiniteIntegralLatex(data: DefiniteIntegralData): String {
+        val aStr = formatNumber(data.lowerBoundA)
+        val bStr = formatNumber(data.upperBoundB)
+        val valStr = formatNumber(data.integralValue.toFloat())
+        val areaStr = formatNumber(data.totalArea.toFloat())
+        val body = extractFunctionBody(data.functionExpr)
+        val baseLatex = "\\int_{$aStr}^{$bStr} $body \\, dx = $valStr"
+        return if (abs(data.integralValue - data.totalArea) > 0.01) {
+            "$baseLatex \\quad (\\text{Luas} = $areaStr)"
+        } else {
+            baseLatex
+        }
+    }
+
+    data class OptimalBounds(
+        val xMin: Float,
+        val xMax: Float,
+        val yMin: Float,
+        val yMax: Float
+    )
+
+    /**
+     * Computes optimal bounding box for snapshot export so that critical features:
+     * - Quadratic & polynomial vertices / extrema (peaks & valleys, min & max)
+     * - Roots (X-intercepts) & Y-intercept
+     * - Definite integral interval [a, b] and shaded area
+     * - Circles & lines
+     * are guaranteed to be fully visible and framed with comfortable padding (never cut off).
+     */
+    fun calculateOptimalSnapshotBounds(
+        curves: List<MultiPlotCurve>,
+        circleData: CircleData? = null,
+        definiteIntegral: DefiniteIntegralData? = null,
+        definiteIntegrals: List<DefiniteIntegralData> = emptyList(),
+        targetAspect: Float = 1600f / 1200f
+    ): OptimalBounds {
+        val pointsToInclude = mutableListOf<Offset>()
+
+        val allIntegrals = if (definiteIntegrals.isNotEmpty()) definiteIntegrals
+            else definiteIntegral?.let { listOf(it) } ?: emptyList()
+
+        if (circleData != null) {
+            val r = circleData.radius
+            pointsToInclude.add(Offset(circleData.centerX - r, circleData.centerY - r))
+            pointsToInclude.add(Offset(circleData.centerX + r, circleData.centerY + r))
+        }
+
+        for (curve in curves) {
+            if (curve.circleData != null) {
+                val c = curve.circleData
+                val r = c.radius
+                pointsToInclude.add(Offset(c.centerX - r, c.centerY - r))
+                pointsToInclude.add(Offset(c.centerX + r, c.centerY + r))
+                continue
+            }
+            if (curve.isVerticalLine) {
+                pointsToInclude.add(Offset(curve.verticalLineX, -6f))
+                pointsToInclude.add(Offset(curve.verticalLineX, 6f))
+                continue
+            }
+
+            // Key points (Vertex Min/Max, Intercepts, etc.)
+            for (kp in curve.keyPoints) {
+                pointsToInclude.add(Offset(kp.x, kp.y))
+            }
+
+            // Sample around vertex or curve center to capture the curve curvature
+            val vertex = curve.keyPoints.firstOrNull {
+                it.type == KeyPointType.VERTEX_MIN || it.type == KeyPointType.VERTEX_MAX
+            }
+            val cleanFunc = extractFunctionBody(curve.label)
+            val compiled = compile(cleanFunc)
+            if (compiled != null) {
+                if (vertex != null) {
+                    val spread = 4.0f
+                    for (offset in listOf(-spread, -spread / 2f, spread / 2f, spread)) {
+                        val sampleX = vertex.x + offset
+                        val y = compiled.eval(sampleX.toDouble()).toFloat()
+                        if (!y.isNaN() && !y.isInfinite() && abs(y) < 500f) {
+                            pointsToInclude.add(Offset(sampleX, y))
+                        }
+                    }
+                } else if (curve.keyPoints.isEmpty()) {
+                    for (sampleX in listOf(-6f, -3f, 0f, 3f, 6f)) {
+                        val y = compiled.eval(sampleX.toDouble()).toFloat()
+                        if (!y.isNaN() && !y.isInfinite() && abs(y) < 500f) {
+                            pointsToInclude.add(Offset(sampleX, y))
+                        }
+                    }
+                }
+            }
+        }
+
+        // Include Definite Integrals bounds & curve
+        for (defInt in allIntegrals) {
+            val a = defInt.lowerBoundA
+            val b = defInt.upperBoundB
+            val xStart = min(a, b)
+            val xEnd = max(a, b)
+            pointsToInclude.add(Offset(xStart, 0f))
+            pointsToInclude.add(Offset(xEnd, 0f))
+
+            val compiled = compile(defInt.functionExpr)
+            if (compiled != null) {
+                val ya = compiled.eval(a.toDouble()).toFloat()
+                val yb = compiled.eval(b.toDouble()).toFloat()
+                if (!ya.isNaN() && !ya.isInfinite() && abs(ya) < 500f) pointsToInclude.add(Offset(a, ya))
+                if (!yb.isNaN() && !yb.isInfinite() && abs(yb) < 500f) pointsToInclude.add(Offset(b, yb))
+
+                val steps = 10
+                val dx = (xEnd - xStart) / steps
+                for (i in 0..steps) {
+                    val sx = xStart + i * dx
+                    val sy = compiled.eval(sx.toDouble()).toFloat()
+                    if (!sy.isNaN() && !sy.isInfinite() && abs(sy) < 500f) {
+                        pointsToInclude.add(Offset(sx, sy))
+                    }
+                }
+            }
+        }
+
+        // Always encourage showing origin (0, 0) if reasonable
+        if (pointsToInclude.isEmpty() || pointsToInclude.all { abs(it.x) < 25f && abs(it.y) < 25f }) {
+            pointsToInclude.add(Offset(0f, 0f))
+        }
+
+        var minX = pointsToInclude.minOfOrNull { it.x } ?: -8f
+        var maxX = pointsToInclude.maxOfOrNull { it.x } ?: 8f
+        var minY = pointsToInclude.minOfOrNull { it.y } ?: -6f
+        var maxY = pointsToInclude.maxOfOrNull { it.y } ?: 6f
+
+        // Ensure minimum span
+        if (maxX - minX < 4f) {
+            val cx = (minX + maxX) / 2f
+            minX = cx - 3f
+            maxX = cx + 3f
+        }
+        if (maxY - minY < 4f) {
+            val cy = (minY + maxY) / 2f
+            minY = cy - 2.5f
+            maxY = cy + 2.5f
+        }
+
+        // Add comfortable padding margin (22%)
+        val padX = max((maxX - minX) * 0.22f, 1.2f)
+        val padY = max((maxY - minY) * 0.22f, 1.2f)
+        minX -= padX
+        maxX += padX
+        minY -= padY
+        maxY += padY
+
+        // Adjust to target aspect ratio (targetAspect = width / height)
+        val spanX = maxX - minX
+        val spanY = maxY - minY
+        val currentAspect = spanX / spanY
+
+        if (currentAspect < targetAspect) {
+            val neededSpanX = spanY * targetAspect
+            val diffX = (neededSpanX - spanX) / 2f
+            minX -= diffX
+            maxX += diffX
+        } else {
+            val neededSpanY = spanX / targetAspect
+            val diffY = (neededSpanY - spanY) / 2f
+            minY -= diffY
+            maxY += diffY
+        }
+
+        return OptimalBounds(minX, maxX, minY, maxY)
+    }
+
+    /**
      * Renders a publication-quality, razor-sharp High-Resolution Bitmap (1600x1200)
      * complete with grid lines, numerical axis ticks, smooth function/circle curve, and critical key points.
      */
@@ -1785,6 +2123,167 @@ object MathPlotHelper {
         }
         canvas.drawText("x", width - padding + 20f, originY + 12f, axisTagPaint)
         canvas.drawText("y", originX - 12f, padding - 24f, axisTagPaint)
+
+        // 2.5 Draw Definite Integral Shaded Area & Riemann Partitions (if present)
+        plotData.allDefiniteIntegrals.forEachIndexed { intIdx, defInt ->
+            val a = defInt.lowerBoundA
+            val b = defInt.upperBoundB
+            val xStart = minOf(a, b)
+            val xEnd = maxOf(a, b)
+            val compiled = compile(defInt.functionExpr)
+
+            if (compiled != null && xEnd - xStart > 1e-4f) {
+                val baseColor = defInt.colorArgb
+                val r = Color.red(baseColor)
+                val g = Color.green(baseColor)
+                val blueC = Color.blue(baseColor)
+
+                val shadePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.argb(64, r, g, blueC)
+                    style = Paint.Style.FILL
+                }
+                val boundLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = baseColor
+                    strokeWidth = 3f
+                    style = Paint.Style.STROKE
+                    pathEffect = DashPathEffect(floatArrayOf(8f, 8f), 0f)
+                }
+                val boundDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = baseColor
+                    style = Paint.Style.FILL
+                }
+                val boundRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.WHITE
+                    style = Paint.Style.STROKE
+                    strokeWidth = 2.5f
+                }
+                val boundTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = textColor
+                    textSize = 24f
+                    isFakeBoldText = true
+                    textAlign = Paint.Align.CENTER
+                }
+
+                if (defInt.riemannType == RiemannType.SMOOTH) {
+                    val shadePath = Path()
+                    val syZero = toScreenY(0f)
+                    shadePath.moveTo(toScreenX(xStart), syZero)
+
+                    val steps = 200
+                    val dx = (xEnd - xStart) / steps
+                    for (i in 0..steps) {
+                        val curX = xStart + i * dx
+                        val curY = compiled.eval(curX.toDouble()).takeIf { !it.isNaN() && !it.isInfinite() }?.toFloat() ?: 0f
+                        shadePath.lineTo(toScreenX(curX), toScreenY(curY))
+                    }
+                    shadePath.lineTo(toScreenX(xEnd), syZero)
+                    shadePath.close()
+                    canvas.drawPath(shadePath, shadePaint)
+                } else {
+                    val n = defInt.partitionCount.coerceIn(2, 60)
+                    val dx = (xEnd - xStart) / n
+                    val barBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = Color.argb(160, r, g, blueC)
+                        strokeWidth = 2f
+                        style = Paint.Style.STROKE
+                    }
+
+                    for (i in 0 until n) {
+                        val x0 = xStart + i * dx
+                        val x1 = x0 + dx
+                        val syZero = toScreenY(0f)
+
+                        when (defInt.riemannType) {
+                            RiemannType.TRAPEZOIDAL -> {
+                                val y0 = compiled.eval(x0.toDouble()).takeIf { !it.isNaN() && !it.isInfinite() }?.toFloat() ?: 0f
+                                val y1 = compiled.eval(x1.toDouble()).takeIf { !it.isNaN() && !it.isInfinite() }?.toFloat() ?: 0f
+                                val trapPath = Path().apply {
+                                    moveTo(toScreenX(x0), syZero)
+                                    lineTo(toScreenX(x0), toScreenY(y0))
+                                    lineTo(toScreenX(x1), toScreenY(y1))
+                                    lineTo(toScreenX(x1), syZero)
+                                    close()
+                                }
+                                canvas.drawPath(trapPath, shadePaint)
+                                canvas.drawPath(trapPath, barBorderPaint)
+                            }
+                            else -> {
+                                val evalX = when (defInt.riemannType) {
+                                    RiemannType.LEFT -> x0
+                                    RiemannType.RIGHT -> x1
+                                    else -> (x0 + x1) / 2f
+                                }
+                                val yH = compiled.eval(evalX.toDouble()).takeIf { !it.isNaN() && !it.isInfinite() }?.toFloat() ?: 0f
+                                val left = toScreenX(x0)
+                                val right = toScreenX(x1)
+                                val top = minOf(syZero, toScreenY(yH))
+                                val bottom = maxOf(syZero, toScreenY(yH))
+                                canvas.drawRect(left, top, right, bottom, shadePaint)
+                                canvas.drawRect(left, top, right, bottom, barBorderPaint)
+                            }
+                        }
+                    }
+                }
+
+                // Vertical boundary lines at a and b
+                val ya = compiled.eval(a.toDouble()).takeIf { !it.isNaN() && !it.isInfinite() }?.toFloat() ?: 0f
+                val yb = compiled.eval(b.toDouble()).takeIf { !it.isNaN() && !it.isInfinite() }?.toFloat() ?: 0f
+                val sxa = toScreenX(a)
+                val sxb = toScreenX(b)
+                val syZero = toScreenY(0f)
+
+                canvas.drawLine(sxa, syZero, sxa, toScreenY(ya), boundLinePaint)
+                canvas.drawLine(sxb, syZero, sxb, toScreenY(yb), boundLinePaint)
+
+                canvas.drawCircle(sxa, toScreenY(ya), 8f, boundDotPaint)
+                canvas.drawCircle(sxa, toScreenY(ya), 8f, boundRingPaint)
+                canvas.drawCircle(sxb, toScreenY(yb), 8f, boundDotPaint)
+                canvas.drawCircle(sxb, toScreenY(yb), 8f, boundRingPaint)
+
+                // Subscripts a and b on X-axis
+                canvas.drawText("a = ${formatNumber(a)}", sxa, syZero.coerceIn(padding + 30f, height - padding - 15f) + 32f, boundTextPaint)
+                canvas.drawText("b = ${formatNumber(b)}", sxb, syZero.coerceIn(padding + 30f, height - padding - 15f) + 32f, boundTextPaint)
+
+                // Informational Badge for Definite Integral
+                val badgeTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = textColor
+                    textSize = 28f
+                    isFakeBoldText = true
+                    textAlign = Paint.Align.LEFT
+                }
+                val badgeSubTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = secondaryTextColor
+                    textSize = 22f
+                    textAlign = Paint.Align.LEFT
+                }
+                val badgeBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = cardBgColor
+                    style = Paint.Style.FILL
+                    setShadowLayer(8f, 0f, 4f, Color.argb(45, 0, 0, 0))
+                }
+                val badgeBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.argb(160, r, g, blueC)
+                    style = Paint.Style.STROKE
+                    strokeWidth = 2.5f
+                }
+
+                val titleLine = "∫[${formatNumber(a)}, ${formatNumber(b)}] ${defInt.displayLabel.ifBlank { "f(x)" }} dx = ${formatNumber(defInt.integralValue.toFloat())}"
+                val subLine = "Luas Daerah = ${formatNumber(defInt.totalArea.toFloat())}" +
+                        if (defInt.riemannType != RiemannType.SMOOTH) " (${defInt.riemannType.label}, n=${defInt.partitionCount})" else ""
+
+                val tW1 = badgeTextPaint.measureText(titleLine)
+                val tW2 = badgeSubTextPaint.measureText(subLine)
+                val badgeW = maxOf(tW1, tW2) + 40f
+                val badgeH = 80f
+                val badgeL = width - padding - badgeW - 10f
+                val badgeT = height - padding - (badgeH + 12f) * (intIdx + 1)
+
+                canvas.drawRoundRect(badgeL, badgeT, badgeL + badgeW, badgeT + badgeH, 12f, 12f, badgeBgPaint)
+                canvas.drawRoundRect(badgeL, badgeT, badgeL + badgeW, badgeT + badgeH, 12f, 12f, badgeBorderPaint)
+                canvas.drawText(titleLine, badgeL + 20f, badgeT + 34f, badgeTextPaint)
+                canvas.drawText(subLine, badgeL + 20f, badgeT + 66f, badgeSubTextPaint)
+            }
+        }
 
         // 3. Draw Curves (Single or Multiple)
         if (plotData.multiCurves.isNotEmpty()) {

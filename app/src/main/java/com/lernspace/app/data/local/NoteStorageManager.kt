@@ -209,6 +209,7 @@ class NoteStorageManager(private val context: Context) {
                         put("width", img.width.toDouble())
                         put("height", img.height.toDouble())
                         put("fileName", imageFile.name)
+                        put("isLocked", img.isLocked)
                     }
                     imagesArray.put(imgObj)
                 }
@@ -347,7 +348,8 @@ class NoteStorageManager(private val context: Context) {
                                         bitmap = bitmap.asImageBitmap(),
                                         width = imgObj.optDouble("width", 500.0).toFloat(),
                                         height = imgObj.optDouble("height", 350.0).toFloat(),
-                                        isSelected = false
+                                        isSelected = false,
+                                        isLocked = imgObj.optBoolean("isLocked", false)
                                     )
                                 )
                             }

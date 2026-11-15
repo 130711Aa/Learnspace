@@ -1,45 +1,48 @@
 package com.lernspace.app.ui.workspace.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.OpenWith
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.lernspace.app.ui.workspace.model.ImageElement
-import kotlin.math.roundToInt
 
 @Composable
 fun DraggableImage(
     image: ImageElement,
-    scale: Float = 1f,
+    scaleProvider: () -> Float = { 1f },
     panXProvider: () -> Float = { 0f },
     panYProvider: () -> Float = { 0f },
     onCommitMove: (Float, Float) -> Unit,
     onCommitResize: (Float, Float) -> Unit,
     onSelect: () -> Unit,
+    onToggleLock: () -> Unit = {},
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -58,10 +61,11 @@ fun DraggableImage(
         worldHeight = image.height
     }
 
-    val currentScale by rememberUpdatedState(scale)
+    val currentScaleProvider by rememberUpdatedState(scaleProvider)
     val currentOnCommitMove by rememberUpdatedState(onCommitMove)
     val currentOnCommitResize by rememberUpdatedState(onCommitResize)
     val currentOnSelect by rememberUpdatedState(onSelect)
+    val currentOnToggleLock by rememberUpdatedState(onToggleLock)
     val currentOnDelete by rememberUpdatedState(onDelete)
 
     val selectionColor = Color(0xFF2563EB)
@@ -69,25 +73,30 @@ fun DraggableImage(
         (image.bitmap.width.toFloat() / image.bitmap.height.toFloat()).coerceIn(0.2f, 5f)
     }
 
-    // Convert world canvas pixels (worldWidth * scale) into Compose Dp without density inflation
-    val screenWidthDp = with(density) { (worldWidth * scale).toDp() }
-    val screenHeightDp = with(density) { (worldHeight * scale).toDp() }
+    // Fixed unscaled world dimensions in Dp.
+    // The GPU graphicsLayer scales & translates this Box atomically on the RenderNode thread,
+    // exactly matching DrawingSurface and PaperBackground without any CPU layout drift or subpixel jitter!
+    val worldWidthDp = with(density) { worldWidth.toDp() }
+    val worldHeightDp = with(density) { worldHeight.toDp() }
 
     Box(
         modifier = modifier
-            .offset {
-                val screenX = worldX * scale + panXProvider()
-                val screenY = worldY * scale + panYProvider()
-                IntOffset(screenX.roundToInt(), screenY.roundToInt())
+            .graphicsLayer {
+                val s = currentScaleProvider()
+                scaleX = s
+                scaleY = s
+                transformOrigin = TransformOrigin(0f, 0f)
+                translationX = worldX * s + panXProvider()
+                translationY = worldY * s + panYProvider()
             }
-            .requiredSize(width = screenWidthDp, height = screenHeightDp)
+            .size(width = worldWidthDp, height = worldHeightDp)
     ) {
-        // Image Body with crisp proportional scaling
+        // Image Body with clean surface and no intrusive colored borders
         Surface(
             modifier = Modifier
                 .fillMaxSize()
                 .then(
-                    if (image.isSelected) {
+                    if (image.isSelected && !image.isLocked) {
                         Modifier
                             .shadow(6.dp, RoundedCornerShape(10.dp))
                             .border(2.5.dp, selectionColor, RoundedCornerShape(10.dp))
@@ -95,7 +104,7 @@ fun DraggableImage(
                         Modifier.shadow(2.dp, RoundedCornerShape(8.dp))
                     }
                 ),
-            shape = RoundedCornerShape(if (image.isSelected) 10.dp else 8.dp),
+            shape = RoundedCornerShape(if (image.isSelected && !image.isLocked) 10.dp else 8.dp),
             color = Color.White
         ) {
             Image(
@@ -108,59 +117,67 @@ fun DraggableImage(
             )
         }
 
-        // Tap to Select & Direct Smooth Dragging (120 FPS, never cancelled mid-drag)
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .pointerInput(image.id) {
-                    awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false)
-                        var isDragging = false
-                        var accumulated = Offset.Zero
-                        val touchSlop = viewConfiguration.touchSlop
+        // Tap to Select (when unselected and unlocked)
+        // Multi-touch gestures (zoom/pan) pass cleanly to the canvas with zero accidental movement!
+        if (!image.isSelected && !image.isLocked) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable { currentOnSelect() }
+            )
+        }
 
-                        while (true) {
-                            val event = awaitPointerEvent()
-
-                            // Multi-finger gesture detected: let canvas pinch-to-zoom handle it!
-                            if (event.changes.count { it.pressed } >= 2) {
-                                if (isDragging) {
-                                    currentOnCommitMove(worldX, worldY)
-                                }
-                                break
-                            }
-
-                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                            if (!change.pressed) {
-                                if (!isDragging) {
-                                    currentOnSelect()
-                                } else {
-                                    currentOnCommitMove(worldX, worldY)
-                                }
-                                break
-                            }
-                            val delta = change.positionChange()
-                            if (!isDragging) {
-                                accumulated += delta
-                                if (accumulated.getDistance() > touchSlop) {
-                                    isDragging = true
-                                    currentOnSelect()
-                                    change.consume()
-                                    worldX += accumulated.x / currentScale
-                                    worldY += accumulated.y / currentScale
-                                }
-                            } else {
+        // Move Drag Handler (Active ONLY when intentionally selected and NOT locked)
+        if (image.isSelected && !image.isLocked) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(image.id) {
+                        detectDragGestures(
+                            onDragEnd = { currentOnCommitMove(worldX, worldY) },
+                            onDragCancel = {
+                                worldX = image.x
+                                worldY = image.y
+                            },
+                            onDrag = { change, dragAmount ->
                                 change.consume()
-                                worldX += delta.x / currentScale
-                                worldY += delta.y / currentScale
+                                val curScale = currentScaleProvider().coerceAtLeast(0.05f)
+                                worldX += dragAmount.x / curScale
+                                worldY += dragAmount.y / curScale
                             }
-                        }
+                        )
                     }
-                }
-        )
+            )
+        }
 
-        // Overlay Controls when Image is Selected
-        if (image.isSelected) {
+        // Lock Indicator Pill: Placed OUTSIDE the top-end corner of the image!
+        // Never obstructs image/graph content, uses subtle slate/dark styling (not glaring bright yellow)
+        if (image.isLocked) {
+            Surface(
+                shape = CircleShape,
+                color = Color(0xCC0F172A),
+                border = BorderStroke(1.dp, Color(0x33475569)),
+                shadowElevation = 3.dp,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(x = 6.dp, y = (-12).dp)
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .clickable { currentOnToggleLock() }
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Filled.Lock,
+                        contentDescription = "Posisi Terkunci (Ketuk untuk Buka)",
+                        tint = Color(0xCC94A3B8),
+                        modifier = Modifier.size(12.dp)
+                    )
+                }
+            }
+        }
+
+        // Overlay Controls when Image is Selected & Unlocked
+        if (image.isSelected && !image.isLocked) {
             // Delete Button (Top-Right Circular Action)
             Box(
                 modifier = Modifier
@@ -181,26 +198,67 @@ fun DraggableImage(
                 )
             }
 
-            // Move Indicator Pill (Top-Left)
+            // Action Pill (Top-Start): Move Indicator + Lock Position Button
             Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = selectionColor,
-                shadowElevation = 3.dp,
+                shape = RoundedCornerShape(14.dp),
+                color = Color(0xFF0F172A),
+                border = BorderStroke(1.dp, Color(0xFF334155)),
+                shadowElevation = 4.dp,
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .offset(x = (-8).dp, y = (-10).dp)
+                    .offset(x = (-6).dp, y = (-14).dp)
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Filled.OpenWith,
-                        contentDescription = "Move",
-                        tint = Color.White,
-                        modifier = Modifier.size(12.dp)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.OpenWith,
+                            contentDescription = "Move",
+                            tint = Color.White,
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Text(
+                            text = "Geser",
+                            fontSize = 11.sp,
+                            color = Color.White,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .width(1.dp)
+                            .height(14.dp)
+                            .background(Color(0xFF475569))
                     )
+
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { currentOnToggleLock() }
+                            .padding(horizontal = 4.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.LockOpen,
+                            contentDescription = "Kunci Posisi",
+                            tint = Color(0xFF38BDF8),
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Text(
+                            text = "Kunci",
+                            fontSize = 11.sp,
+                            color = Color(0xFF38BDF8),
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
                 }
             }
 
@@ -216,8 +274,9 @@ fun DraggableImage(
                             onDragCancel = { currentOnCommitResize(worldWidth, worldHeight) },
                             onDrag = { change, dragAmount ->
                                 change.consume()
-                                val deltaWorldX = dragAmount.x / currentScale
-                                val deltaWorldY = dragAmount.y / currentScale
+                                val curScale = currentScaleProvider().coerceAtLeast(0.05f)
+                                val deltaWorldX = dragAmount.x / curScale
+                                val deltaWorldY = dragAmount.y / curScale
                                 val delta = (deltaWorldX + deltaWorldY * aspectRatio) / 2f
                                 val newWidth = (worldWidth + delta).coerceIn(120f, 2500f)
                                 worldWidth = newWidth

@@ -98,9 +98,6 @@ import com.lernspace.app.core.math.MathSolver
 import com.lernspace.app.core.math.MathSolution
 import com.lernspace.app.core.math.MathLatexRecognizer
 import com.lernspace.app.core.math.MathRecognitionResult
-import com.lernspace.app.core.math.MathEqualsRecognizer
-import com.lernspace.app.core.math.MathAutoSolveResult
-import com.lernspace.app.core.math.EqualsSignMatch
 import com.lernspace.app.core.math.MathPlotHelper
 import com.lernspace.app.core.audio.NoteAudioController
 import com.lernspace.app.ui.workspace.components.AudioLectureBar
@@ -1207,9 +1204,13 @@ fun NoteEditorScreen(
                 },
                 onInsertGraphToNote = { bitmap, equations ->
                     val sel = activeState.lassoSelection
-                    val insertX = sel?.bounds?.left?.coerceAtLeast(32f) ?: (activeState.panX + 60f)
-                    var currentY = (sel?.bounds?.bottom?.plus(20f))?.coerceAtLeast(32f) ?: (activeState.panY + 60f)
+                    val curScale = activeState.scale.coerceAtLeast(0.05f)
+                    val spawnX = (-activeState.panX + 160f) / curScale
+                    val spawnY = (-activeState.panY + 140f) / curScale
+                    val insertX = sel?.bounds?.left?.coerceAtLeast(32f) ?: spawnX.coerceAtLeast(32f)
+                    var currentY = (sel?.bounds?.bottom?.plus(20f))?.coerceAtLeast(32f) ?: spawnY.coerceAtLeast(32f)
                     activeState.pushUndoSnapshot()
+                    activeState.deselectAll()
 
                     // If equations are present, insert a clean LaTeX formula card above the graph
                     if (equations.isNotEmpty()) {
@@ -1227,7 +1228,7 @@ fun NoteEditorScreen(
                                 text = latexLines,
                                 isSelected = false,
                                 fontSize = 30f,
-                                hasBackground = false
+                                hasBackground = true
                             )
                         )
                         currentY += approxH + 16f
@@ -1240,12 +1241,15 @@ fun NoteEditorScreen(
                             bitmap = bitmap.asImageBitmap(),
                             width = 560f,
                             height = 420f,
-                            isSelected = false
+                            isSelected = true
                         )
                     )
                     activeState.saveActivePageData()
                     activeState.lassoSelection = null
-                    val msg = if (equations.isNotEmpty()) "Grafik dan rumus LaTeX disisipkan ke catatan" else "Grafik kartesius disisipkan ke catatan"
+                    val hasIntegral = equations.any { it.contains("\\int") }
+                    val msg = if (hasIntegral) "Grafik dan hasil integral disisipkan ke catatan"
+                        else if (equations.isNotEmpty()) "Grafik dan rumus LaTeX disisipkan ke catatan"
+                        else "Grafik kartesius disisipkan ke catatan"
                     android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
                 },
                 modifier = Modifier.zIndex(20f)
@@ -1353,8 +1357,6 @@ private fun NotePaneViewport(
     var lassoAiCustomPrompt by remember { mutableStateOf("") }
     var lassoAiMode by remember { mutableStateOf(LassoAiMode.AI_TUTOR) }
     var mathSolverResult by remember { mutableStateOf<MathSolution?>(null) }
-    var activeMathAutoSolve by remember { mutableStateOf<MathAutoSolveResult?>(null) }
-    var isEvaluatingMathAutoSolve by remember { mutableStateOf(false) }
 
     // Proactive background recognition as soon as lasso selection completes
     var proactiveMathResult by remember { mutableStateOf<MathRecognitionResult?>(null) }
@@ -1851,9 +1853,11 @@ private fun NotePaneViewport(
                                     worldDownX in (tb.x - sidePad)..(tb.x + tb.width + sidePad) &&
                                         worldDownY in (tb.y - topPad)..(tb.y + tb.height + sidePad)
                                 } || state.imageElements.any { img ->
-                                    val pad = if (img.isSelected) with(density) { 26.dp.toPx() } / state.scale else 12f / state.scale
-                                    worldDownX in (img.x - pad)..(img.x + img.width + pad) &&
-                                        worldDownY in (img.y - pad)..(img.y + img.height + pad)
+                                    !img.isLocked && run {
+                                        val pad = if (img.isSelected) with(density) { 26.dp.toPx() } / state.scale else 12f / state.scale
+                                        worldDownX in (img.x - pad)..(img.x + img.width + pad) &&
+                                            worldDownY in (img.y - pad)..(img.y + img.height + pad)
+                                    }
                                 }
 
                                 if (hitPlacedElement) {
@@ -2105,56 +2109,6 @@ private fun NotePaneViewport(
                             state.pushUndoSnapshot()
                             state.strokes.addAll(strokesToAdd)
                             state.saveActivePageData()
-
-                            // ── Math Auto-Solve (HMER): Real-time '=' calculation (Apple Math Notes style) ──
-                            if (AppSettingsManager.isMathAutoSolveEnabled && (activeTool == NoteTool.PEN || activeTool == NoteTool.HIGHLIGHTER)) {
-                                val currentStrokesSnapshot = state.strokes.toList()
-                                val equalsMatch = MathEqualsRecognizer.detectEqualsSign(currentStrokesSnapshot)
-                                if (equalsMatch != null) {
-                                    val exprStrokes = MathEqualsRecognizer.collectExpressionStrokes(currentStrokesSnapshot, equalsMatch)
-                                    if (exprStrokes.isNotEmpty()) {
-                                        val rendererSnapshot = state.canvasStrokeRenderer
-                                        val isDark = state.isDarkPaper
-                                        coroutineScope.launch {
-                                            isEvaluatingMathAutoSolve = true
-                                            try {
-                                                // Create crisp, high-contrast bitmap crop of expression for maximum OCR accuracy
-                                                val cropBmp = HandwrittenNoteRecognizer.renderStrokesToBitmap(
-                                                    strokes = exprStrokes,
-                                                    renderer = rendererSnapshot,
-                                                    maxDim = 800
-                                                )
-
-                                                val recog = MathLatexRecognizer.recognizeMath(exprStrokes, cropBmp)
-                                                val rawMath = recog.latex
-                                                android.util.Log.d("MathAutoSolve", "recog: '$rawMath', source: ${recog.source}")
-                                                if (rawMath.isNotBlank()) {
-                                                    val sol = MathSolver.solve(rawMath + " =") ?: MathSolver.solve(rawMath)
-                                                    android.util.Log.d("MathAutoSolve", "sol: ${sol?.result}")
-                                                    if (sol != null && sol.isSolved) {
-                                                        try {
-                                                            view.performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM)
-                                                        } catch (e: Exception) {}
-                                                        activeMathAutoSolve = MathAutoSolveResult(
-                                                            equalsMatch = equalsMatch,
-                                                            expressionStrokes = exprStrokes,
-                                                            recognizedLatex = rawMath,
-                                                            solution = sol,
-                                                            resultText = sol.result,
-                                                            insertX = equalsMatch.rightEdgeX + 16f,
-                                                            insertY = equalsMatch.centerY - 22f
-                                                        )
-                                                    }
-                                                }
-                                            } catch (e: Exception) {
-                                                // ignore
-                                            } finally {
-                                                isEvaluatingMathAutoSolve = false
-                                            }
-                                        }
-                                    }
-                                }
-                            }
                         }
                     }
                 },
@@ -2406,6 +2360,7 @@ private fun NotePaneViewport(
                                             } else if (polyBounds != null && polyBounds.width >= 24f && polyBounds.height >= 24f) {
                                                 // Lasso melingkari gambar atau ruang kanvas
                                                 val overlappingImages = state.imageElements.filter { img ->
+                                                    if (img.isLocked) return@filter false
                                                     val imgRect = Rect(img.x, img.y, img.x + img.width, img.y + img.height)
                                                     imgRect.overlaps(polyBounds) || LassoHelper.isImageSelected(img, loopCopy)
                                                 }.toMutableList()
@@ -2807,161 +2762,118 @@ private fun NotePaneViewport(
                 }
             }
 
-            // ── Math Auto-Solve (HMER) Floating Result Badge (Apple Math Notes Style) ──
-            if (activeMathAutoSolve != null) {
-                val autoSol = activeMathAutoSolve!!
-                Box(
-                    modifier = Modifier.offset {
-                        val screenX = autoSol.insertX * state.scale + state.panX
-                        val screenY = autoSol.insertY * state.scale + state.panY
-                        IntOffset(screenX.roundToInt(), screenY.roundToInt())
-                    }
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = if (state.isDarkPaper) Color(0xFF0F172A) else Color(0xFFFFFFFF),
-                        border = BorderStroke(1.5.dp, if (state.isDarkPaper) Color(0xFF38BDF8) else Color(0xFF0284C7)),
-                        shadowElevation = 8.dp
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.clickable {
+
+            // Viewport Spatial Culling for Placed Images & Text Boxes
+            val curScale = state.scale.coerceAtLeast(0.05f)
+            val vpW = if (viewportSize.width > 0) viewportSize.width.toFloat() else 2400f
+            val vpH = if (viewportSize.height > 0) viewportSize.height.toFloat() else 2400f
+            val cullingMargin = 400f
+            val visWorldLeft = -state.panX / curScale - cullingMargin
+            val visWorldTop = -state.panY / curScale - cullingMargin
+            val visWorldRight = (vpW - state.panX) / curScale + cullingMargin
+            val visWorldBottom = (vpH - state.panY) / curScale + cullingMargin
+
+            // Placed Images Layer (Rendered inside pane with viewport culling)
+            state.imageElements.forEachIndexed { index, img ->
+                key(img.id) {
+                    val isVisible = img.isSelected || (
+                        img.x + img.width >= visWorldLeft && img.x <= visWorldRight &&
+                        img.y + img.height >= visWorldTop && img.y <= visWorldBottom
+                    )
+                    if (isVisible) {
+                        DraggableImage(
+                            image = img,
+                            scaleProvider = { state.scale },
+                            panXProvider = { state.panX },
+                            panYProvider = { state.panY },
+                            onCommitMove = { newWorldX, newWorldY ->
+                                if (index < state.imageElements.size) {
                                     state.pushUndoSnapshot()
-                                    val approxW = maxOf(autoSol.resultText.length * 30f + 36f, 100f)
-                                    state.textBoxes.add(
-                                        TextBoxElement(
-                                            x = autoSol.insertX,
-                                            y = autoSol.equalsMatch.centerY - 24f,
-                                            width = approxW,
-                                            height = 64f,
-                                            text = autoSol.resultText,
-                                            isSelected = false,
-                                            fontSize = maxOf(autoSol.equalsMatch.bounds.height * 1.25f, 30f),
-                                            hasBackground = false
-                                        )
+                                    state.imageElements[index] = state.imageElements[index].copy(x = newWorldX, y = newWorldY)
+                                    state.saveActivePageData()
+                                }
+                            },
+                            onCommitResize = { newWorldW, newWorldH ->
+                                if (index < state.imageElements.size) {
+                                    state.pushUndoSnapshot()
+                                    state.imageElements[index] = state.imageElements[index].copy(width = newWorldW, height = newWorldH)
+                                    state.saveActivePageData()
+                                }
+                            },
+                            onSelect = {
+                                state.deselectAll()
+                                if (index < state.imageElements.size) {
+                                    state.imageElements[index] = state.imageElements[index].copy(isSelected = true)
+                                }
+                            },
+                            onToggleLock = {
+                                if (index < state.imageElements.size) {
+                                    state.pushUndoSnapshot()
+                                    val nowLocked = !state.imageElements[index].isLocked
+                                    state.imageElements[index] = state.imageElements[index].copy(
+                                        isLocked = nowLocked,
+                                        isSelected = if (nowLocked) false else true
                                     )
                                     state.saveActivePageData()
-                                    try {
-                                        view.performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM)
-                                    } catch (e: Exception) {}
-                                    activeMathAutoSolve = null
-                                },
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp)
-                            ) {
-                                Text(
-                                    text = autoSol.resultText,
-                                    fontSize = 17.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (state.isDarkPaper) Color(0xFF38BDF8) else Color(0xFF0284C7)
-                                )
-                                Surface(
-                                    shape = CircleShape,
-                                    color = (if (state.isDarkPaper) Color(0xFF38BDF8) else Color(0xFF0284C7)).copy(alpha = 0.15f),
-                                    modifier = Modifier.size(20.dp)
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            Icons.Filled.Check,
-                                            contentDescription = "Masukkan Hasil",
-                                            tint = if (state.isDarkPaper) Color(0xFF38BDF8) else Color(0xFF0284C7),
-                                            modifier = Modifier.size(13.dp)
-                                        )
-                                    }
+                                    val msg = if (nowLocked) "Posisi gambar/grafik dikunci" else "Kunci posisi dibuka"
+                                    android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
                                 }
+                            },
+                            onDelete = {
+                                state.pushUndoSnapshot()
+                                state.imageElements.remove(img)
+                                state.saveActivePageData()
                             }
-
-                            Icon(
-                                Icons.Filled.Close,
-                                contentDescription = "Tutup",
-                                tint = LernspaceTextSecondary,
-                                modifier = Modifier
-                                    .size(15.dp)
-                                    .clickable { activeMathAutoSolve = null }
-                            )
-                        }
+                        )
                     }
                 }
             }
 
-            // Placed Images Layer (Rendered inside pane)
-            state.imageElements.forEachIndexed { index, img ->
-                DraggableImage(
-                    image = img,
-                    scale = state.scale,
-                    panXProvider = { state.panX },
-                    panYProvider = { state.panY },
-                    onCommitMove = { newWorldX, newWorldY ->
-                        if (index < state.imageElements.size) {
-                            state.pushUndoSnapshot()
-                            state.imageElements[index] = state.imageElements[index].copy(x = newWorldX, y = newWorldY)
-                            state.saveActivePageData()
-                        }
-                    },
-                    onCommitResize = { newWorldW, newWorldH ->
-                        if (index < state.imageElements.size) {
-                            state.pushUndoSnapshot()
-                            state.imageElements[index] = state.imageElements[index].copy(width = newWorldW, height = newWorldH)
-                            state.saveActivePageData()
-                        }
-                    },
-                    onSelect = {
-                        state.deselectAll()
-                        if (index < state.imageElements.size) {
-                            state.imageElements[index] = state.imageElements[index].copy(isSelected = true)
-                        }
-                    },
-                    onDelete = {
-                        state.pushUndoSnapshot()
-                        state.imageElements.remove(img)
-                        state.saveActivePageData()
-                    }
-                )
-            }
-
-            // Placed Draggable Text Boxes Layer (Rendered inside pane)
+            // Placed Draggable Text Boxes Layer (Rendered inside pane with viewport culling)
             state.textBoxes.forEachIndexed { index, boxElement ->
-                DraggableTextBox(
-                    box = boxElement,
-                    scale = state.scale,
-                    panXProvider = { state.panX },
-                    panYProvider = { state.panY },
-                    isDarkPaper = state.isDarkPaper,
-                    onCommitMove = { newWorldX, newWorldY ->
-                        if (index < state.textBoxes.size) {
-                            state.pushUndoSnapshot()
-                            state.textBoxes[index] = state.textBoxes[index].copy(x = newWorldX, y = newWorldY)
-                            state.saveActivePageData()
-                        }
-                    },
-                    onCommitResize = { newWorldW, newWorldH ->
-                        if (index < state.textBoxes.size) {
-                            state.pushUndoSnapshot()
-                            state.textBoxes[index] = state.textBoxes[index].copy(width = newWorldW, height = newWorldH)
-                            state.saveActivePageData()
-                        }
-                    },
-                    onTextChange = { newText ->
-                        if (index < state.textBoxes.size) {
-                            state.textBoxes[index] = state.textBoxes[index].copy(text = newText)
-                        }
-                    },
-                    onSelect = {
-                        state.deselectAll()
-                        if (index < state.textBoxes.size) {
-                            state.textBoxes[index] = state.textBoxes[index].copy(isSelected = true)
-                        }
-                    },
-                    onDelete = {
-                        state.pushUndoSnapshot()
-                        state.textBoxes.remove(boxElement)
-                        state.saveActivePageData()
-                    }
+                val isVisible = boxElement.isSelected || (
+                    boxElement.x + boxElement.width >= visWorldLeft && boxElement.x <= visWorldRight &&
+                    boxElement.y + boxElement.height >= visWorldTop && boxElement.y <= visWorldBottom
                 )
+                if (isVisible) {
+                    DraggableTextBox(
+                        box = boxElement,
+                        scale = state.scale,
+                        panXProvider = { state.panX },
+                        panYProvider = { state.panY },
+                        isDarkPaper = state.isDarkPaper,
+                        onCommitMove = { newWorldX, newWorldY ->
+                            if (index < state.textBoxes.size) {
+                                state.pushUndoSnapshot()
+                                state.textBoxes[index] = state.textBoxes[index].copy(x = newWorldX, y = newWorldY)
+                                state.saveActivePageData()
+                            }
+                        },
+                        onCommitResize = { newWorldW, newWorldH ->
+                            if (index < state.textBoxes.size) {
+                                state.pushUndoSnapshot()
+                                state.textBoxes[index] = state.textBoxes[index].copy(width = newWorldW, height = newWorldH)
+                                state.saveActivePageData()
+                            }
+                        },
+                        onTextChange = { newText ->
+                            if (index < state.textBoxes.size) {
+                                state.textBoxes[index] = state.textBoxes[index].copy(text = newText)
+                            }
+                        },
+                        onSelect = {
+                            state.deselectAll()
+                            if (index < state.textBoxes.size) {
+                                state.textBoxes[index] = state.textBoxes[index].copy(isSelected = true)
+                            }
+                        },
+                        onDelete = {
+                            state.pushUndoSnapshot()
+                            state.textBoxes.remove(boxElement)
+                            state.saveActivePageData()
+                        }
+                    )
+                }
             }
         }
 

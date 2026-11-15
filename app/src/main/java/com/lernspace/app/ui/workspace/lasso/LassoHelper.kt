@@ -95,6 +95,7 @@ object LassoHelper {
      * Tests if an ImageElement is inside or overlapped by the lasso polygon.
      */
     fun isImageSelected(img: ImageElement, polygon: List<Offset>): Boolean {
+        if (img.isLocked) return false
         if (polygon.isEmpty()) return false
         val center = Offset(img.x + img.width / 2f, img.y + img.height / 2f)
         if (isPointInPolygon(center, polygon)) return true
