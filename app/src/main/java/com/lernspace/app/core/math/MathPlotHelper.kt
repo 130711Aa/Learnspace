@@ -203,7 +203,7 @@ object MathPlotHelper {
         if (parseCircle(raw) != null) return true
         if (parseLinearEquation(raw) != null) return true
 
-        val clean = MathSolver.cleanLatexForSolver(raw).lowercase().replace(" ", "")
+        val clean = cleanLatexForPlot(raw).lowercase().replace(" ", "")
         val hasVar = clean.contains('x')
         val isEquation = clean.startsWith("y=") || clean.startsWith("f(x)=") ||
                 clean.startsWith("g(x)=") ||
@@ -302,7 +302,7 @@ object MathPlotHelper {
             return if (linear.isVertical) linear.standardEquation else linear.functionExpr
         }
 
-        var clean = MathSolver.cleanLatexForSolver(raw)
+        var clean = cleanLatexForPlot(raw)
         if (clean.contains("=")) {
             val parts = clean.split("=")
             clean = if (parts[0].trim().lowercase() in listOf("y", "f(x)", "g(x)")) {
@@ -335,7 +335,7 @@ object MathPlotHelper {
         if (raw.isBlank()) return null
 
         // 1. Normalize LaTeX and syntax
-        var s = MathSolver.cleanLatexForSolver(raw).lowercase().replace(" ", "")
+        var s = cleanLatexForPlot(raw).lowercase().replace(" ", "")
         s = s.replace("\\left", "").replace("\\right", "")
         s = s.replace("^{2.0}", "^2").replace("^{2}", "^2")
         s = s.replace("^{3}", "^3") // will fail circle check if cubed
@@ -385,7 +385,7 @@ object MathPlotHelper {
         } else {
             // Substitute params in RHS if any
             val subRhs = if (params.isNotEmpty()) substituteParameters(rawRhs, params) else rawRhs
-            val rSquared = MathSolver.evaluateExpression(subRhs) ?: return null
+            val rSquared = evaluateExpression(subRhs) ?: return null
             if (rSquared <= 1e-6) return null
             sqrt(rSquared).toFloat()
         }
@@ -567,7 +567,7 @@ object MathPlotHelper {
                     cy += coeff
                 }
                 else -> {
-                    val v = MathSolver.evaluateExpression(t) ?: return null
+                    val v = evaluateExpression(t) ?: return null
                     cconst += v
                 }
             }
@@ -579,7 +579,7 @@ object MathPlotHelper {
         if (s.isEmpty() || s == "+") return 1.0
         if (s == "-") return -1.0
         val cleaned = if (s.startsWith("/")) "1$s" else if (s.startsWith("-/")) "-1" + s.substring(1) else if (s.startsWith("+/")) "1" + s.substring(1) else s
-        return MathSolver.evaluateExpression(cleaned)
+        return evaluateExpression(cleaned)
     }
 
     private fun formatStandardCircleString(h: Float, k: Float, r: Float): String {
@@ -679,7 +679,7 @@ object MathPlotHelper {
      * - Horizontal lines: y = 4, 3y = 12
      */
     fun parseLinearEquation(raw: String): LinearEquationData? {
-        val clean = MathSolver.cleanLatexForSolver(raw).replace(" ", "").lowercase()
+        val clean = cleanLatexForPlot(raw).replace(" ", "").lowercase()
             .replace("\\cdot", "*").replace("\\times", "*")
 
         // Exclude higher degrees and trigonometric/transcendental functions
@@ -773,7 +773,7 @@ object MathPlotHelper {
      * Evaluates in nanoseconds with zero object allocations and zero regex per step.
      */
     fun compile(exprStr: String): CompiledExpr? {
-        val clean = MathSolver.cleanLatexForSolver(exprStr)
+        val clean = cleanLatexForPlot(exprStr)
             .replace(" ", "")
             .replace("\\cdot", "*")
             .replace("\\times", "*")
@@ -1008,7 +1008,7 @@ object MathPlotHelper {
             .replace(Regex("(x)(\\()", RegexOption.IGNORE_CASE), "($xFormatted)*$2")
             .replace(Regex("(x)(\\d)", RegexOption.IGNORE_CASE), "($xFormatted)*$2")
             .replace("x", "($xFormatted)", ignoreCase = true)
-        return MathSolver.evaluateExpression(substituted)
+        return evaluateExpression(substituted)
     }
 
     /**
@@ -2555,5 +2555,260 @@ object MathPlotHelper {
             .replace("^{1}", "¹")
             .replace("^{*}", "*")
             .replace("*", "·")
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // GRAPH EXPRESSION EVALUATOR & LATEX NORMALIZER
+    // ─────────────────────────────────────────────────────────────────────────
+
+    fun cleanLatexForPlot(raw: String): String {
+        var text = raw.trim()
+
+        if (text.startsWith("```latex")) text = text.removePrefix("```latex").trim()
+        else if (text.startsWith("```tex")) text = text.removePrefix("```tex").trim()
+        else if (text.startsWith("```")) text = text.removePrefix("```").trim()
+        if (text.endsWith("```")) text = text.removeSuffix("```").trim()
+
+        if (text.startsWith("$$") && text.endsWith("$$") && text.length >= 4) {
+            text = text.substring(2, text.length - 2).trim()
+        } else if (text.startsWith("$") && text.endsWith("$") && text.length >= 2) {
+            text = text.substring(1, text.length - 1).trim()
+        } else if (text.startsWith("\\[") && text.endsWith("\\]")) {
+            text = text.substring(2, text.length - 2).trim()
+        } else if (text.startsWith("\\(") && text.endsWith("\\)")) {
+            text = text.substring(2, text.length - 2).trim()
+        }
+
+        text = text.replace("\\times", "*")
+            .replace("\\cdot", "*")
+            .replace("\\div", "/")
+            .replace("×", "*")
+            .replace("÷", "/")
+            .replace("\\pm", "+-")
+            .replace("\\pi", "pi")
+            .replace("\\left(", "(")
+            .replace("\\right)", ")")
+            .replace("\\left[", "(")
+            .replace("\\right]", ")")
+            .replace("\\{", "(")
+            .replace("\\}", ")")
+            .replace("\\,", " ")
+            .replace("\\;", " ")
+            .replace("\\quad", " ")
+            .replace("\\qquad", " ")
+
+        text = text.replace(Regex("(\\d+)\\s*[xX]\\s*(\\d+)"), "$1 * $2")
+        text = text.replace(Regex("(\\d+)\\s*:\\s*(\\d+)"), "$1 / $2")
+
+        if (!text.contains("\\lim")) {
+            text = text.replace(Regex("""\s*(?:\\rightarrow|\\to|\\Rightarrow|\\implies|-->|->|==>|=>|→|⇒)\s*"""), " = ")
+        }
+        text = text.replace(Regex("""\s*>\s*$"""), " =")
+        text = text.replace(Regex("""\s*(?:--|__|―|—)\s*$"""), " =")
+        text = text.replace(Regex("""={2,}"""), "=")
+        text = text.replace(Regex("""\s*=\s*"""), " = ")
+        if (text.endsWith(" = ")) {
+            text = text.trimEnd()
+        }
+
+        text = convertFractions(text)
+        text = convertSquareRoots(text)
+
+        text = text.replace("\\sin", "sin")
+            .replace("\\cos", "cos")
+            .replace("\\tan", "tan")
+            .replace("\\ln", "ln")
+            .replace("\\log", "log")
+            .replace("\\sqrt", "sqrt")
+            .replace("\\abs", "abs")
+
+        return text.trim()
+    }
+
+    private fun convertFractions(input: String): String {
+        var str = input
+        val fracKeyword = "\\frac"
+        while (str.contains(fracKeyword)) {
+            val idx = str.indexOf(fracKeyword)
+            var cursor = idx + fracKeyword.length
+            while (cursor < str.length && str[cursor].isWhitespace()) cursor++
+
+            if (cursor >= str.length || str[cursor] != '{') break
+            val numClose = findClosingBrace(str, cursor)
+            if (numClose == -1) break
+            val num = str.substring(cursor + 1, numClose)
+
+            cursor = numClose + 1
+            while (cursor < str.length && str[cursor].isWhitespace()) cursor++
+            if (cursor >= str.length || str[cursor] != '{') break
+            val denClose = findClosingBrace(str, cursor)
+            if (denClose == -1) break
+            val den = str.substring(cursor + 1, denClose)
+
+            val replacement = "(($num)/($den))"
+            str = str.substring(0, idx) + replacement + str.substring(denClose + 1)
+        }
+        return str
+    }
+
+    private fun convertSquareRoots(input: String): String {
+        var str = input
+        val sqrtKeyword = "\\sqrt"
+        while (str.contains(sqrtKeyword)) {
+            val idx = str.indexOf(sqrtKeyword)
+            var cursor = idx + sqrtKeyword.length
+            while (cursor < str.length && str[cursor].isWhitespace()) cursor++
+
+            var rootIndex: String? = null
+            if (cursor < str.length && str[cursor] == '[') {
+                val closeBracket = str.indexOf(']', cursor)
+                if (closeBracket != -1) {
+                    rootIndex = str.substring(cursor + 1, closeBracket)
+                    cursor = closeBracket + 1
+                }
+            }
+
+            while (cursor < str.length && str[cursor].isWhitespace()) cursor++
+            if (cursor >= str.length || str[cursor] != '{') break
+            val closeBrace = findClosingBrace(str, cursor)
+            if (closeBrace == -1) break
+            val content = str.substring(cursor + 1, closeBrace)
+
+            val replacement = if (rootIndex != null) {
+                "(($content)^(1/($rootIndex)))"
+            } else {
+                "sqrt($content)"
+            }
+            str = str.substring(0, idx) + replacement + str.substring(closeBrace + 1)
+        }
+        return str
+    }
+
+    private fun findClosingBrace(str: String, openIdx: Int): Int {
+        var depth = 0
+        for (i in openIdx until str.length) {
+            if (str[i] == '{') depth++
+            else if (str[i] == '}') {
+                depth--
+                if (depth == 0) return i
+            }
+        }
+        return -1
+    }
+
+    fun evaluateExpression(str: String): Double? {
+        val cleaned = str.replace(" ", "")
+            .replace("pi", Math.PI.toString())
+            .replace("e", Math.E.toString())
+
+        return try {
+            val parser = NumericExpressionParser(cleaned)
+            val result = parser.parse()
+            if (result.isNaN() || result.isInfinite()) null else result
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private class NumericExpressionParser(private val text: String) {
+        private var pos = -1
+        private var ch = ' '
+
+        private fun nextChar() {
+            pos++
+            ch = if (pos < text.length) text[pos] else '\u0000'
+        }
+
+        private fun eat(charToEat: Char): Boolean {
+            while (ch == ' ') nextChar()
+            if (ch == charToEat) {
+                nextChar()
+                return true
+            }
+            return false
+        }
+
+        fun parse(): Double {
+            nextChar()
+            val x = parseExpression()
+            if (pos < text.length) throw RuntimeException("Unexpected: '$ch'")
+            return x
+        }
+
+        private fun parseExpression(): Double {
+            var x = parseTerm()
+            while (true) {
+                when {
+                    eat('+') -> x += parseTerm()
+                    eat('-') -> x -= parseTerm()
+                    else -> return x
+                }
+            }
+        }
+
+        private fun parseTerm(): Double {
+            var x = parseFactor()
+            while (true) {
+                when {
+                    eat('*') -> x *= parseFactor()
+                    eat('/') -> {
+                        val divisor = parseFactor()
+                        if (abs(divisor) < 1e-12) throw ArithmeticException("Division by zero")
+                        x /= divisor
+                    }
+                    eat('%') -> x %= parseFactor()
+                    else -> return x
+                }
+            }
+        }
+
+        private fun parseFactor(): Double {
+            if (eat('+')) return +parseFactor()
+            if (eat('-')) return -parseFactor()
+
+            var x: Double
+            val startPos = pos
+
+            if (eat('(')) {
+                x = parseExpression()
+                eat(')')
+            } else if (ch in '0'..'9' || ch == '.') {
+                while (ch in '0'..'9' || ch == '.' || ch == 'e' || ch == 'E' || ((ch == '+' || ch == '-') && pos > startPos && (text[pos - 1] == 'e' || text[pos - 1] == 'E'))) nextChar()
+                x = text.substring(startPos, pos).toDouble()
+            } else if (ch in 'a'..'z' || ch in 'A'..'Z') {
+                while (ch in 'a'..'z' || ch in 'A'..'Z') nextChar()
+                val func = text.substring(startPos, pos).lowercase(Locale.ROOT)
+                val arg = if (eat('(')) {
+                    val a = parseExpression()
+                    eat(')')
+                    a
+                } else {
+                    parseFactor()
+                }
+
+                x = when (func) {
+                    "sqrt" -> sqrt(arg)
+                    "cbrt" -> cbrt(arg)
+                    "sin" -> sin(arg)
+                    "cos" -> cos(arg)
+                    "tan" -> tan(arg)
+                    "asin" -> asin(arg)
+                    "acos" -> acos(arg)
+                    "atan" -> atan(arg)
+                    "ln" -> ln(arg)
+                    "log" -> log10(arg)
+                    "abs" -> abs(arg)
+                    "floor" -> floor(arg)
+                    "ceil" -> ceil(arg)
+                    "round" -> kotlin.math.round(arg)
+                    else -> throw RuntimeException("Unknown function: $func")
+                }
+            } else {
+                throw RuntimeException("Unexpected: '$ch'")
+            }
+
+            if (eat('^')) x = x.pow(parseFactor())
+            return x
+        }
     }
 }

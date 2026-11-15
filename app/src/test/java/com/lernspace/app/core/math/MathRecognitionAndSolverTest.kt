@@ -6,67 +6,6 @@ import org.junit.Test
 class MathRecognitionAndSolverTest {
 
     @Test
-    fun testCleanLatexNormalizesArrowsToEquals() {
-        val cases = listOf(
-            "2 + 2 \\rightarrow" to "2 + 2 =",
-            "2 + 2 ->" to "2 + 2 =",
-            "2 + 2 \\to" to "2 + 2 =",
-            "2 + 2 =>" to "2 + 2 =",
-            "2 + 2 →" to "2 + 2 =",
-            "2 + 2 ⇒" to "2 + 2 =",
-            "2 + 2 >" to "2 + 2 =",
-            "2 + 2 --" to "2 + 2 =",
-            "2 + 2 ==" to "2 + 2 =",
-            "2 + 2 \\rightarrow 4" to "2 + 2 = 4",
-            "2 + 2 -> 4" to "2 + 2 = 4"
-        )
-
-        for ((input, expected) in cases) {
-            val cleaned = MathLatexRecognizer.cleanLatex(input)
-            assertEquals("Failed for input '$input'", expected, cleaned)
-        }
-    }
-
-    @Test
-    fun testCleanLatexPreservesLimits() {
-        val limitExpr = "\\lim_{x \\to 0} \\frac{\\sin x}{x}"
-        val cleaned = MathLatexRecognizer.cleanLatex(limitExpr)
-        assertTrue(cleaned.contains("\\to"))
-        assertFalse(cleaned.contains("\\lim_{x = 0}"))
-    }
-
-    @Test
-    fun testMathSolverSolvesWithArrowOrEquals() {
-        val inputs = listOf(
-            "2 + 2 =",
-            "2 + 2 \\rightarrow",
-            "2 + 2 ->",
-            "2 + 2 \\to",
-            "2 + 2 =>",
-            "2 + 2 →",
-            "2 + 2"
-        )
-
-        for (input in inputs) {
-            val solution = MathSolver.solve(input)
-            assertNotNull("Solver returned null for '$input'", solution)
-            assertTrue("Solver marked unsolved for '$input'", solution!!.isSolved)
-            assertEquals("Result mismatch for '$input'", "4", solution.result)
-        }
-    }
-
-    @Test
-    fun testMathSolverSolvesFractionsAndArithmetic() {
-        val sol1 = MathSolver.solve("\\frac{10}{2} =")
-        assertNotNull(sol1)
-        assertEquals("5", sol1!!.result)
-
-        val sol2 = MathSolver.solve("3 * 5 + 10 / 2 =")
-        assertNotNull(sol2)
-        assertEquals("20", sol2!!.result)
-    }
-
-    @Test
     fun testQuadraticKeyPointsCalculation() {
         val expr = "x^2 - 4"
         val keys = MathPlotHelper.findKeyPoints(expr, -10f, 10f)
@@ -169,21 +108,6 @@ class MathRecognitionAndSolverTest {
         assertEquals(2, yInts.size)
         assertEquals(-5f, yInts[0].y, 0.01f)
         assertEquals(5f, yInts[1].y, 0.01f)
-    }
-
-    @Test
-    fun testFormatForCanvasNormalizesMathExpressions() {
-        val cases = listOf(
-            "x^2" to "\$\$\nx^2\n\$\$",
-            "\$\$x^2\$\$" to "\$\$\nx^2\n\$\$",
-            "\$x^2\$" to "\$\$\nx^2\n\$\$",
-            "x^2 + y^2 = 25" to "\$\$\nx^2 + y^2 = 25\n\$\$",
-            "(x - 2)^2 + (y - 3)^2 = 16" to "\$\$\n(x - 2)^2 + (y - 3)^2 = 16\n\$\$"
-        )
-        for ((input, expected) in cases) {
-            val formatted = MathLatexRecognizer.formatForCanvas(input)
-            assertEquals("Failed for input '$input'", expected, formatted)
-        }
     }
 
     @Test

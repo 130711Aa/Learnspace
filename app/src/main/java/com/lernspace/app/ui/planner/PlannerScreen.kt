@@ -71,7 +71,7 @@ fun PlannerScreen(
     var showImportKrsDialog by remember { mutableStateOf(false) }
     var showHybridSuggestDialog by remember { mutableStateOf(false) }
     var showAddDayAgendaDialog by remember { mutableStateOf(false) }
-    var selectedCalendarDay by remember { mutableIntStateOf(8) } // Selected date in Nov 2026
+    var selectedCalendarDay by remember { mutableIntStateOf(java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_MONTH)) }
     var selectedDayAgendaOffset by remember { mutableIntStateOf(0) }
 
     Column(
@@ -568,8 +568,8 @@ private fun CalendarDeadlineFullView(
     onViewSyllabus: (String?) -> Unit
 ) {
     // Determine weekday for selected day (Nov 1, 2026 was Sunday = 7; Nov 2 was Monday = 1)
-    val dayOfWeek = if (selectedDay % 7 == 1) 7 else (selectedDay % 7) - 1 // 1=Mon, 2=Tue.. 7=Sun
-    val classesOnDay = weeklyClasses.filter { it.dayOfWeek == if (dayOfWeek == 0) 7 else dayOfWeek }.sortedBy { it.startTime }
+    val dayOfWeek = ((selectedDay + 5) % 7) + 1 // 1=Mon, 2=Tue.. 7=Sun
+    val classesOnDay = weeklyClasses.filter { it.dayOfWeek == dayOfWeek }.sortedBy { it.startTime }
     val tasksOnDay = tasks.filter { it.dueDayNumber == selectedDay }
 
     Surface(
@@ -655,15 +655,16 @@ private fun CalendarDeadlineFullView(
                                 .weight(1f),
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
+                            val currentDayOfMonth = remember { java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_MONTH) }
                             week.forEach { dayNum ->
                                 val isSelected = dayNum == selectedDay
-                                val isToday = dayNum == 8
+                                val isToday = dayNum == currentDayOfMonth
                                 val dayTasks = tasks.filter { it.dueDayNumber == dayNum }
                                 val dayTasksCount = dayTasks.size
                                 val hasPendingTask = dayTasks.any { !it.isCompleted }
 
-                                val dOfWeek = if (dayNum % 7 == 1) 7 else (dayNum % 7) - 1
-                                val hasClass = weeklyClasses.any { it.dayOfWeek == (if (dOfWeek == 0) 7 else dOfWeek) }
+                                val dOfWeek = ((dayNum + 5) % 7) + 1
+                                val hasClass = weeklyClasses.any { it.dayOfWeek == dOfWeek }
 
                                 Surface(
                                     modifier = Modifier
@@ -3039,10 +3040,11 @@ internal fun InputTaskDialog(
     }
     var selectedTopic by remember { mutableStateOf<com.lernspace.app.ui.learning.TopicUi?>(null) }
 
-    // Date states (Default: initialDayNumber in November 2026)
+    // Date states (Default: initialDayNumber in current Month/Year)
+    val initialCal = remember { java.util.Calendar.getInstance() }
     var selectedDayNumber by remember { mutableIntStateOf(initialDayNumber.coerceIn(1, 30)) }
-    var selectedMonth by remember { mutableIntStateOf(10) } // 0-based: 10 = Nov
-    var selectedYear by remember { mutableIntStateOf(2026) }
+    var selectedMonth by remember { mutableIntStateOf(initialCal.get(java.util.Calendar.MONTH)) }
+    var selectedYear by remember { mutableIntStateOf(initialCal.get(java.util.Calendar.YEAR)) }
     var showDatePickerDialog by remember { mutableStateOf(false) }
 
     var dueTime by remember { mutableStateOf("23:59") }
@@ -3266,24 +3268,32 @@ internal fun InputTaskDialog(
                     }
 
                     // Quick Date Preset Chips
+                    val todayCal = remember { java.util.Calendar.getInstance() }
+                    val todayNum = todayCal.get(java.util.Calendar.DAY_OF_MONTH)
+                    val todayM = todayCal.get(java.util.Calendar.MONTH)
+                    val todayY = todayCal.get(java.util.Calendar.YEAR)
+                    val datePresets = remember(todayNum, todayM, todayY) {
+                        listOf(
+                            Triple(todayNum, "Hari Ini ($todayNum ${monthNamesId[todayM]})", todayNum),
+                            Triple((todayNum + 1).coerceAtMost(30), "Besok (${(todayNum + 1).coerceAtMost(30)} ${monthNamesId[todayM]})", (todayNum + 1).coerceAtMost(30)),
+                            Triple((todayNum + 2).coerceAtMost(30), "Lusa (${(todayNum + 2).coerceAtMost(30)} ${monthNamesId[todayM]})", (todayNum + 2).coerceAtMost(30)),
+                            Triple((todayNum + 7).coerceAtMost(30), "+1 Minggu (${(todayNum + 7).coerceAtMost(30)} ${monthNamesId[todayM]})", (todayNum + 7).coerceAtMost(30))
+                        )
+                    }
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        for ((_, label, dNum) in listOf(
-                            Triple(8, "Hari Ini (8 Nov)", 8),
-                            Triple(9, "Besok (9 Nov)", 9),
-                            Triple(10, "Lusa (10 Nov)", 10),
-                            Triple(15, "+1 Minggu (15 Nov)", 15)
-                        )) {
-                            val isSelected = selectedDayNumber == dNum && selectedMonth == 10 && selectedYear == 2026
+                        for ((_, label, dNum) in datePresets) {
+                            val isSelected = selectedDayNumber == dNum && selectedMonth == todayM && selectedYear == todayY
                             FilterChip(
                                 selected = isSelected,
                                 onClick = {
                                     selectedDayNumber = dNum
-                                    selectedMonth = 10
-                                    selectedYear = 2026
+                                    selectedMonth = todayM
+                                    selectedYear = todayY
                                 },
                                 label = { Text(label, fontSize = 11.sp) },
                                 shape = RoundedCornerShape(8.dp)

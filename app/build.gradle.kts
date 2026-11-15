@@ -13,8 +13,8 @@ android {
         applicationId = "com.lernspace.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 18
-        versionName = "1.7.5"
+        versionCode = 19
+        versionName = "1.8.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -91,8 +91,7 @@ dependencies {
     implementation("com.llamatik:library:0.12.0")
     implementation("com.facebook.fbjni:fbjni:0.7.0")
 
-    // ML Kit Digital Ink Recognition for Offline Vector Strokes & Text OCR
-    implementation("com.google.mlkit:digital-ink-recognition:19.0.0")
+    // ML Kit Text OCR
     implementation("com.google.mlkit:text-recognition:16.0.0")
 
     testImplementation(libs.junit)

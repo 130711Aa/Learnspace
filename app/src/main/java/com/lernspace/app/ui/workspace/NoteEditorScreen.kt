@@ -94,10 +94,6 @@ import androidx.ink.rendering.android.canvas.CanvasStrokeRenderer
 import androidx.ink.strokes.Stroke
 import com.lernspace.app.core.ai.GeminiApiClient
 import com.lernspace.app.core.ai.HandwrittenNoteRecognizer
-import com.lernspace.app.core.math.MathSolver
-import com.lernspace.app.core.math.MathSolution
-import com.lernspace.app.core.math.MathLatexRecognizer
-import com.lernspace.app.core.math.MathRecognitionResult
 import com.lernspace.app.core.math.MathPlotHelper
 import com.lernspace.app.core.audio.NoteAudioController
 import com.lernspace.app.ui.workspace.components.AudioLectureBar
@@ -421,22 +417,23 @@ class NotePaneState(
 
     fun goToPage(targetIndex: Int) {
         if (targetIndex != currentPageIndex && targetIndex in 0 until totalPages) {
+            saveActivePageData(immediate = true)
             currentPageIndex = targetIndex
             note.lastOpenedPageIndex = targetIndex
-            saveActivePageData(immediate = true)
             loadActivePageData(targetIndex)
             loadPdfPage()
         }
     }
 
     fun addNewPage() {
+        saveActivePageData(immediate = true)
         val newPage = NotePageData(pageIndex = note.pages.size)
         note.pages.add(newPage)
         totalPages = note.pages.size
         currentPageIndex = note.pages.size - 1
         note.lastOpenedPageIndex = currentPageIndex
-        saveActivePageData(immediate = true)
         loadActivePageData(currentPageIndex)
+        saveActivePageData(immediate = true)
     }
 
     fun deleteCurrentPage() {
@@ -466,6 +463,7 @@ class NotePaneState(
             note.pages.add(newPage)
             totalPages = note.pages.size
             currentPageIndex = note.pages.size - 1
+            note.lastOpenedPageIndex = currentPageIndex
             loadActivePageData(currentPageIndex)
             saveActivePageData(immediate = true)
         }
@@ -1377,7 +1375,18 @@ fun NoteEditorScreen(
 // COMPONENT: NotePaneViewport (Clean Full-Height Canvas Viewport)
 // ─────────────────────────────────────────────────────────────────────────────
 private fun cleanLatexFormula(raw: String): String {
-    return MathLatexRecognizer.cleanLatex(raw)
+    var text = raw.trim()
+    if (text.startsWith("```latex")) text = text.removePrefix("```latex").trim()
+    else if (text.startsWith("```tex")) text = text.removePrefix("```tex").trim()
+    else if (text.startsWith("```")) text = text.removePrefix("```").trim()
+    if (text.endsWith("```")) text = text.removeSuffix("```").trim()
+
+    if (text.startsWith("$$") && text.endsWith("$$") && text.length >= 4) {
+        text = text.substring(2, text.length - 2).trim()
+    } else if (text.startsWith("$") && text.endsWith("$") && text.length >= 2) {
+        text = text.substring(1, text.length - 1).trim()
+    }
+    return text.trim()
 }
 
 private fun formatLatexForCanvas(raw: String): String {
@@ -1420,70 +1429,12 @@ private fun NotePaneViewport(
     var lassoAiError by remember { mutableStateOf<String?>(null) }
     var lassoAiCustomPrompt by remember { mutableStateOf("") }
     var lassoAiMode by remember { mutableStateOf(LassoAiMode.AI_TUTOR) }
-    var mathSolverResult by remember { mutableStateOf<MathSolution?>(null) }
-
-    // Proactive background recognition as soon as lasso selection completes
-    var proactiveMathResult by remember { mutableStateOf<MathRecognitionResult?>(null) }
-    var isProactiveMathRecognizing by remember { mutableStateOf(false) }
-    var proactiveMathJob by remember { mutableStateOf<Job?>(null) }
-
-    LaunchedEffect(state.lassoSelection) {
-        val sel = state.lassoSelection
-        if (sel == null) {
-            proactiveMathJob?.cancel()
-            proactiveMathResult = null
-            isProactiveMathRecognizing = false
-            return@LaunchedEffect
-        }
-
-        val effectiveStrokes = if (sel.selectedStrokes.isNotEmpty()) {
-            sel.selectedStrokes.toList()
-        } else {
-            state.strokes.filter { LassoHelper.isStrokeInBounds(it, sel.bounds) }
-        }
-
-        if (effectiveStrokes.isEmpty()) {
-            proactiveMathResult = null
-            return@LaunchedEffect
-        }
-
-        val rendererSnapshot = state.canvasStrokeRenderer
-        proactiveMathJob?.cancel()
-        proactiveMathJob = coroutineScope.launch {
-            isProactiveMathRecognizing = true
-            try {
-                val cropBmp = withContext(Dispatchers.Default) {
-                    HandwrittenNoteRecognizer.renderStrokesToBitmap(
-                        strokes = effectiveStrokes,
-                        renderer = rendererSnapshot,
-                        maxDim = 800
-                    )
-                }
-                val result = MathLatexRecognizer.recognizeMath(effectiveStrokes, cropBmp)
-                if (result.latex.isNotBlank()) {
-                    proactiveMathResult = result
-                }
-            } catch (_: Exception) {
-            } finally {
-                isProactiveMathRecognizing = false
-            }
-        }
-    }
-
-    LaunchedEffect(lassoAiResponse, lassoAiMode) {
-        if (lassoAiMode == LassoAiMode.FORMULA && !lassoAiResponse.isNullOrBlank()) {
-            mathSolverResult = MathSolver.solve(lassoAiResponse ?: "")
-        } else {
-            mathSolverResult = null
-        }
-    }
 
     val triggerLassoAi: (LassoSelectionState, String, LassoAiMode) -> Unit = { sel, customQuestion, mode ->
         lassoAiMode = mode
         showLassoAiDialog = true
         lassoAiResponse = null
         lassoAiError = null
-        mathSolverResult = null
         val darkPaperBg = if (state.isDarkPaper) android.graphics.Color.rgb(30, 30, 38) else android.graphics.Color.WHITE
         val rendererSnapshot = state.canvasStrokeRenderer
 
@@ -1493,41 +1444,7 @@ private fun NotePaneViewport(
             state.strokes.filter { LassoHelper.isStrokeInBounds(it, sel.bounds) }
         }
 
-        if (mode == LassoAiMode.FORMULA && effectiveStrokes.isNotEmpty()) {
-            val precomputed = proactiveMathResult
-            if (precomputed != null && precomputed.latex.isNotBlank()) {
-                // Instant! Precomputed in background while lasso finished
-                lassoAiResponse = precomputed.latex
-                mathSolverResult = precomputed.solution
-                isAskingLassoAi = false
-            } else {
-                isAskingLassoAi = true
-                lassoAiJob?.cancel()
-                lassoAiJob = coroutineScope.launch {
-                    val cropBmp = withContext(Dispatchers.Default) {
-                        HandwrittenNoteRecognizer.renderStrokesToBitmap(
-                            strokes = effectiveStrokes,
-                            renderer = rendererSnapshot,
-                            maxDim = 800
-                        )
-                    }
-                    val result = MathLatexRecognizer.recognizeMath(effectiveStrokes, cropBmp)
-                    if (result.latex.isNotBlank()) {
-                        lassoAiResponse = result.latex
-                        mathSolverResult = result.solution
-                    } else {
-                        val downloaded = MathLatexRecognizer.isOfflineMathModelDownloaded()
-                        if (!downloaded && !GeminiApiClient.isConfigured()) {
-                            lassoAiError = "Model matematika offline (~20 MB) sedang diunduh. Hubungkan Gemini API untuk akurasi instan."
-                            MathLatexRecognizer.downloadOfflineMathModel()
-                        } else {
-                            lassoAiError = "Tidak dapat mengenali tulisan matematika. Pastikan coretan terbaca jelas."
-                        }
-                    }
-                    isAskingLassoAi = false
-                }
-            }
-        } else if (!GeminiApiClient.isConfigured()) {
+        if (!GeminiApiClient.isConfigured()) {
             isAskingLassoAi = false
             lassoAiError = "Gemini API Key belum diatur. Buka Pengaturan -> AI & Integrasi untuk memasukkan API Key gratis kamu."
         } else {
@@ -2600,15 +2517,15 @@ private fun NotePaneViewport(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     if (hasAiContent) {
-                                        // 📈 Tombol Langsung Buka Grafik jika Terdeteksi Fungsi / Lingkaran
-                                        val mathFormula = proactiveMathResult?.latex?.trim() ?: ""
+                                        // 📈 Tombol Langsung Buka Grafik jika Terdeteksi Fungsi / Lingkaran dari Kotak Teks
+                                        val mathFormula = state.lassoSelection?.selectedTextBoxes?.firstOrNull()?.text?.trim() ?: ""
                                         val isGraphable = mathFormula.isNotBlank() && MathPlotHelper.isPlottableFunction(mathFormula)
                                         if (isGraphable) {
                                             Surface(
                                                 shape = RoundedCornerShape(8.dp),
                                                 color = Color(0xFF0284C7),
                                                 modifier = Modifier.clickable {
-                                                    onOpenGraph(mathFormula)
+                                                    onOpenGraph(cleanLatexFormula(mathFormula))
                                                     state.lassoSelection = null
                                                 }
                                             ) {
@@ -3269,54 +3186,6 @@ private fun NotePaneViewport(
                                             modifier = Modifier.fillMaxWidth()
                                         )
 
-                                        val currentSolution = mathSolverResult
-                                        if (lassoAiMode == LassoAiMode.FORMULA && currentSolution != null && currentSolution.isSolved) {
-                                            Spacer(Modifier.height(8.dp))
-                                            Surface(
-                                                shape = RoundedCornerShape(8.dp),
-                                                color = if (LocalIsDarkTheme.current) Color(0xFF1E293B) else Color(0xFFF1F5F9),
-                                                border = BorderStroke(1.dp, LernspaceBorder),
-                                                modifier = Modifier.fillMaxWidth()
-                                            ) {
-                                                Column(
-                                                    modifier = Modifier.padding(10.dp),
-                                                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                                                ) {
-                                                    Row(
-                                                        verticalAlignment = Alignment.CenterVertically,
-                                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                                    ) {
-                                                        Icon(
-                                                            Icons.Filled.Calculate,
-                                                            contentDescription = null,
-                                                            tint = LernspaceDark,
-                                                            modifier = Modifier.size(15.dp)
-                                                        )
-                                                        Text(
-                                                            text = "Math Solver (Dihitung Otomatis)",
-                                                            fontSize = 12.sp,
-                                                            fontWeight = FontWeight.Bold,
-                                                            color = LernspaceDark
-                                                        )
-                                                    }
-                                                    Text(
-                                                        text = "Hasil: ${currentSolution.result}",
-                                                        fontSize = 14.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = LernspaceTextPrimary
-                                                    )
-                                                    if (currentSolution.steps.isNotEmpty()) {
-                                                        Text(
-                                                            text = currentSolution.steps.joinToString("\n") { "• $it" },
-                                                            fontSize = 11.5.sp,
-                                                            color = LernspaceTextSecondary,
-                                                            lineHeight = 16.sp
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        }
-
                                         val currentFormulaReply = lassoAiResponse ?: ""
                                         val detectedCircle = remember(currentFormulaReply) { MathPlotHelper.parseCircle(currentFormulaReply) }
                                         if (lassoAiMode == LassoAiMode.FORMULA && MathPlotHelper.isPlottableFunction(currentFormulaReply)) {
@@ -3373,8 +3242,6 @@ private fun NotePaneViewport(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             if (lassoAiMode == LassoAiMode.FORMULA) {
-                                val solution = mathSolverResult
-
                                 // 1. Salin LaTeX
                                 OutlinedButton(
                                     onClick = {
@@ -3394,7 +3261,7 @@ private fun NotePaneViewport(
                                 if (MathPlotHelper.isPlottableFunction(reply)) {
                                     Button(
                                         onClick = {
-                                            onOpenGraph(reply)
+                                            onOpenGraph(cleanLatexFormula(reply))
                                             showLassoAiDialog = false
                                         },
                                         shape = RoundedCornerShape(8.dp),
@@ -3409,110 +3276,40 @@ private fun NotePaneViewport(
                                     }
                                 }
 
-                                if (solution != null && solution.isSolved) {
-                                    // 2. Gantikan + Hasil (Formula + Solusi Dihitung)
-                                    Button(
-                                        onClick = {
-                                            state.pushUndoSnapshot()
-                                            state.strokes.removeAll(sel.selectedStrokes)
-                                            val boxW = maxOf(sel.bounds.width + 48f, 240f)
-                                            val boxH = maxOf(sel.bounds.height + 28f, 80f)
-                                            state.textBoxes.add(
-                                                TextBoxElement(
-                                                    x = sel.bounds.left.coerceAtLeast(16f),
-                                                    y = sel.bounds.top.coerceAtLeast(16f),
-                                                    width = boxW,
-                                                    height = boxH,
-                                                    text = solution.fullEquationLatex,
-                                                    isSelected = false,
-                                                    fontSize = 32f,
-                                                    hasBackground = false
-                                                )
+                                // 2. Gantikan Tulisan (In-Place Replace)
+                                Button(
+                                    onClick = {
+                                        val formatted = formatLatexForCanvas(reply)
+                                        state.pushUndoSnapshot()
+                                        state.strokes.removeAll(sel.selectedStrokes)
+                                        val boxW = maxOf(sel.bounds.width + 48f, 220f)
+                                        val boxH = maxOf(sel.bounds.height + 28f, 80f)
+                                        state.textBoxes.add(
+                                            TextBoxElement(
+                                                x = sel.bounds.left.coerceAtLeast(16f),
+                                                y = sel.bounds.top.coerceAtLeast(16f),
+                                                width = boxW,
+                                                height = boxH,
+                                                text = formatted,
+                                                isSelected = false,
+                                                fontSize = 32f,
+                                                hasBackground = false
                                             )
-                                            state.saveActivePageData()
-                                            showLassoAiDialog = false
-                                            state.lassoSelection = null
-                                        },
-                                        shape = RoundedCornerShape(8.dp),
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = LernspaceDark,
-                                            contentColor = LernspaceSurfaceCard
-                                        ),
-                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                                    ) {
-                                        Icon(Icons.Filled.Calculate, contentDescription = null, modifier = Modifier.size(14.dp), tint = LernspaceSurfaceCard)
-                                        Spacer(Modifier.width(4.dp))
-                                        Text("Gantikan + Hasil", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                                    }
-
-                                    // 3. Gantikan Rumus Saja
-                                    OutlinedButton(
-                                        onClick = {
-                                            val formatted = formatLatexForCanvas(reply)
-                                            state.pushUndoSnapshot()
-                                            state.strokes.removeAll(sel.selectedStrokes)
-                                            val boxW = maxOf(sel.bounds.width + 48f, 220f)
-                                            val boxH = maxOf(sel.bounds.height + 28f, 80f)
-                                            state.textBoxes.add(
-                                                TextBoxElement(
-                                                    x = sel.bounds.left.coerceAtLeast(16f),
-                                                    y = sel.bounds.top.coerceAtLeast(16f),
-                                                    width = boxW,
-                                                    height = boxH,
-                                                    text = formatted,
-                                                    isSelected = false,
-                                                    fontSize = 32f,
-                                                    hasBackground = false
-                                                )
-                                            )
-                                            state.saveActivePageData()
-                                            showLassoAiDialog = false
-                                            state.lassoSelection = null
-                                        },
-                                        shape = RoundedCornerShape(8.dp),
-                                        border = BorderStroke(1.dp, LernspaceBorder),
-                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
-                                    ) {
-                                        Icon(Icons.Filled.AutoFixHigh, contentDescription = null, modifier = Modifier.size(14.dp), tint = LernspaceTextPrimary)
-                                        Spacer(Modifier.width(4.dp))
-                                        Text("Rumus Saja", fontSize = 12.sp, color = LernspaceTextPrimary)
-                                    }
-                                } else {
-                                    // 2. Gantikan Tulisan (In-Place Replace tanpa hasil hitung)
-                                    Button(
-                                        onClick = {
-                                            val formatted = formatLatexForCanvas(reply)
-                                            state.pushUndoSnapshot()
-                                            state.strokes.removeAll(sel.selectedStrokes)
-                                            val boxW = maxOf(sel.bounds.width + 48f, 220f)
-                                            val boxH = maxOf(sel.bounds.height + 28f, 80f)
-                                            state.textBoxes.add(
-                                                TextBoxElement(
-                                                    x = sel.bounds.left.coerceAtLeast(16f),
-                                                    y = sel.bounds.top.coerceAtLeast(16f),
-                                                    width = boxW,
-                                                    height = boxH,
-                                                    text = formatted,
-                                                    isSelected = false,
-                                                    fontSize = 32f,
-                                                    hasBackground = false
-                                                )
-                                            )
-                                            state.saveActivePageData()
-                                            showLassoAiDialog = false
-                                            state.lassoSelection = null
-                                        },
-                                        shape = RoundedCornerShape(8.dp),
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = LernspaceDark,
-                                            contentColor = LernspaceSurfaceCard
-                                        ),
-                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                                    ) {
-                                        Icon(Icons.Filled.AutoFixHigh, contentDescription = null, modifier = Modifier.size(14.dp), tint = LernspaceSurfaceCard)
-                                        Spacer(Modifier.width(4.dp))
-                                        Text("Gantikan Tulisan", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                                    }
+                                        )
+                                        state.saveActivePageData()
+                                        showLassoAiDialog = false
+                                        state.lassoSelection = null
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = LernspaceDark,
+                                        contentColor = LernspaceSurfaceCard
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(Icons.Filled.AutoFixHigh, contentDescription = null, modifier = Modifier.size(14.dp), tint = LernspaceSurfaceCard)
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Gantikan Tulisan", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                                 }
                             } else {
                                 // Salin Teks Penjelasan
@@ -3540,7 +3337,7 @@ private fun NotePaneViewport(
                                         val insertY = (sel.bounds.bottom + 24f).coerceAtLeast(32f)
                                         state.pushUndoSnapshot()
                                         val textToInsert = if (lassoAiMode == LassoAiMode.FORMULA) {
-                                            mathSolverResult?.takeIf { it.isSolved }?.fullEquationLatex ?: formatLatexForCanvas(reply)
+                                            formatLatexForCanvas(reply)
                                         } else {
                                             reply
                                         }
@@ -3592,31 +3389,20 @@ private fun NotePaneViewport(
                         ) {
                             val reply = lassoAiResponse
                             val sel = state.lassoSelection
-                            val solution = mathSolverResult
                             if (!reply.isNullOrBlank() && sel != null && lassoAiMode == LassoAiMode.FORMULA) {
                                 if (MathPlotHelper.isPlottableFunction(reply)) {
                                     TextButton(
                                         onClick = {
-                                            onOpenGraph(reply)
+                                            onOpenGraph(cleanLatexFormula(reply))
                                             showLassoAiDialog = false
                                         }
                                     ) {
                                         Text("📈 Grafik Floating", fontSize = 12.sp, color = if (state.isDarkPaper) Color(0xFF38BDF8) else Color(0xFF0284C7), fontWeight = FontWeight.Bold)
                                     }
                                 }
-                                if (solution != null && solution.isSolved) {
-                                    TextButton(
-                                        onClick = {
-                                            clipboard.setText(AnnotatedString(solution.result))
-                                            Toast.makeText(context, "Hasil ${solution.result} disalin", Toast.LENGTH_SHORT).show()
-                                        }
-                                    ) {
-                                        Text("Salin Hasil", fontSize = 12.sp, color = LernspaceDark, fontWeight = FontWeight.SemiBold)
-                                    }
-                                }
                                 TextButton(
                                     onClick = {
-                                        val formatted = if (solution != null && solution.isSolved) solution.fullEquationLatex else formatLatexForCanvas(reply)
+                                        val formatted = formatLatexForCanvas(reply)
                                         val insertX = sel.bounds.left.coerceAtLeast(32f)
                                         val insertY = (sel.bounds.bottom + 20f).coerceAtLeast(32f)
                                         val boxW = maxOf(sel.bounds.width + 48f, 220f)

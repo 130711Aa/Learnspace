@@ -35,7 +35,6 @@ import com.lernspace.app.BuildConfig
 import com.lernspace.app.core.ai.GeminiApiClient
 import com.lernspace.app.core.ai.LocalSlmManager
 import com.lernspace.app.core.ai.SlmModelSpec
-import com.lernspace.app.core.math.MathLatexRecognizer
 import com.lernspace.app.core.updater.AppReleaseInfo
 import com.lernspace.app.core.updater.UpdateManager
 import com.lernspace.app.data.local.AppSettingsManager
@@ -1707,50 +1706,6 @@ private fun OfflineSlmSection() {
                 }
 
                 HorizontalDivider(color = LernspaceBorder)
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Vector Digital Ink Math (Offline)", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = LernspaceDark)
-                        Text("Model pengenal trajektori coretan stylus offline (~20 MB) untuk konversi rumus matematika.", fontSize = 11.5.sp, color = LernspaceTextSecondary)
-                    }
-                    var isInkDownloaded by remember { mutableStateOf(false) }
-                    LaunchedEffect(Unit) {
-                        isInkDownloaded = MathLatexRecognizer.isOfflineMathModelDownloaded()
-                    }
-                    if (isInkDownloaded) {
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = Color(0xFF10B981).copy(alpha = 0.12f),
-                            border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.3f))
-                        ) {
-                            Text(
-                                text = "TERUNDUH",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF059669),
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                            )
-                        }
-                    } else {
-                        OutlinedButton(
-                            onClick = {
-                                coroutineScope.launch {
-                                    Toast.makeText(context, "Mulai mengunduh model vektor matematika...", Toast.LENGTH_SHORT).show()
-                                    val ok = MathLatexRecognizer.downloadOfflineMathModel()
-                                    if (ok) isInkDownloaded = true
-                                }
-                            },
-                            shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
-                        ) {
-                            Text("Unduh (~20 MB)", fontSize = 11.sp)
-                        }
-                    }
-                }
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),

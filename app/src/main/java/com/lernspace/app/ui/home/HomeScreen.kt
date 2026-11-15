@@ -23,13 +23,42 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lernspace.app.data.repository.AcademicWorkspaceState
 import com.lernspace.app.data.repository.TaskUiModel
+import com.lernspace.app.data.repository.WeeklyClassUi
 import com.lernspace.app.navigation.Screen
 import com.lernspace.app.ui.learning.TopicStatus
 import com.lernspace.app.ui.planner.InputTaskDialog
 import com.lernspace.app.ui.theme.*
 import com.lernspace.app.ui.workspace.NoteEditorScreen
 import com.lernspace.app.ui.workspace.model.NoteUiModel
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
 import java.util.UUID
+
+private fun parseTimeToMinutes(timeStr: String): Int {
+    val parts = timeStr.trim().split(":")
+    if (parts.size >= 2) {
+        val h = parts[0].toIntOrNull() ?: 0
+        val m = parts[1].toIntOrNull() ?: 0
+        return h * 60 + m
+    }
+    return 0
+}
+
+enum class ClassTimingStatus {
+    ONGOING,
+    UPCOMING_TODAY,
+    UPCOMING_NEXT_DAY,
+    NONE
+}
+
+data class NextUpScheduleInfo(
+    val weeklyClass: WeeklyClassUi?,
+    val status: ClassTimingStatus,
+    val badgeLabel: String,
+    val badgeColor: Color,
+    val dayLabel: String
+)
 
 @Composable
 fun HomeScreen(
@@ -45,10 +74,109 @@ fun HomeScreen(
     val isDark = LocalIsDarkTheme.current
     var showAddTaskDialog by remember { mutableStateOf(false) }
 
-    // Computed values (memoized to avoid redundant re-filtering)
-    val mondayClasses = remember(weeklyClasses.size) {
-        weeklyClasses.filter { it.dayOfWeek == 1 }.sortedBy { it.startTime }
+    // Dynamic Live Date & Time Engine
+    val now = remember { Calendar.getInstance() }
+    val formattedCurrentDate = remember {
+        val cal = Calendar.getInstance()
+        val sdf = SimpleDateFormat("EEEE, d MMM yyyy", Locale("id", "ID"))
+        val res = sdf.format(cal.time)
+        res.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale("id", "ID")) else it.toString() }
     }
+
+    val javaDow = now.get(Calendar.DAY_OF_WEEK)
+    val currentDayOfWeek = if (javaDow == Calendar.SUNDAY) 7 else javaDow - 1 // 1=Mon ... 7=Sun
+    val currentDayName = when (currentDayOfWeek) {
+        1 -> "Senin"
+        2 -> "Selasa"
+        3 -> "Rabu"
+        4 -> "Kamis"
+        5 -> "Jumat"
+        6 -> "Sabtu"
+        else -> "Minggu"
+    }
+
+    val currentMinutes = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE)
+
+    // Today's classes sorted by start time
+    val todayClasses = remember(weeklyClasses.toList(), currentDayOfWeek) {
+        weeklyClasses.filter { it.dayOfWeek == currentDayOfWeek }.sortedBy { parseTimeToMinutes(it.startTime) }
+    }
+
+    // Smart Upcoming Schedule Item (ala live timetable)
+    val nextUpSchedule = remember(weeklyClasses.toList(), todayClasses, currentDayOfWeek, currentMinutes) {
+        // 1. Ongoing class right now
+        val ongoingToday = todayClasses.firstOrNull { c ->
+            val startM = parseTimeToMinutes(c.startTime)
+            val endM = parseTimeToMinutes(c.endTime)
+            currentMinutes in startM..endM
+        }
+        if (ongoingToday != null) {
+            return@remember NextUpScheduleInfo(
+                weeklyClass = ongoingToday,
+                status = ClassTimingStatus.ONGOING,
+                badgeLabel = "SEDANG BERLANGSUNG · HINGGA ${ongoingToday.endTime}",
+                badgeColor = Color(0xFF10B981),
+                dayLabel = "Hari Ini ($currentDayName)"
+            )
+        }
+
+        // 2. Upcoming class today later
+        val upcomingToday = todayClasses.firstOrNull { c ->
+            parseTimeToMinutes(c.startTime) > currentMinutes
+        }
+        if (upcomingToday != null) {
+            return@remember NextUpScheduleInfo(
+                weeklyClass = upcomingToday,
+                status = ClassTimingStatus.UPCOMING_TODAY,
+                badgeLabel = "${upcomingToday.startTime} · UPCOMING CLASS HARI INI",
+                badgeColor = AccentTeal,
+                dayLabel = "Hari Ini ($currentDayName)"
+            )
+        }
+
+        // 3. Next closest class in the upcoming days (tomorrow through next week)
+        for (offset in 1..7) {
+            val targetDay = ((currentDayOfWeek - 1 + offset) % 7) + 1
+            val classesOnTargetDay = weeklyClasses
+                .filter { it.dayOfWeek == targetDay }
+                .sortedBy { parseTimeToMinutes(it.startTime) }
+
+            if (classesOnTargetDay.isNotEmpty()) {
+                val nextClass = classesOnTargetDay.first()
+                val targetDayName = when (targetDay) {
+                    1 -> "Senin"
+                    2 -> "Selasa"
+                    3 -> "Rabu"
+                    4 -> "Kamis"
+                    5 -> "Jumat"
+                    6 -> "Sabtu"
+                    else -> "Minggu"
+                }
+                val relativeLabel = if (offset == 1) "Besok ($targetDayName)" else targetDayName
+                return@remember NextUpScheduleInfo(
+                    weeklyClass = nextClass,
+                    status = ClassTimingStatus.UPCOMING_NEXT_DAY,
+                    badgeLabel = "$targetDayName, ${nextClass.startTime} · JADWAL TERDEKAT",
+                    badgeColor = AccentBlue,
+                    dayLabel = relativeLabel
+                )
+            }
+        }
+
+        NextUpScheduleInfo(
+            weeklyClass = null,
+            status = ClassTimingStatus.NONE,
+            badgeLabel = "TIDAK ADA JADWAL KELAS",
+            badgeColor = Color(0xFF64748B),
+            dayLabel = ""
+        )
+    }
+
+    val nextUpClass = nextUpSchedule.weeklyClass
+    val nextUpTopic = remember(nextUpClass, topics.size) {
+        topics.find { it.subjectId == nextUpClass?.subjectId } ?: topics.firstOrNull()
+    }
+
     val pendingTasks = remember(tasks.size, tasks.map { it.isCompleted }) {
         tasks.filter { !it.isCompleted }.sortedBy { it.dueDayNumber }
     }
@@ -57,12 +185,6 @@ fun HomeScreen(
     }
     val recentNotes = remember(notes.size) {
         notes.take(4)
-    }
-
-    // Next Up hero schedule item
-    val nextUpClass = remember(mondayClasses) { mondayClasses.firstOrNull() }
-    val nextUpTopic = remember(nextUpClass, topics.size) {
-        topics.find { it.subjectId == nextUpClass?.subjectId } ?: topics.firstOrNull()
     }
 
     Column(
@@ -91,7 +213,7 @@ fun HomeScreen(
                     border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder)
                 ) {
                     Text(
-                        text = "Senin, 8 Nov 2026",
+                        text = formattedCurrentDate,
                         style = MaterialTheme.typography.labelSmall,
                         color = LernspaceTextSecondary,
                         fontWeight = FontWeight.Bold,
@@ -156,7 +278,7 @@ fun HomeScreen(
                         .weight(1f),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    // 1. Hero Card: Next Up Session
+                    // 1. Hero Card: Next Up Session (Smart Upcoming Schedule)
                     item {
                         Surface(
                             modifier = Modifier.fillMaxWidth(),
@@ -171,7 +293,7 @@ fun HomeScreen(
                                     modifier = Modifier
                                         .width(6.dp)
                                         .fillMaxHeight()
-                                        .background(AccentTeal)
+                                        .background(nextUpSchedule.badgeColor)
                                 )
                                 Column(
                                     modifier = Modifier
@@ -186,7 +308,7 @@ fun HomeScreen(
                                     ) {
                                         Surface(
                                             shape = RoundedCornerShape(12.dp),
-                                            color = AccentBlueContainer
+                                            color = nextUpSchedule.badgeColor.copy(alpha = 0.15f)
                                         ) {
                                             Row(
                                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -197,10 +319,10 @@ fun HomeScreen(
                                                     imageVector = Icons.Filled.Schedule,
                                                     contentDescription = null,
                                                     modifier = Modifier.size(12.dp),
-                                                    tint = LernspaceDark
+                                                    tint = nextUpSchedule.badgeColor
                                                 )
                                                 Text(
-                                                    text = if (nextUpClass != null) "${nextUpClass.startTime} · UPCOMING CLASS" else "TIDAK ADA KELAS HARI INI",
+                                                    text = nextUpSchedule.badgeLabel,
                                                     style = MaterialTheme.typography.labelSmall,
                                                     fontWeight = FontWeight.Bold,
                                                     color = LernspaceDark
@@ -224,15 +346,27 @@ fun HomeScreen(
                                     }
 
                                     Column {
+                                        val heroTitle = nextUpTopic?.title ?: if (nextUpClass != null) {
+                                            if (nextUpClass.subjectCode.isNotBlank()) "${nextUpClass.subjectName} (${nextUpClass.subjectCode})" else nextUpClass.subjectName
+                                        } else "Mulai Sesi Belajar Anda"
+
+                                        val heroSubtitle = nextUpTopic?.description ?: if (nextUpClass != null) {
+                                            buildString {
+                                                append("${nextUpSchedule.dayLabel} • ${nextUpClass.startTime} - ${nextUpClass.endTime}")
+                                                if (!nextUpClass.room.isNullOrBlank()) append(" • Ruang: ${nextUpClass.room}")
+                                                if (!nextUpClass.lecturer.isNullOrBlank()) append(" • Dosen: ${nextUpClass.lecturer}")
+                                            }
+                                        } else "Pilih materi di silabus atau buat catatan baru di Canvas Workspace."
+
                                         Text(
-                                            text = nextUpTopic?.title ?: "Mulai Sesi Belajar Anda",
+                                            text = heroTitle,
                                             style = MaterialTheme.typography.titleLarge,
                                             fontWeight = FontWeight.Bold,
                                             color = LernspaceDark
                                         )
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
-                                            text = nextUpTopic?.description ?: "Pilih materi di silabus atau buat catatan baru di Canvas Workspace.",
+                                            text = heroSubtitle,
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = LernspaceTextSecondary
                                         )
@@ -259,6 +393,21 @@ fun HomeScreen(
                                                             AcademicWorkspaceState.openNoteEditor(newScratchpad)
                                                         }
                                                     }
+                                                } else if (nextUpClass != null) {
+                                                    val targetClass = nextUpClass
+                                                    val subj = subjects.find { it.id == targetClass.subjectId } ?: subjects.firstOrNull()
+                                                    if (subj != null) {
+                                                        val existing = notes.find { it.subjectId == subj.id }
+                                                        if (existing != null) {
+                                                            AcademicWorkspaceState.openNoteEditor(existing)
+                                                        } else {
+                                                            val newScratchpad = AcademicWorkspaceState.createScratchpad(title = "Catatan ${subj.name}")
+                                                            AcademicWorkspaceState.openNoteEditor(newScratchpad)
+                                                        }
+                                                    } else {
+                                                        val newScratchpad = AcademicWorkspaceState.createScratchpad(title = targetClass.subjectName)
+                                                        AcademicWorkspaceState.openNoteEditor(newScratchpad)
+                                                    }
                                                 } else {
                                                     val newScratchpad = AcademicWorkspaceState.createScratchpad()
                                                     AcademicWorkspaceState.openNoteEditor(newScratchpad)
@@ -276,16 +425,32 @@ fun HomeScreen(
                                             Text("Buka Catatan Canvas", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                                         }
 
-                                        // View in Syllabus
+                                        // View in Syllabus or Planner
                                         OutlinedButton(
-                                            onClick = { onNavigateToScreen(Screen.Learning.route) },
+                                            onClick = {
+                                                if (nextUpTopic != null) {
+                                                    onNavigateToScreen(Screen.Learning.route)
+                                                } else {
+                                                    onNavigateToScreen(Screen.Planner.route)
+                                                }
+                                            },
                                             shape = RoundedCornerShape(8.dp),
                                             border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder),
                                             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
                                         ) {
-                                            Icon(Icons.Filled.AutoStories, null, modifier = Modifier.size(15.dp), tint = LernspaceDark)
+                                            Icon(
+                                                imageVector = if (nextUpTopic != null) Icons.Filled.AutoStories else Icons.Filled.CalendarMonth,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(15.dp),
+                                                tint = LernspaceDark
+                                            )
                                             Spacer(modifier = Modifier.width(6.dp))
-                                            Text("Lihat di Silabus", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = LernspaceDark)
+                                            Text(
+                                                text = if (nextUpTopic != null) "Lihat di Silabus" else "Lihat di Jadwal Kuliah",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = LernspaceDark
+                                            )
                                         }
                                     }
                                 }
@@ -293,7 +458,7 @@ fun HomeScreen(
                         }
                     }
 
-                    // 2. Section: Jadwal Kuliah Hari Ini (Monday)
+                    // 2. Section: Jadwal Kuliah Hari Ini (Real-time dynamic)
                     item {
                         Surface(
                             modifier = Modifier.fillMaxWidth(),
@@ -316,7 +481,7 @@ fun HomeScreen(
                                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
                                         Text(
-                                            text = "Jadwal Kuliah Hari Ini (Senin)",
+                                            text = "Jadwal Kuliah Hari Ini ($currentDayName)",
                                             style = MaterialTheme.typography.titleMedium,
                                             fontWeight = FontWeight.Bold,
                                             color = LernspaceDark
@@ -327,7 +492,7 @@ fun HomeScreen(
                                             border = BorderStroke(1.dp, LernspaceBorder)
                                         ) {
                                             Text(
-                                                text = "${mondayClasses.size} Kelas",
+                                                text = "${todayClasses.size} Kelas",
                                                 fontSize = 11.sp,
                                                 fontWeight = FontWeight.Bold,
                                                 color = LernspaceDark,
@@ -356,22 +521,58 @@ fun HomeScreen(
                                     }
                                 }
 
-                                if (mondayClasses.isEmpty()) {
-                                    Text(
-                                        text = "Tidak ada jadwal kuliah hari ini.",
-                                        fontSize = 12.sp,
-                                        color = LernspaceTextSecondary
-                                    )
+                                if (todayClasses.isEmpty()) {
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = LernspaceSurfaceLow,
+                                        border = BorderStroke(1.dp, LernspaceBorder),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(12.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Filled.EventAvailable,
+                                                contentDescription = null,
+                                                tint = AccentTeal,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Column {
+                                                Text(
+                                                    text = "Tidak ada jadwal kuliah hari ini ($currentDayName)",
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = LernspaceDark
+                                                )
+                                                if (nextUpClass != null) {
+                                                    Text(
+                                                        text = "Jadwal terdekat: ${nextUpClass.subjectName} (${nextUpSchedule.dayLabel}, ${nextUpClass.startTime})",
+                                                        fontSize = 11.sp,
+                                                        color = LernspaceTextSecondary
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
                                 } else {
                                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        mondayClasses.forEach { c ->
+                                        todayClasses.forEach { c ->
                                             val subj = subjects.find { it.id == c.subjectId }
                                             val subColor = subj?.color ?: AccentBlue
+                                            val startM = parseTimeToMinutes(c.startTime)
+                                            val endM = parseTimeToMinutes(c.endTime)
+                                            val isOngoing = currentMinutes in startM..endM
+                                            val isFinished = currentMinutes > endM
 
                                             Surface(
                                                 shape = RoundedCornerShape(8.dp),
-                                                color = LernspaceSurfaceLow,
-                                                border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder),
+                                                color = if (isOngoing) subColor.copy(alpha = 0.08f) else LernspaceSurfaceLow,
+                                                border = androidx.compose.foundation.BorderStroke(
+                                                    if (isOngoing) 1.5.dp else 1.dp,
+                                                    if (isOngoing) subColor else LernspaceBorder
+                                                ),
                                                 modifier = Modifier.fillMaxWidth()
                                             ) {
                                                 Row(
@@ -389,14 +590,15 @@ fun HomeScreen(
                                                             modifier = Modifier
                                                                 .size(8.dp)
                                                                 .clip(CircleShape)
-                                                                .background(subColor)
+                                                                .background(if (isFinished) LernspaceTextSecondary else subColor)
                                                         )
                                                         Column {
                                                             Text(
                                                                 text = if (c.subjectCode.isNotBlank()) "${c.subjectName} (${c.subjectCode})" else c.subjectName,
                                                                 fontSize = 13.sp,
                                                                 fontWeight = FontWeight.Bold,
-                                                                color = LernspaceDark
+                                                                color = if (isFinished) LernspaceTextSecondary else LernspaceDark,
+                                                                textDecoration = if (isFinished) TextDecoration.LineThrough else null
                                                             )
                                                             Text(
                                                                 text = "${c.startTime} - ${c.endTime} • Ruang: ${c.room ?: "TBA"}",
@@ -406,12 +608,27 @@ fun HomeScreen(
                                                         }
                                                     }
 
-                                                    Surface(shape = RoundedCornerShape(4.dp), color = subColor.copy(alpha = 0.12f)) {
+                                                    Surface(
+                                                        shape = RoundedCornerShape(4.dp),
+                                                        color = when {
+                                                            isOngoing -> Color(0xFF10B981).copy(alpha = 0.15f)
+                                                            isFinished -> LernspaceBorder.copy(alpha = 0.5f)
+                                                            else -> subColor.copy(alpha = 0.12f)
+                                                        }
+                                                    ) {
                                                         Text(
-                                                            text = c.type,
+                                                            text = when {
+                                                                isOngoing -> "SEDANG BERLANGSUNG"
+                                                                isFinished -> "SELESAI ✓"
+                                                                else -> c.type
+                                                            },
                                                             fontSize = 9.sp,
                                                             fontWeight = FontWeight.Bold,
-                                                            color = subColor,
+                                                            color = when {
+                                                                isOngoing -> Color(0xFF047857)
+                                                                isFinished -> LernspaceTextSecondary
+                                                                else -> subColor
+                                                            },
                                                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                                         )
                                                     }

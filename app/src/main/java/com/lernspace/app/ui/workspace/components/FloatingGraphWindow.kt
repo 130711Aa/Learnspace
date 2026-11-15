@@ -5,9 +5,11 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -41,12 +43,15 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DragHandle
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.Button
@@ -85,6 +90,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -147,6 +153,34 @@ data class GraphPlotItem(
 )
 
 /**
+ * Strips markdown code fences, surrounding $$ or $, and LaTeX math blocks.
+ */
+fun cleanEquationInput(raw: String): String {
+    var text = raw.trim()
+    if (text.startsWith("```latex")) text = text.removePrefix("```latex").trim()
+    else if (text.startsWith("```tex")) text = text.removePrefix("```tex").trim()
+    else if (text.startsWith("```")) text = text.removePrefix("```").trim()
+    if (text.endsWith("```")) text = text.removeSuffix("```").trim()
+
+    var changed = true
+    while (changed) {
+        val prev = text
+        if (text.startsWith("$$") && text.endsWith("$$") && text.length >= 4) {
+            text = text.substring(2, text.length - 2).trim()
+        } else if (text.startsWith("$") && text.endsWith("$") && text.length >= 2) {
+            text = text.substring(1, text.length - 1).trim()
+        } else if (text.startsWith("\\[") && text.endsWith("\\]") && text.length >= 4) {
+            text = text.substring(2, text.length - 2).trim()
+        } else if (text.startsWith("\\(") && text.endsWith("\\)") && text.length >= 4) {
+            text = text.substring(2, text.length - 2).trim()
+        }
+        changed = text != prev
+    }
+
+    return text.trim()
+}
+
+/**
  * High-Performance Floating GeoGebra-style Graph Window for Learnspace.
  *
  * Core Capabilities:
@@ -201,6 +235,8 @@ fun FloatingGraphWindow(
     val graphItems = remember { mutableStateListOf<GraphPlotItem>() }
     var selectedItemId by remember { mutableStateOf<String?>(null) }
     var inputEquationText by remember { mutableStateOf("") }
+    var editingItemId by remember { mutableStateOf<String?>(null) }
+    var showMathKeypad by remember { mutableStateOf(false) }
 
     // ── Definite Integral State ──
     var showIntegral by remember { mutableStateOf(false) }
@@ -226,7 +262,7 @@ fun FloatingGraphWindow(
 
     // Helper to parse any raw input into a GraphPlotItem
     fun parseToItem(raw: String, color: Color): GraphPlotItem {
-        val trimmed = raw.trim()
+        val trimmed = cleanEquationInput(raw)
 
         val parsedInt = MathPlotHelper.parseDefiniteIntegral(trimmed)
         if (parsedInt != null) {
@@ -303,6 +339,43 @@ fun FloatingGraphWindow(
             cleanExpr = clean,
             keyPoints = MathPlotHelper.findKeyPoints(clean, -50f, 50f)
         )
+    }
+
+    val saveEquation: () -> Unit = {
+        val cleanInput = cleanEquationInput(inputEquationText)
+        if (cleanInput.isNotBlank()) {
+            val currentEditId = editingItemId
+            if (currentEditId != null) {
+                val idx = graphItems.indexOfFirst { it.id == currentEditId }
+                if (idx != -1) {
+                    val existing = graphItems[idx]
+                    val updated = parseToItem(cleanInput, existing.color).copy(
+                        id = existing.id,
+                        isVisible = existing.isVisible
+                    )
+                    graphItems[idx] = updated
+                }
+                editingItemId = null
+                inputEquationText = ""
+            } else {
+                val color = GEOGEBRA_PALETTE[graphItems.size % GEOGEBRA_PALETTE.size]
+                val newItem = parseToItem(cleanInput, color)
+                graphItems.add(newItem)
+                selectedItemId = newItem.id
+                inputEquationText = ""
+            }
+        }
+    }
+
+    val startEdit: (GraphPlotItem) -> Unit = { item ->
+        editingItemId = item.id
+        inputEquationText = item.rawEquation
+        selectedItemId = item.id
+    }
+
+    val cancelEdit: () -> Unit = {
+        editingItemId = null
+        inputEquationText = ""
     }
 
     // ── Parameter Sliders State (Ala Desmos) ──
@@ -390,7 +463,7 @@ fun FloatingGraphWindow(
 
     // Initialize equations list from initial equationRaw
     LaunchedEffect(equationRaw) {
-        val targetEq = equationRaw.trim()
+        val targetEq = cleanEquationInput(equationRaw)
         if (targetEq.isNotBlank()) {
             val parsedInt = MathPlotHelper.parseDefiniteIntegral(targetEq)
             if (parsedInt != null) {
@@ -453,19 +526,7 @@ fun FloatingGraphWindow(
         val parentWDp = parentW / density
         val parentHDp = parentH / density
 
-        // Touch Barrier: Intercept touches outside the floating window so they never bleed through to underlying note toolbar/canvas
-        if (!isMinimized) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .pointerInput(Unit) {
-                        detectTapGestures {
-                            // Tapping outside dismisses cleanly
-                            onClose()
-                        }
-                    }
-            )
-        }
+        // Note: Floating window lets touches outside fall through to the canvas so user can pan/zoom note freely.
 
         // ── 1. Minimized Mode (Compact Floating Capsule) ──
         if (isMinimized) {
@@ -788,7 +849,7 @@ fun FloatingGraphWindow(
                         ) {
                             Surface(
                                 modifier = Modifier
-                                    .width(280.dp)
+                                    .width(290.dp)
                                     .fillMaxHeight(),
                                 color = cardBg,
                                 border = androidx.compose.foundation.BorderStroke(0.5.dp, borderColor)
@@ -826,6 +887,290 @@ fun FloatingGraphWindow(
                                                     color = if (showIntersections) Color(0xFF2563EB) else textSecondary,
                                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                                 )
+                                            }
+                                        }
+                                    }
+
+                                    // ── Top-Mounted Input Section & Math Keypad Strip ──
+                                    Surface(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        color = cardBg,
+                                        border = androidx.compose.foundation.BorderStroke(0.5.dp, borderColor)
+                                    ) {
+                                        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+                                            // Edit mode indicator banner
+                                            if (editingItemId != null) {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.SpaceBetween
+                                                ) {
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                    ) {
+                                                        Icon(
+                                                            Icons.Filled.Edit,
+                                                            contentDescription = null,
+                                                            tint = Color(0xFF2563EB),
+                                                            modifier = Modifier.size(12.dp)
+                                                        )
+                                                        Text(
+                                                            text = "Edit Persamaan",
+                                                            fontSize = 10.5.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = Color(0xFF2563EB)
+                                                        )
+                                                    }
+                                                    Text(
+                                                        text = "Batal",
+                                                        fontSize = 10.5.sp,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = Color(0xFFDC2626),
+                                                        modifier = Modifier.clickable { cancelEdit() }
+                                                    )
+                                                }
+                                            }
+
+                                            // Main Input Row
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clip(RoundedCornerShape(6.dp))
+                                                    .background(inputBg)
+                                                    .border(
+                                                        if (editingItemId != null) 1.5.dp else 1.dp,
+                                                        if (editingItemId != null) Color(0xFF2563EB) else borderColor,
+                                                        RoundedCornerShape(6.dp)
+                                                    )
+                                                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                            ) {
+                                                Box(modifier = Modifier.weight(1f)) {
+                                                    if (inputEquationText.isEmpty()) {
+                                                        Text(
+                                                            text = if (editingItemId != null) "Edit persamaan..." else "+ Persamaan (y=2x+1)...",
+                                                            color = textSecondary.copy(alpha = 0.7f),
+                                                            fontSize = 11.sp
+                                                        )
+                                                    }
+                                                    BasicTextField(
+                                                        value = inputEquationText,
+                                                        onValueChange = { inputEquationText = it },
+                                                        singleLine = true,
+                                                        textStyle = TextStyle(
+                                                            color = textPrimary,
+                                                            fontSize = 11.5.sp,
+                                                            fontFamily = FontFamily.Monospace,
+                                                            fontWeight = FontWeight.Medium
+                                                        ),
+                                                        cursorBrush = SolidColor(Color(0xFF2563EB)),
+                                                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                                        keyboardActions = KeyboardActions(onDone = { saveEquation() }),
+                                                        modifier = Modifier.fillMaxWidth()
+                                                    )
+                                                }
+
+                                                // Keypad toggle button (Clean Keyboard Vector Icon)
+                                                Surface(
+                                                    shape = RoundedCornerShape(5.dp),
+                                                    color = if (showMathKeypad) {
+                                                        if (isDarkTheme) Color(0xFF334155) else Color(0xFFE2E8F0)
+                                                    } else inputBg,
+                                                    border = androidx.compose.foundation.BorderStroke(
+                                                        0.8.dp,
+                                                        if (showMathKeypad) {
+                                                            if (isDarkTheme) Color(0xFF64748B) else Color(0xFF94A3B8)
+                                                        } else borderColor
+                                                    ),
+                                                    modifier = Modifier.clickable { showMathKeypad = !showMathKeypad }
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Filled.Keyboard,
+                                                        contentDescription = "Toggle Keypad Matematika",
+                                                        tint = if (showMathKeypad) {
+                                                            if (isDarkTheme) Color(0xFFF8FAFC) else Color(0xFF1E293B)
+                                                        } else textSecondary,
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp).size(15.dp)
+                                                    )
+                                                }
+
+                                                // Action Button (Check for Save, Add for New)
+                                                if (editingItemId != null) {
+                                                    Surface(
+                                                        shape = RoundedCornerShape(5.dp),
+                                                        color = Color(0xFF059669),
+                                                        modifier = Modifier.clickable(enabled = inputEquationText.isNotBlank()) {
+                                                            saveEquation()
+                                                        }
+                                                    ) {
+                                                        Row(
+                                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                                        ) {
+                                                            Icon(
+                                                                Icons.Filled.Check,
+                                                                contentDescription = "Simpan",
+                                                                tint = Color.White,
+                                                                modifier = Modifier.size(13.dp)
+                                                            )
+                                                            Text(
+                                                                text = "Simpan",
+                                                                fontSize = 10.sp,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = Color.White
+                                                            )
+                                                        }
+                                                    }
+                                                } else {
+                                                    Surface(
+                                                        shape = RoundedCornerShape(5.dp),
+                                                        color = if (inputEquationText.isNotBlank()) Color(0xFF2563EB) else cardBg,
+                                                        border = androidx.compose.foundation.BorderStroke(
+                                                            0.8.dp,
+                                                            if (inputEquationText.isNotBlank()) Color(0xFF2563EB) else borderColor
+                                                        ),
+                                                        modifier = Modifier.clickable(enabled = inputEquationText.isNotBlank()) {
+                                                            saveEquation()
+                                                        }
+                                                    ) {
+                                                        Icon(
+                                                            Icons.Filled.Add,
+                                                            contentDescription = "Tambah",
+                                                            tint = if (inputEquationText.isNotBlank()) Color.White else textSecondary,
+                                                            modifier = Modifier.padding(3.dp).size(14.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+
+                                            // Quick Preset Chips for Easy Line Equations & Curves
+                                            val linePresets = remember {
+                                                listOf(
+                                                    "y = 2x + 1" to "Garis",
+                                                    "y = mx + c" to "Linear m",
+                                                    "x = 3" to "Vertikal",
+                                                    "y = -x + 4" to "Gradien -",
+                                                    "y = x^2" to "Parabola",
+                                                    "x^2 + y^2 = 25" to "Lingkaran",
+                                                    "y = sin(x)" to "Sinus"
+                                                )
+                                            }
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(top = 4.dp)
+                                                    .horizontalScroll(rememberScrollState()),
+                                                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                linePresets.forEach { (presetEq, label) ->
+                                                    Surface(
+                                                        shape = RoundedCornerShape(4.dp),
+                                                        color = inputBg,
+                                                        border = androidx.compose.foundation.BorderStroke(0.6.dp, borderColor),
+                                                        modifier = Modifier.clickable {
+                                                            inputEquationText = presetEq
+                                                        }
+                                                    ) {
+                                                        Text(
+                                                            text = label,
+                                                            fontSize = 9.sp,
+                                                            fontWeight = FontWeight.Medium,
+                                                            color = textSecondary,
+                                                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+
+                                            // Built-in Desmos-Style Math Keypad
+                                            AnimatedVisibility(
+                                                visible = showMathKeypad,
+                                                enter = expandVertically(),
+                                                exit = shrinkVertically()
+                                            ) {
+                                                Column(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(top = 6.dp),
+                                                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                                                ) {
+                                                    val keypadRows = remember {
+                                                        listOf(
+                                                            listOf("x", "y", "7", "8", "9", "/", "^2"),
+                                                            listOf("m", "c", "4", "5", "6", "*", "√"),
+                                                            listOf("(", ")", "1", "2", "3", "-", "π"),
+                                                            listOf("AC", "0", ".", "=", "+", "⌫")
+                                                        )
+                                                    }
+
+                                                    keypadRows.forEach { rowKeys ->
+                                                        Row(
+                                                            modifier = Modifier.fillMaxWidth(),
+                                                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                                        ) {
+                                                            rowKeys.forEach { key ->
+                                                                val isAction = key == "AC" || key == "⌫"
+                                                                val isVar = key in listOf("x", "y", "m", "c", "π")
+                                                                val isNumber = key in listOf("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ".")
+                                                                val isOperator = key in listOf("+", "-", "*", "/", "=", "^2", "√", "(", ")")
+
+                                                                // Calm, matte, eye-friendly neutral color palette
+                                                                val btnBg = when {
+                                                                    isNumber -> if (isDarkTheme) Color(0xFF1E293B) else Color(0xFFFFFFFF)
+                                                                    isVar -> if (isDarkTheme) Color(0xFF1E293B).copy(alpha = 0.6f) else Color(0xFFF1F5F9)
+                                                                    isOperator -> if (isDarkTheme) Color(0xFF0F172A) else Color(0xFFF8FAFC)
+                                                                    isAction -> if (isDarkTheme) Color(0xFF1E293B).copy(alpha = 0.8f) else Color(0xFFF1F5F9)
+                                                                    else -> cardBg
+                                                                }
+                                                                val btnBorder = if (isDarkTheme) Color(0xFF334155) else Color(0xFFE2E8F0)
+                                                                val btnText = when {
+                                                                    key == "AC" -> if (isDarkTheme) Color(0xFFF87171) else Color(0xFFDC2626).copy(alpha = 0.85f)
+                                                                    key == "⌫" -> textSecondary
+                                                                    isNumber -> textPrimary
+                                                                    isVar -> if (isDarkTheme) Color(0xFFE2E8F0) else Color(0xFF1E293B)
+                                                                    isOperator -> textSecondary
+                                                                    else -> textPrimary
+                                                                }
+
+                                                                Surface(
+                                                                    shape = RoundedCornerShape(4.dp),
+                                                                    color = btnBg,
+                                                                    border = androidx.compose.foundation.BorderStroke(0.6.dp, btnBorder),
+                                                                    modifier = Modifier
+                                                                        .weight(1f)
+                                                                        .height(28.dp)
+                                                                        .clickable {
+                                                                            when (key) {
+                                                                                "AC" -> inputEquationText = ""
+                                                                                "⌫" -> if (inputEquationText.isNotEmpty()) inputEquationText = inputEquationText.dropLast(1)
+                                                                                "^2" -> inputEquationText += "^2"
+                                                                                "√" -> inputEquationText += "sqrt("
+                                                                                "π" -> inputEquationText += "pi"
+                                                                                else -> inputEquationText += key
+                                                                            }
+                                                                        }
+                                                                ) {
+                                                                    Box(
+                                                                        contentAlignment = Alignment.Center,
+                                                                        modifier = Modifier.fillMaxSize()
+                                                                    ) {
+                                                                        Text(
+                                                                            text = key,
+                                                                            fontSize = 11.5.sp,
+                                                                            fontWeight = if (isNumber) FontWeight.SemiBold else if (isAction) FontWeight.Bold else FontWeight.Medium,
+                                                                            fontStyle = if (isVar && key != "π") FontStyle.Italic else FontStyle.Normal,
+                                                                            color = btnText
+                                                                        )
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -926,15 +1271,17 @@ fun FloatingGraphWindow(
                                         // Function Cards List
                                         graphItems.forEachIndexed { index, item ->
                                             val isSelected = item.id == selectedItemId
+                                            val isEditingThis = item.id == editingItemId
                                             Surface(
                                                 shape = RoundedCornerShape(8.dp),
-                                                color = inputBg,
+                                                color = if (isEditingThis) Color(0xFF2563EB).copy(alpha = 0.08f) else inputBg,
                                                 border = androidx.compose.foundation.BorderStroke(
-                                                    if (isSelected) 1.5.dp else 0.8.dp,
-                                                    if (isSelected) item.color else borderColor
+                                                    if (isEditingThis) 1.8.dp else if (isSelected) 1.5.dp else 0.8.dp,
+                                                    if (isEditingThis) Color(0xFF2563EB) else if (isSelected) item.color else borderColor
                                                 ),
                                                 modifier = Modifier.fillMaxWidth().clickable {
                                                     selectedItemId = item.id
+                                                    startEdit(item)
                                                 }
                                             ) {
                                                 Column(modifier = Modifier.padding(8.dp)) {
@@ -964,23 +1311,53 @@ fun FloatingGraphWindow(
                                                                     }
                                                             ) {}
 
-                                                            // Formula Text
-                                                            Text(
-                                                                text = MathPlotHelper.formatFormulaForDisplay(item.displayLabel),
-                                                                fontSize = 12.sp,
-                                                                fontWeight = FontWeight.Bold,
-                                                                fontFamily = FontFamily.Monospace,
-                                                                color = if (item.isVisible) item.color else textSecondary,
-                                                                maxLines = 2,
-                                                                overflow = TextOverflow.Ellipsis
-                                                            )
+                                                            // Formula Text & Badge
+                                                            Column(modifier = Modifier.weight(1f)) {
+                                                                Text(
+                                                                    text = MathPlotHelper.formatFormulaForDisplay(item.displayLabel),
+                                                                    fontSize = 12.sp,
+                                                                    fontWeight = FontWeight.Bold,
+                                                                    fontFamily = FontFamily.Monospace,
+                                                                    color = if (item.isVisible) item.color else textSecondary,
+                                                                    maxLines = 2,
+                                                                    overflow = TextOverflow.Ellipsis
+                                                                )
+                                                                if (isEditingThis) {
+                                                                    Text(
+                                                                        text = "✏️ Sedang diedit...",
+                                                                        fontSize = 9.sp,
+                                                                        fontWeight = FontWeight.Bold,
+                                                                        color = Color(0xFF2563EB)
+                                                                    )
+                                                                }
+                                                            }
                                                         }
 
-                                                        // Controls: Toggle Integral & Delete
+                                                        // Controls: Edit, Toggle Integral & Delete
                                                         Row(
                                                             verticalAlignment = Alignment.CenterVertically,
                                                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                                                         ) {
+                                                            // Edit ✏️
+                                                            Surface(
+                                                                shape = RoundedCornerShape(4.dp),
+                                                                color = if (isEditingThis) Color(0xFF2563EB).copy(alpha = 0.15f) else cardBg,
+                                                                border = androidx.compose.foundation.BorderStroke(
+                                                                    0.8.dp,
+                                                                    if (isEditingThis) Color(0xFF2563EB) else borderColor
+                                                                ),
+                                                                modifier = Modifier.clickable {
+                                                                    if (isEditingThis) cancelEdit() else startEdit(item)
+                                                                }
+                                                            ) {
+                                                                Icon(
+                                                                    Icons.Filled.Edit,
+                                                                    contentDescription = "Edit Persamaan",
+                                                                    tint = if (isEditingThis) Color(0xFF2563EB) else textSecondary,
+                                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp).size(13.dp)
+                                                                )
+                                                            }
+
                                                             if (!item.isCircle && !item.isVerticalLine) {
                                                                 Surface(
                                                                     shape = RoundedCornerShape(4.dp),
@@ -1011,6 +1388,7 @@ fun FloatingGraphWindow(
                                                                 modifier = Modifier
                                                                     .size(15.dp)
                                                                     .clickable {
+                                                                        if (editingItemId == item.id) cancelEdit()
                                                                         graphItems.removeAt(index)
                                                                         if (selectedItemId == item.id) {
                                                                             selectedItemId = graphItems.firstOrNull()?.id
@@ -1243,132 +1621,6 @@ fun FloatingGraphWindow(
                                                                 }
                                                             }
                                                         }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    // ── Bottom Input Field & Quick Math Keypad Strip ──
-                                    Surface(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        color = cardBg,
-                                        border = androidx.compose.foundation.BorderStroke(0.5.dp, borderColor)
-                                    ) {
-                                        Column(modifier = Modifier.padding(6.dp)) {
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .clip(RoundedCornerShape(6.dp))
-                                                    .background(inputBg)
-                                                    .border(1.dp, borderColor, RoundedCornerShape(6.dp))
-                                                    .padding(horizontal = 6.dp, vertical = 4.dp),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Box(modifier = Modifier.weight(1f)) {
-                                                    if (inputEquationText.isEmpty()) {
-                                                        Text(
-                                                            text = "+ Input persamaan...",
-                                                            color = textSecondary.copy(alpha = 0.7f),
-                                                            fontSize = 11.sp
-                                                        )
-                                                    }
-                                                    BasicTextField(
-                                                        value = inputEquationText,
-                                                        onValueChange = { inputEquationText = it },
-                                                        singleLine = true,
-                                                        textStyle = TextStyle(
-                                                            color = textPrimary,
-                                                            fontSize = 11.5.sp,
-                                                            fontFamily = FontFamily.Monospace,
-                                                            fontWeight = FontWeight.Medium
-                                                        ),
-                                                        cursorBrush = SolidColor(Color(0xFF2563EB)),
-                                                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                                        keyboardActions = KeyboardActions(onDone = {
-                                                            if (inputEquationText.isNotBlank()) {
-                                                                val c = GEOGEBRA_PALETTE[graphItems.size % GEOGEBRA_PALETTE.size]
-                                                                val newItem = parseToItem(inputEquationText, c)
-                                                                graphItems.add(newItem)
-                                                                selectedItemId = newItem.id
-                                                                inputEquationText = ""
-                                                            }
-                                                        }),
-                                                        modifier = Modifier.fillMaxWidth()
-                                                    )
-                                                }
-
-                                                // Add (+) button
-                                                Surface(
-                                                    shape = RoundedCornerShape(5.dp),
-                                                    color = if (inputEquationText.isNotBlank()) Color(0xFF2563EB) else cardBg,
-                                                    border = androidx.compose.foundation.BorderStroke(
-                                                        0.8.dp,
-                                                        if (inputEquationText.isNotBlank()) Color(0xFF2563EB) else borderColor
-                                                    ),
-                                                    modifier = Modifier.clickable(enabled = inputEquationText.isNotBlank()) {
-                                                        val c = GEOGEBRA_PALETTE[graphItems.size % GEOGEBRA_PALETTE.size]
-                                                        val newItem = parseToItem(inputEquationText, c)
-                                                        graphItems.add(newItem)
-                                                        selectedItemId = newItem.id
-                                                        inputEquationText = ""
-                                                    }
-                                                ) {
-                                                    Icon(
-                                                        Icons.Filled.Add,
-                                                        contentDescription = "Tambah",
-                                                        tint = if (inputEquationText.isNotBlank()) Color.White else textSecondary,
-                                                        modifier = Modifier.padding(3.dp).size(14.dp)
-                                                    )
-                                                }
-                                            }
-
-                                            // Quick Math Keypad Strip
-                                            val mathKeys = remember {
-                                                listOf("x", "y", "x²", "x³", "+", "-", "·", "=", "/", "√", "sin", "cos", "(", ")", "π", "⌫", "C")
-                                            }
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(top = 4.dp)
-                                                    .horizontalScroll(rememberScrollState()),
-                                                horizontalArrangement = Arrangement.spacedBy(3.dp),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                mathKeys.forEach { key ->
-                                                    Surface(
-                                                        shape = RoundedCornerShape(4.dp),
-                                                        color = if (key == "C" || key == "⌫") cardBg else inputBg,
-                                                        border = androidx.compose.foundation.BorderStroke(0.6.dp, borderColor),
-                                                        modifier = Modifier.clickable {
-                                                            when (key) {
-                                                                "x" -> inputEquationText += "x"
-                                                                "y" -> inputEquationText += "y"
-                                                                "x²" -> inputEquationText += "^2"
-                                                                "x³" -> inputEquationText += "^3"
-                                                                "+" -> inputEquationText += "+"
-                                                                "-" -> inputEquationText += "-"
-                                                                "·" -> inputEquationText += "*"
-                                                                "=" -> inputEquationText += "="
-                                                                "/" -> inputEquationText += "/"
-                                                                "√" -> inputEquationText += "sqrt("
-                                                                "sin" -> inputEquationText += "sin("
-                                                                "cos" -> inputEquationText += "cos("
-                                                                "(" -> inputEquationText += "("
-                                                                ")" -> inputEquationText += ")"
-                                                                "π" -> inputEquationText += "pi"
-                                                                "⌫" -> if (inputEquationText.isNotEmpty()) inputEquationText = inputEquationText.dropLast(1)
-                                                                "C" -> inputEquationText = ""
-                                                            }
-                                                        }
-                                                    ) {
-                                                        Text(
-                                                            text = key,
-                                                            fontSize = 10.sp,
-                                                            fontWeight = if (key in listOf("x", "y", "x²", "x³", "π")) FontWeight.Bold else FontWeight.Medium,
-                                                            color = if (key == "C") Color(0xFFDC2626) else if (key == "⌫") Color(0xFFD97706) else textPrimary,
-                                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                                        )
                                                     }
                                                 }
                                             }
