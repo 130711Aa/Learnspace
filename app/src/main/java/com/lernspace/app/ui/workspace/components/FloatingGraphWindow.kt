@@ -1,6 +1,7 @@
 package com.lernspace.app.ui.workspace.components
 
 import android.graphics.Bitmap
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.expandHorizontally
@@ -191,6 +192,11 @@ fun FloatingGraphWindow(
     onInsertGraphToNote: (Bitmap, List<String>) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // Intercept hardware/gesture Back: close only the floating graph window, never the note!
+    BackHandler {
+        onClose()
+    }
+
     // ── Multi-Graph Equation List State ──
     val graphItems = remember { mutableStateListOf<GraphPlotItem>() }
     var selectedItemId by remember { mutableStateOf<String?>(null) }
@@ -446,6 +452,20 @@ fun FloatingGraphWindow(
         val parentH = constraints.maxHeight.toFloat().coerceAtLeast(100f)
         val parentWDp = parentW / density
         val parentHDp = parentH / density
+
+        // Touch Barrier: Intercept touches outside the floating window so they never bleed through to underlying note toolbar/canvas
+        if (!isMinimized) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        detectTapGestures {
+                            // Tapping outside dismisses cleanly
+                            onClose()
+                        }
+                    }
+            )
+        }
 
         // ── 1. Minimized Mode (Compact Floating Capsule) ──
         if (isMinimized) {

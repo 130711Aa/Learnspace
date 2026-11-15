@@ -206,7 +206,7 @@ class NotePaneState(
     }
     val canvasType: NoteCanvasType get() = note.canvasType
 
-    var currentPageIndex by mutableIntStateOf(0)
+    var currentPageIndex by mutableIntStateOf(note.lastOpenedPageIndex.coerceIn(0, maxOf(0, note.pages.size - 1)))
     var totalPages by mutableIntStateOf(
         if (note.canvasType == NoteCanvasType.PDF_DOCUMENT) maxOf(1, note.pdfTotalPages)
         else maxOf(1, note.pages.size)
@@ -279,11 +279,13 @@ class NotePaneState(
     var isLoadingFromDisk by mutableStateOf(false)
 
     init {
-        if (note.pages.isNotEmpty()) {
-            val firstPage = note.pages[0]
-            strokes.addAll(firstPage.strokes)
-            textBoxes.addAll(firstPage.textBoxes)
-            imageElements.addAll(firstPage.imageElements)
+        val initialIdx = note.lastOpenedPageIndex.coerceIn(0, maxOf(0, note.pages.size - 1))
+        currentPageIndex = initialIdx
+        if (note.pages.isNotEmpty() && initialIdx in 0 until note.pages.size) {
+            val pageToLoad = note.pages[initialIdx]
+            strokes.addAll(pageToLoad.strokes)
+            textBoxes.addAll(pageToLoad.textBoxes)
+            imageElements.addAll(pageToLoad.imageElements)
         }
     }
 
@@ -314,6 +316,7 @@ class NotePaneState(
         target.imageElements.addAll(imageElements)
         note.isDarkPaper = isDarkPaper
         note.paperStyle = paperStyle
+        note.lastOpenedPageIndex = currentPageIndex
         AcademicDatabaseManager.persistNote(note, immediate = immediate)
     }
 
@@ -349,13 +352,17 @@ class NotePaneState(
         isLoadingFromDisk = true
         try {
             AcademicDatabaseManager.awaitPendingSave(note.id)
-            val diskPages = withContext(Dispatchers.IO) {
-                AcademicDatabaseManager.loadPagesForNote(note.id)
+            val diskContent = withContext(Dispatchers.IO) {
+                AcademicDatabaseManager.loadNoteContent(note.id)
             }
-            if (diskPages != null && diskPages.isNotEmpty()) {
+            if (diskContent != null && diskContent.pages.isNotEmpty()) {
                 note.pages.clear()
-                note.pages.addAll(diskPages)
+                note.pages.addAll(diskContent.pages)
                 totalPages = if (note.canvasType == NoteCanvasType.PDF_DOCUMENT) maxOf(1, note.pdfTotalPages) else maxOf(1, note.pages.size)
+                if (diskContent.lastOpenedPageIndex in 0 until note.pages.size) {
+                    note.lastOpenedPageIndex = diskContent.lastOpenedPageIndex
+                    currentPageIndex = diskContent.lastOpenedPageIndex
+                }
             }
             loadActivePageData(currentPageIndex.coerceIn(0, (note.pages.size - 1).coerceAtLeast(0)))
         } finally {
@@ -414,19 +421,21 @@ class NotePaneState(
 
     fun goToPage(targetIndex: Int) {
         if (targetIndex != currentPageIndex && targetIndex in 0 until totalPages) {
-            saveActivePageData(immediate = true)
             currentPageIndex = targetIndex
+            note.lastOpenedPageIndex = targetIndex
+            saveActivePageData(immediate = true)
             loadActivePageData(targetIndex)
             loadPdfPage()
         }
     }
 
     fun addNewPage() {
-        saveActivePageData(immediate = true)
         val newPage = NotePageData(pageIndex = note.pages.size)
         note.pages.add(newPage)
         totalPages = note.pages.size
         currentPageIndex = note.pages.size - 1
+        note.lastOpenedPageIndex = currentPageIndex
+        saveActivePageData(immediate = true)
         loadActivePageData(currentPageIndex)
     }
 
@@ -436,6 +445,7 @@ class NotePaneState(
             note.pages.forEachIndexed { idx, page -> page.pageIndex = idx }
             val newIdx = if (currentPageIndex >= note.pages.size) note.pages.size - 1 else currentPageIndex
             currentPageIndex = newIdx
+            note.lastOpenedPageIndex = newIdx
             totalPages = note.pages.size
             loadActivePageData(newIdx)
             loadPdfPage()
@@ -906,6 +916,7 @@ fun NoteEditorScreen(
     var showEditNoteLinkDialog by remember { mutableStateOf(false) }
     var interactiveGraphFunction by remember { mutableStateOf<String?>(null) }
     var showInteractiveGraphDialog by remember { mutableStateOf(false) }
+    var showClearCanvasDialog by remember { mutableStateOf(false) }
 
     BackHandler {
         if (secondaryNote != null) {
@@ -1155,7 +1166,7 @@ fun NoteEditorScreen(
             onUndo = { activeState.undo() },
             canRedo = activeState.redoStack.isNotEmpty(),
             onRedo = { activeState.redo() },
-            onClearAll = { activeState.clearAll() },
+            onClearAll = { showClearCanvasDialog = true },
             onExportPdf = { handleExportPdf() },
             isExporting = isExporting,
             isDarkPaper = activeState.isDarkPaper,
@@ -1253,6 +1264,59 @@ fun NoteEditorScreen(
                     android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
                 },
                 modifier = Modifier.zIndex(20f)
+            )
+        }
+
+        // Dialog: Confirm Clear Canvas (Zero accidental clears!)
+        if (showClearCanvasDialog) {
+            AlertDialog(
+                onDismissRequest = { showClearCanvasDialog = false },
+                shape = RoundedCornerShape(18.dp),
+                title = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            Icons.Filled.DeleteSweep,
+                            contentDescription = null,
+                            tint = Color(0xFFDC2626),
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Text(
+                            text = "Hapus Semua Coretan?",
+                            fontWeight = FontWeight.Bold,
+                            color = LernspaceDark
+                        )
+                    }
+                },
+                text = {
+                    Text(
+                        text = "Seluruh coretan, rumus matematika, dan gambar pada Halaman ${activeState.currentPageIndex + 1} akan dihapus bersih.\n\nTindakan ini masih dapat dibatalkan dengan tombol Undo jika kamu belum berpindah halaman.",
+                        color = LernspaceTextSecondary,
+                        fontSize = 13.sp
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            activeState.clearAll()
+                            showClearCanvasDialog = false
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Hapus Bersih", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    OutlinedButton(
+                        onClick = { showClearCanvasDialog = false },
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Batal", color = LernspaceDark)
+                    }
+                }
             )
         }
 
@@ -3719,8 +3783,9 @@ private fun NotePaneViewport(
                 onJumpToPage = { targetPage -> state.goToPage(targetPage - 1) },
                 onDuplicatePage = { pageIdx -> state.duplicatePage(pageIdx) },
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 16.dp)
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 12.dp)
+                    .zIndex(15f)
                     .rejectPalmAfterStylus(shouldRejectFloatingTouch)
             )
         }
@@ -5011,7 +5076,7 @@ private fun NeboPageSidebar(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// COMPONENT: Floating Page Navigator Bar (Bottom Center)
+// COMPONENT: Modern Vertical Page Navigator Capsule (Right Side of Screen)
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun PageNavigatorBar(
@@ -5036,6 +5101,8 @@ private fun PageNavigatorBar(
         JumpToPageDialog(
             currentPage = currentPage,
             totalPages = totalPages,
+            canDeletePage = canDeletePage,
+            onDeletePage = onDeletePage,
             onDismiss = { showJumpDialog = false },
             onJump = { targetPage ->
                 onJumpToPage(targetPage)
@@ -5045,17 +5112,110 @@ private fun PageNavigatorBar(
     }
 
     Surface(
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(22.dp),
         color = Color.White.copy(alpha = 0.95f),
-        shadowElevation = 6.dp,
-        border = BorderStroke(1.dp, LernspaceBorder),
+        shadowElevation = 8.dp,
+        border = BorderStroke(1.2.dp, LernspaceBorder),
         modifier = modifier
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        Column(
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
+            // Previous Page Button (Arrow Up)
+            Surface(
+                shape = CircleShape,
+                color = if (currentPage > 1) LernspaceSurfaceLow else Color.Transparent,
+                modifier = Modifier
+                    .size(34.dp)
+                    .clickable(enabled = currentPage > 1, onClick = onPrevPage)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Filled.KeyboardArrowUp,
+                        contentDescription = "Halaman Sebelumnya",
+                        tint = if (currentPage > 1) LernspaceDark else Color(0xFFCBD5E1),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            // Clickable Vertical Page Indicator Badge
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = LernspaceSurfaceLow,
+                border = BorderStroke(1.dp, LernspaceBorder.copy(alpha = 0.6f)),
+                modifier = Modifier
+                    .padding(vertical = 2.dp)
+                    .clickable { showJumpDialog = true }
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "$currentPage",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = LernspaceDark
+                    )
+                    HorizontalDivider(
+                        modifier = Modifier.width(16.dp).padding(vertical = 2.dp),
+                        color = LernspaceBorder.copy(alpha = 0.8f)
+                    )
+                    Text(
+                        text = "$totalPages",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = LernspaceTextSecondary
+                    )
+                }
+            }
+
+            // Next Page Button (Arrow Down)
+            Surface(
+                shape = CircleShape,
+                color = if (currentPage < totalPages) LernspaceSurfaceLow else Color.Transparent,
+                modifier = Modifier
+                    .size(34.dp)
+                    .clickable(enabled = currentPage < totalPages, onClick = onNextPage)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Filled.KeyboardArrowDown,
+                        contentDescription = "Halaman Berikutnya",
+                        tint = if (currentPage < totalPages) LernspaceDark else Color(0xFFCBD5E1),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            HorizontalDivider(
+                modifier = Modifier.width(22.dp).padding(vertical = 2.dp),
+                color = LernspaceBorder
+            )
+
+            // Add Page Button (+)
+            if (canAddPage) {
+                Surface(
+                    shape = CircleShape,
+                    color = LernspaceDark,
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clickable(onClick = onAddPage)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Filled.Add,
+                            contentDescription = "Tambah Halaman",
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+
             // Toggle Nebo Page Preview Sidebar Button
             Surface(
                 shape = CircleShape,
@@ -5067,146 +5227,10 @@ private fun PageNavigatorBar(
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ViewSidebar,
-                        contentDescription = "Buka/Tutup Preview Halaman (Nebo)",
+                        contentDescription = "Buka/Tutup Preview Halaman",
                         tint = if (isSidebarOpen) Color.White else LernspaceDark,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(15.dp)
                     )
-                }
-            }
-
-            VerticalDivider(
-                modifier = Modifier.height(18.dp),
-                color = LernspaceBorder
-            )
-
-            // Previous Page Button
-            Surface(
-                shape = CircleShape,
-                color = if (currentPage > 1) LernspaceSurfaceLow else Color.Transparent,
-                modifier = Modifier
-                    .size(34.dp)
-                    .clickable(enabled = currentPage > 1, onClick = onPrevPage)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Halaman Sebelumnya",
-                        tint = if (currentPage > 1) LernspaceDark else Color(0xFFCBD5E1),
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-            }
-
-            // Clickable Page Indicator Label (Jump to Page Dialog trigger)
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = LernspaceSurfaceLow,
-                border = BorderStroke(1.dp, LernspaceBorder.copy(alpha = 0.6f)),
-                modifier = Modifier
-                    .padding(horizontal = 2.dp)
-                    .clickable { showJumpDialog = true }
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
-                    Text(
-                        text = "Halaman $currentPage / $totalPages",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = LernspaceDark
-                    )
-                    Icon(
-                        imageVector = Icons.Filled.UnfoldMore,
-                        contentDescription = "Lompat Halaman",
-                        tint = LernspaceTextSecondary,
-                        modifier = Modifier.size(14.dp)
-                    )
-                }
-            }
-
-            // Next Page Button
-            Surface(
-                shape = CircleShape,
-                color = if (currentPage < totalPages) LernspaceSurfaceLow else Color.Transparent,
-                modifier = Modifier
-                    .size(34.dp)
-                    .clickable(enabled = currentPage < totalPages, onClick = onNextPage)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                        contentDescription = "Halaman Berikutnya",
-                        tint = if (currentPage < totalPages) LernspaceDark else Color(0xFFCBD5E1),
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-            }
-
-            // Add Page Button (for Paged Notes)
-            if (canAddPage) {
-                VerticalDivider(
-                    modifier = Modifier.height(18.dp),
-                    color = LernspaceBorder
-                )
-
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = LernspaceDark,
-                    modifier = Modifier.clickable(onClick = onAddPage)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(
-                            Icons.Filled.Add,
-                            contentDescription = "Tambah Halaman",
-                            tint = Color.White,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Text(
-                            text = "Tambah Hal",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                    }
-                }
-            }
-
-            // Delete Page Button (for Paged Notes when totalPages > 1)
-            if (canDeletePage) {
-                VerticalDivider(
-                    modifier = Modifier.height(18.dp),
-                    color = LernspaceBorder
-                )
-
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = Color(0xFFFEE2E2),
-                    modifier = Modifier.clickable(onClick = onDeletePage)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(
-                            Icons.Filled.Delete,
-                            contentDescription = "Hapus Halaman",
-                            tint = Color(0xFFDC2626),
-                            modifier = Modifier.size(13.dp)
-                        )
-                        Text(
-                            text = "Hapus Hal",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFFDC2626)
-                        )
-                    }
                 }
             }
         }
@@ -5220,6 +5244,8 @@ private fun PageNavigatorBar(
 private fun JumpToPageDialog(
     currentPage: Int,
     totalPages: Int,
+    canDeletePage: Boolean = false,
+    onDeletePage: () -> Unit = {},
     onDismiss: () -> Unit,
     onJump: (targetPage: Int) -> Unit
 ) {
@@ -5418,6 +5444,28 @@ private fun JumpToPageDialog(
                                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                                 modifier = Modifier.padding(vertical = 6.dp)
                             )
+                        }
+                    }
+
+                    // Delete Page Action (safely tucked inside dialog)
+                    if (canDeletePage) {
+                        HorizontalDivider(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                            color = LernspaceBorder.copy(alpha = 0.6f)
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                onDismiss()
+                                onDeletePage()
+                            },
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFDC2626)),
+                            border = BorderStroke(1.dp, Color(0xFFFECACA)),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(15.dp), tint = Color(0xFFDC2626))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Hapus Halaman Ini", color = Color(0xFFDC2626), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 

@@ -298,7 +298,7 @@ object AcademicDatabaseManager {
                 }
                 mutex.withLock {
                     database.noteDao().insertNote(entity)
-                    storage.saveNotePages(note.id, pagesSnapshot, isDark)
+                    storage.saveNotePages(note.id, pagesSnapshot, isDark, note.lastOpenedPageIndex)
                 }
             } finally {
                 pendingNoteSaves.remove(note.id, launchedJob)
@@ -317,6 +317,10 @@ object AcademicDatabaseManager {
 
     fun loadPagesForNote(noteId: String): List<NotePageData>? {
         return storageManager?.loadNotePages(noteId)
+    }
+
+    fun loadNoteContent(noteId: String): com.lernspace.app.data.local.LoadedNoteContent? {
+        return storageManager?.loadNoteWithMeta(noteId)
     }
 
     fun deleteNote(noteId: String) {

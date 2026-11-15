@@ -110,5 +110,6 @@ data class NoteUiModel(
     var isDarkPaper: Boolean = false,
     var pdfUri: String? = null,
     var pdfTotalPages: Int = 1,
+    var lastOpenedPageIndex: Int = 0,
     val pages: MutableList<NotePageData> = mutableListOf(NotePageData(pageIndex = 0))
 )

@@ -31,7 +31,8 @@ import java.util.concurrent.ConcurrentHashMap
 
 data class LoadedNoteContent(
     val pages: List<NotePageData>,
-    val isDarkPaper: Boolean
+    val isDarkPaper: Boolean,
+    val lastOpenedPageIndex: Int = 0
 )
 
 /**
@@ -154,13 +155,14 @@ class NoteStorageManager(private val context: Context) {
     /**
      * Saves all pages of a note into a compact JSON file.
      */
-    fun saveNotePages(noteId: String, pages: List<NotePageData>, isDarkPaper: Boolean = false) {
+    fun saveNotePages(noteId: String, pages: List<NotePageData>, isDarkPaper: Boolean = false, lastOpenedPageIndex: Int = 0) {
         synchronized(lockFor(noteId)) {
         try {
             val rootObj = JSONObject()
             rootObj.put("noteId", noteId)
             rootObj.put("updatedAt", System.currentTimeMillis())
             rootObj.put("isDarkPaper", isDarkPaper)
+            rootObj.put("lastOpenedPageIndex", lastOpenedPageIndex)
 
             val pagesArray = JSONArray()
 
@@ -276,8 +278,9 @@ class NoteStorageManager(private val context: Context) {
                 val jsonText = noteFile.readText()
                 val rootObj = JSONObject(jsonText)
                 val isDark = rootObj.optBoolean("isDarkPaper", false)
+                val lastOpened = rootObj.optInt("lastOpenedPageIndex", 0)
                 val pages = parsePagesFromRoot(rootObj) ?: return null
-                LoadedNoteContent(pages = pages, isDarkPaper = isDark)
+                LoadedNoteContent(pages = pages, isDarkPaper = isDark, lastOpenedPageIndex = lastOpened)
             } catch (e: Exception) {
                 e.printStackTrace()
                 null
