@@ -541,14 +541,9 @@ fun DrawingSurface(
     Box(
         modifier = modifier.clipToBounds()
     ) {
-        // ─── Layer 1: Completed (dry) strokes via GPU Hardware Chunked RenderNodes (0 CPU bitmap uploads!) ───
+        // ─── Layer 1: Pure Native Vector Rendering (Razor-Sharp at Any Zoom Level!) ───
         Canvas(modifier = Modifier.fillMaxSize()) {
-            if (strokes.isEmpty()) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    gpuChunkCache?.syncStrokes(strokes, isDarkPaper)
-                }
-                return@Canvas
-            }
+            if (strokes.isEmpty()) return@Canvas
 
             val s = currentScaleProvider().coerceAtLeast(0.05f)
             val px = currentPanXProvider()
@@ -559,54 +554,27 @@ fun DrawingSurface(
             val visBottom = (size.height - py) / s
             val nativeCanvas = drawContext.canvas.nativeCanvas
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
-                nativeCanvas.isHardwareAccelerated &&
-                gpuChunkCache != null
-            ) {
-                gpuChunkCache.syncStrokes(strokes, isDarkPaper)
-                val chunks = gpuChunkCache.chunksList
+            directMatrix.reset()
+            directMatrix.postScale(s, s)
+            directMatrix.postTranslate(px, py)
 
-                nativeCanvas.withSave {
-                    nativeCanvas.clipRect(0f, 0f, size.width, size.height)
-                    nativeCanvas.translate(px, py)
-                    nativeCanvas.scale(s, s)
-
-                    for (i in 0 until chunks.size) {
-                        val chunk = chunks[i]
-                        if (!chunk.intersects(visLeft, visTop, visRight, visBottom)) continue
-                        chunk.ensureRecorded(isDarkPaper, darkStrokePaint, canvasStrokeRenderer)
-
-                        val ox = if (chunk.minX.isFinite()) chunk.minX else 0f
-                        val oy = if (chunk.minY.isFinite()) chunk.minY else 0f
-                        nativeCanvas.withSave {
-                            nativeCanvas.translate(ox, oy)
-                            nativeCanvas.drawRenderNode(chunk.renderNode)
-                        }
-                    }
-                }
-            } else {
-                // Fallback for API 26–28 or non-hardware canvas: direct AABB-culled rendering
-                directMatrix.reset()
-                directMatrix.postScale(s, s)
-                directMatrix.postTranslate(px, py)
-                nativeCanvas.withSave {
-                    nativeCanvas.clipRect(0f, 0f, size.width, size.height)
-                    nativeCanvas.translate(px, py)
-                    nativeCanvas.scale(s, s)
-                    drawCulledStrokesDirect(
-                        canvas = nativeCanvas,
-                        strokes = strokes,
-                        isDarkPaper = isDarkPaper,
-                        darkStrokePaint = darkStrokePaint,
-                        renderer = canvasStrokeRenderer,
-                        matrix = directMatrix,
-                        boundsIndex = boundsIndex,
-                        visLeft = visLeft,
-                        visTop = visTop,
-                        visRight = visRight,
-                        visBottom = visBottom
-                    )
-                }
+            nativeCanvas.withSave {
+                nativeCanvas.clipRect(0f, 0f, size.width, size.height)
+                nativeCanvas.translate(px, py)
+                nativeCanvas.scale(s, s)
+                drawCulledStrokesDirect(
+                    canvas = nativeCanvas,
+                    strokes = strokes,
+                    isDarkPaper = isDarkPaper,
+                    darkStrokePaint = darkStrokePaint,
+                    renderer = canvasStrokeRenderer,
+                    matrix = directMatrix,
+                    boundsIndex = boundsIndex,
+                    visLeft = visLeft,
+                    visTop = visTop,
+                    visRight = visRight,
+                    visBottom = visBottom
+                )
             }
         }
 

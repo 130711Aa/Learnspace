@@ -109,6 +109,10 @@ import com.lernspace.app.ui.workspace.components.InteractiveGraphDialog
 import com.lernspace.app.ui.workspace.components.MarkdownLatexContent
 import com.lernspace.app.ui.workspace.components.NoteFloatingToolbar
 import com.lernspace.app.ui.workspace.components.PaperBackground
+import com.lernspace.app.ui.workspace.ai.AiAssistantSidePanel
+import com.lernspace.app.ui.workspace.ai.PageCaptureHelper
+import com.lernspace.app.data.repository.FlashcardDeckUi
+import com.lernspace.app.data.repository.FlashcardUi
 import com.lernspace.app.ui.workspace.lasso.LassoHelper
 import com.lernspace.app.ui.workspace.lasso.LassoSelectionState
 import com.lernspace.app.ui.workspace.model.*
@@ -213,6 +217,7 @@ class NotePaneState(
 
     val textBoxes = mutableStateListOf<TextBoxElement>()
     val imageElements = mutableStateListOf<ImageElement>()
+    val aiChatMessages = mutableStateListOf<com.lernspace.app.ui.workspace.ai.AiChatMessage>()
 
     data class CanvasHistorySnapshot(
         val strokes: List<Stroke>,
@@ -915,9 +920,12 @@ fun NoteEditorScreen(
     var interactiveGraphFunction by remember { mutableStateOf<String?>(null) }
     var showInteractiveGraphDialog by remember { mutableStateOf(false) }
     var showClearCanvasDialog by remember { mutableStateOf(false) }
+    var showAiAssistantPanel by remember { mutableStateOf(false) }
 
     BackHandler {
-        if (secondaryNote != null) {
+        if (showAiAssistantPanel) {
+            showAiAssistantPanel = false
+        } else if (secondaryNote != null) {
             handleCloseSplit()
         } else {
             handleBack()
@@ -1173,6 +1181,10 @@ fun NoteEditorScreen(
                 showInteractiveGraphDialog = true
                 interactiveGraphFunction = ""
             },
+            isAiAssistantOpen = showAiAssistantPanel,
+            onToggleAiAssistant = {
+                showAiAssistantPanel = !showAiAssistantPanel
+            },
             hasAudioRecording = audioController.hasExistingRecording,
             isAudioBarOpen = showAudioBar,
             onToggleAudioBar = {
@@ -1368,6 +1380,78 @@ fun NoteEditorScreen(
                 onDismiss = { showSplitNoteDialog = false }
             )
         }
+
+        // ── Tablet-First AI Study Assistant Side Panel (Full Height, Slides from Right) ──
+        AnimatedVisibility(
+            visible = showAiAssistantPanel,
+            enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
+            exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(),
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .fillMaxHeight()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .imePadding()
+                .zIndex(30f)
+        ) {
+            AiAssistantSidePanel(
+                messages = activeState.aiChatMessages,
+                noteTitle = activeState.noteTitle,
+                subject = activeState.subject,
+                currentPage = activeState.currentPageIndex + 1,
+                totalPages = activeState.totalPages,
+                canvasTypeTitle = activeState.canvasType.title,
+                onClose = { showAiAssistantPanel = false },
+                onCapturePageSnapshot = {
+                    withContext(Dispatchers.Default) {
+                        PageCaptureHelper.capturePageBitmap(context, activeState, targetWidth = 1200)
+                    }
+                },
+                onExtractPageText = {
+                    PageCaptureHelper.extractPageText(activeState)
+                },
+                onInsertToNote = { content ->
+                    val screenCenterX = (-activeState.panX + 260f) / activeState.scale
+                    val screenCenterY = (-activeState.panY + 220f) / activeState.scale
+                    activeState.deselectAll()
+                    activeState.pushUndoSnapshot()
+                    activeState.textBoxes.add(
+                        TextBoxElement(
+                            x = maxOf(40f, screenCenterX),
+                            y = maxOf(80f, screenCenterY),
+                            width = 540f,
+                            height = 190f,
+                            text = content,
+                            fontSize = 24f,
+                            hasBackground = true,
+                            isSelected = true
+                        )
+                    )
+                    activeState.saveActivePageData()
+                    android.widget.Toast.makeText(context, "Materi AI berhasil ditempel ke catatan", android.widget.Toast.LENGTH_SHORT).show()
+                },
+                onSaveFlashcards = { cards ->
+                    val deck = FlashcardDeckUi(
+                        title = "${activeState.noteTitle} · Flashcards",
+                        description = "Dihasilkan otomatis oleh AI Assistant dari Halaman ${activeState.currentPageIndex + 1}",
+                        subjectId = activeState.note.subjectId,
+                        subjectName = activeState.subject,
+                        sourceNoteId = activeState.note.id
+                    )
+                    AcademicWorkspaceState.addFlashcardDeck(deck)
+                    for (card in cards) {
+                        AcademicWorkspaceState.addFlashcard(
+                            FlashcardUi(
+                                deckId = deck.id,
+                                front = card.front,
+                                back = card.back,
+                                hint = card.hint
+                            )
+                        )
+                    }
+                }
+            )
+        }
     }
 }
 
@@ -1444,6 +1528,15 @@ private fun NotePaneViewport(
             state.strokes.filter { LassoHelper.isStrokeInBounds(it, sel.bounds) }
         }
 
+        val effectiveImages = if (sel.selectedImages.isNotEmpty()) {
+            sel.selectedImages.toList()
+        } else {
+            state.imageElements.filter { img ->
+                val imgRect = Rect(img.x, img.y, img.x + img.width, img.y + img.height)
+                imgRect.overlaps(sel.bounds) || (sel.lassoPolygon.isNotEmpty() && LassoHelper.isImageSelected(img, sel.lassoPolygon))
+            }
+        }
+
         if (!GeminiApiClient.isConfigured()) {
             isAskingLassoAi = false
             lassoAiError = "Gemini API Key belum diatur. Buka Pengaturan -> AI & Integrasi untuk memasukkan API Key gratis kamu."
@@ -1451,7 +1544,7 @@ private fun NotePaneViewport(
             isAskingLassoAi = true
             val strokesSnapshot = effectiveStrokes
             val textSnippets = sel.selectedTextBoxes.mapNotNull { it.text.trim().takeIf { t -> t.isNotEmpty() } }
-            val imageBitmapsSrc = sel.selectedImages.map { it.bitmap }
+            val imageBitmapsSrc = effectiveImages.map { it.bitmap }
 
             lassoAiJob?.cancel()
             lassoAiJob = coroutineScope.launch {
@@ -1535,7 +1628,111 @@ private fun NotePaneViewport(
                             }
                         }
 
-                        // 2. Jika bukan dari PDF atau belum ada bitmap, render strokes biasa jika ada
+                        // 2. Ekstraksi gambar ImageElement yang terseleksi (termasuk grafik fungsi)
+                        for (img in effectiveImages) {
+                            try {
+                                val rawBmp = img.bitmap.asAndroidBitmap()
+                                if (!rawBmp.isRecycled) {
+                                    // Software ARGB_8888 bitmap required for createBitmap and Canvas drawing
+                                    val src = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O && rawBmp.config == android.graphics.Bitmap.Config.HARDWARE) {
+                                        rawBmp.copy(android.graphics.Bitmap.Config.ARGB_8888, false)
+                                    } else {
+                                        rawBmp
+                                    } ?: rawBmp
+
+                                    val intersectLeft = maxOf(sel.bounds.left, img.x)
+                                    val intersectTop = maxOf(sel.bounds.top, img.y)
+                                    val intersectRight = minOf(sel.bounds.right, img.x + img.width)
+                                    val intersectBottom = minOf(sel.bounds.bottom, img.y + img.height)
+
+                                    if (intersectRight > intersectLeft && intersectBottom > intersectTop) {
+                                        val scaleX = src.width.toFloat() / img.width.coerceAtLeast(1f)
+                                        val scaleY = src.height.toFloat() / img.height.coerceAtLeast(1f)
+                                        val cropX = ((intersectLeft - img.x) * scaleX).roundToInt().coerceIn(0, maxOf(0, src.width - 1))
+                                        val cropY = ((intersectTop - img.y) * scaleY).roundToInt().coerceIn(0, maxOf(0, src.height - 1))
+                                        val cropW = ((intersectRight - intersectLeft) * scaleX).roundToInt().coerceIn(1, maxOf(1, src.width - cropX))
+                                        val cropH = ((intersectBottom - intersectTop) * scaleY).roundToInt().coerceIn(1, maxOf(1, src.height - cropY))
+
+                                        val croppedImg = android.graphics.Bitmap.createBitmap(src, cropX, cropY, cropW, cropH)
+                                        val strokesToDraw = if (strokesSnapshot.isNotEmpty()) strokesSnapshot else {
+                                            state.strokes.filter { LassoHelper.isStrokeInBounds(it, sel.bounds) }
+                                        }
+
+                                        // Composite any overlapping handwriting / ink directly on top of the image!
+                                        if (strokesToDraw.isNotEmpty() && rendererSnapshot != null) {
+                                            val compositeBmp = croppedImg.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
+                                            val cCanvas = android.graphics.Canvas(compositeBmp)
+                                            val matrix = android.graphics.Matrix().apply {
+                                                postTranslate(-intersectLeft, -intersectTop)
+                                                postScale(scaleX, scaleY)
+                                            }
+                                            for (st in strokesToDraw) {
+                                                rendererSnapshot.draw(cCanvas, st, matrix)
+                                            }
+                                            val maxSide = maxOf(compositeBmp.width, compositeBmp.height)
+                                            if (maxSide > 1024) {
+                                                val downscale = 1024f / maxSide
+                                                val scaled = android.graphics.Bitmap.createScaledBitmap(
+                                                    compositeBmp,
+                                                    (compositeBmp.width * downscale).roundToInt().coerceAtLeast(1),
+                                                    (compositeBmp.height * downscale).roundToInt().coerceAtLeast(1),
+                                                    true
+                                                )
+                                                sendBitmaps.add(scaled)
+                                                bitmapsToRecycle.add(scaled)
+                                                compositeBmp.recycle()
+                                            } else {
+                                                sendBitmaps.add(compositeBmp)
+                                                bitmapsToRecycle.add(compositeBmp)
+                                            }
+                                            if (croppedImg !== compositeBmp) croppedImg.recycle()
+                                        } else {
+                                            val maxSide = maxOf(croppedImg.width, croppedImg.height)
+                                            if (maxSide > 1024) {
+                                                val downscale = 1024f / maxSide
+                                                val scaled = android.graphics.Bitmap.createScaledBitmap(
+                                                    croppedImg,
+                                                    (croppedImg.width * downscale).roundToInt().coerceAtLeast(1),
+                                                    (croppedImg.height * downscale).roundToInt().coerceAtLeast(1),
+                                                    true
+                                                )
+                                                sendBitmaps.add(scaled)
+                                                bitmapsToRecycle.add(scaled)
+                                                croppedImg.recycle()
+                                            } else {
+                                                sendBitmaps.add(croppedImg)
+                                                bitmapsToRecycle.add(croppedImg)
+                                            }
+                                        }
+                                    } else {
+                                        // If bounds don't strictly intersect (e.g. slight floating point margin), send entire image
+                                        val maxSide = maxOf(src.width, src.height)
+                                        if (maxSide > 1024) {
+                                            val downscale = 1024f / maxSide
+                                            val scaled = android.graphics.Bitmap.createScaledBitmap(
+                                                src,
+                                                (src.width * downscale).roundToInt().coerceAtLeast(1),
+                                                (src.height * downscale).roundToInt().coerceAtLeast(1),
+                                                true
+                                            )
+                                            sendBitmaps.add(scaled)
+                                            bitmapsToRecycle.add(scaled)
+                                        } else {
+                                            val copyBmp = src.copy(android.graphics.Bitmap.Config.ARGB_8888, false)
+                                            sendBitmaps.add(copyBmp)
+                                            bitmapsToRecycle.add(copyBmp)
+                                        }
+                                    }
+                                    if (src !== rawBmp) {
+                                        bitmapsToRecycle.add(src)
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                android.util.Log.e("LassoAI", "Error extracting image: ${e.message}", e)
+                            }
+                        }
+
+                        // 3. Jika bukan dari PDF/Gambar atau belum ada bitmap, render strokes biasa jika ada
                         if (strokesSnapshot.isNotEmpty() && sendBitmaps.isEmpty()) {
                             HandwrittenNoteRecognizer.renderStrokesToBitmap(
                                 strokes = strokesSnapshot,
@@ -1545,56 +1742,6 @@ private fun NotePaneViewport(
                             )?.let {
                                 sendBitmaps.add(it)
                                 bitmapsToRecycle.add(it)
-                            }
-                        }
-
-                        // 3. Ekstraksi gambar ImageElement yang terseleksi
-                        for (img in sel.selectedImages) {
-                            runCatching {
-                                val src = img.bitmap.asAndroidBitmap()
-                                val intersectLeft = maxOf(sel.bounds.left, img.x)
-                                val intersectTop = maxOf(sel.bounds.top, img.y)
-                                val intersectRight = minOf(sel.bounds.right, img.x + img.width)
-                                val intersectBottom = minOf(sel.bounds.bottom, img.y + img.height)
-
-                                if (intersectRight > intersectLeft && intersectBottom > intersectTop && sel.isRegionCapture) {
-                                    val scaleX = src.width.toFloat() / img.width.coerceAtLeast(1f)
-                                    val scaleY = src.height.toFloat() / img.height.coerceAtLeast(1f)
-                                    val cropX = ((intersectLeft - img.x) * scaleX).roundToInt().coerceIn(0, src.width - 1)
-                                    val cropY = ((intersectTop - img.y) * scaleY).roundToInt().coerceIn(0, src.height - 1)
-                                    val cropW = ((intersectRight - intersectLeft) * scaleX).roundToInt().coerceIn(1, src.width - cropX)
-                                    val cropH = ((intersectBottom - intersectTop) * scaleY).roundToInt().coerceIn(1, src.height - cropY)
-
-                                    val croppedImg = android.graphics.Bitmap.createBitmap(src, cropX, cropY, cropW, cropH)
-                                    val maxSide = maxOf(croppedImg.width, croppedImg.height)
-                                    if (maxSide > 720) {
-                                        val scale = 720f / maxSide
-                                        val scaled = android.graphics.Bitmap.createScaledBitmap(
-                                            croppedImg,
-                                            (croppedImg.width * scale).roundToInt().coerceAtLeast(1),
-                                            (croppedImg.height * scale).roundToInt().coerceAtLeast(1),
-                                            true
-                                        )
-                                        sendBitmaps.add(scaled)
-                                        bitmapsToRecycle.add(scaled)
-                                        croppedImg.recycle()
-                                    } else {
-                                        sendBitmaps.add(croppedImg)
-                                        bitmapsToRecycle.add(croppedImg)
-                                    }
-                                } else {
-                                    val maxSide = maxOf(src.width, src.height).coerceAtLeast(1)
-                                    if (maxSide > 720) {
-                                        val scale = 720f / maxSide
-                                        val w = (src.width * scale).roundToInt().coerceAtLeast(1)
-                                        val h = (src.height * scale).roundToInt().coerceAtLeast(1)
-                                        val scaled = android.graphics.Bitmap.createScaledBitmap(src, w, h, true)
-                                        sendBitmaps.add(scaled)
-                                        if (scaled !== src) bitmapsToRecycle.add(scaled)
-                                    } else {
-                                        sendBitmaps.add(src)
-                                    }
-                                }
                             }
                         }
                     }
@@ -1853,8 +2000,8 @@ private fun NotePaneViewport(
                                             val centroid = ev.calculateCentroid(useCurrent = false)
                                             ev.changes.forEach { it.consume() }
                                             if (centroid != Offset.Unspecified && !zoom.isNaN() && zoom > 0f) {
-                                                val minScale = if (state.canvasType == NoteCanvasType.PDF_DOCUMENT) 0.4f else 0.5f
-                                                val maxScale = if (state.canvasType == NoteCanvasType.PDF_DOCUMENT) 5.0f else 3.5f
+                                                val minScale = 0.25f
+                                                val maxScale = 10.0f // 1000% Super-Sharp Vector Zoom
                                                 val newScale = (state.scale * zoom).coerceIn(minScale, maxScale)
                                                 val effectiveZoom = newScale / state.scale
                                                 state.panX = centroid.x - (centroid.x - state.panX) * effectiveZoom + pan.x
@@ -1903,8 +2050,8 @@ private fun NotePaneViewport(
                                         event.changes.forEach { it.consume() }
 
                                         if (centroid != Offset.Unspecified && !zoom.isNaN() && zoom > 0f) {
-                                            val minScale = if (state.canvasType == NoteCanvasType.PDF_DOCUMENT) 0.4f else 0.5f
-                                            val maxScale = if (state.canvasType == NoteCanvasType.PDF_DOCUMENT) 5.0f else 3.5f
+                                            val minScale = 0.25f
+                                            val maxScale = 10.0f // 1000% Super-Sharp Vector Zoom
                                             val newScale = (state.scale * zoom).coerceIn(minScale, maxScale)
                                             val effectiveZoom = newScale / state.scale
                                             state.panX = centroid.x - (centroid.x - state.panX) * effectiveZoom + pan.x
@@ -1970,8 +2117,8 @@ private fun NotePaneViewport(
                                     event.changes.forEach { it.consume() }
 
                                     if (centroid != Offset.Unspecified && !zoom.isNaN() && zoom > 0f) {
-                                        val minScale = if (state.canvasType == NoteCanvasType.PDF_DOCUMENT) 0.4f else 0.5f
-                                        val maxScale = if (state.canvasType == NoteCanvasType.PDF_DOCUMENT) 5.0f else 3.5f
+                                        val minScale = 0.25f
+                                        val maxScale = 10.0f // 1000% Super-Sharp Vector Zoom
                                         val newScale = (state.scale * zoom).coerceIn(minScale, maxScale)
                                         val effectiveZoom = newScale / state.scale
                                         state.panX = centroid.x - (centroid.x - state.panX) * effectiveZoom + pan.x
@@ -2043,6 +2190,73 @@ private fun NotePaneViewport(
                     isDarkPaper = state.isDarkPaper,
                     modifier = Modifier.fillMaxSize().clipToBounds()
                 )
+            }
+
+            // Viewport Spatial Culling for Placed Images & Text Boxes
+            val curScale = state.scale.coerceAtLeast(0.05f)
+            val vpW = if (viewportSize.width > 0) viewportSize.width.toFloat() else 2400f
+            val vpH = if (viewportSize.height > 0) viewportSize.height.toFloat() else 2400f
+            val cullingMargin = 400f
+            val visWorldLeft = -state.panX / curScale - cullingMargin
+            val visWorldTop = -state.panY / curScale - cullingMargin
+            val visWorldRight = (vpW - state.panX) / curScale + cullingMargin
+            val visWorldBottom = (vpH - state.panY) / curScale + cullingMargin
+
+            // Placed Images Layer (Rendered inside pane on top of paper surface, below inking layer)
+            state.imageElements.forEachIndexed { index, img ->
+                key(img.id) {
+                    val isVisible = img.isSelected || (
+                        img.x + img.width >= visWorldLeft && img.x <= visWorldRight &&
+                        img.y + img.height >= visWorldTop && img.y <= visWorldBottom
+                    )
+                    if (isVisible) {
+                        DraggableImage(
+                            image = img,
+                            scaleProvider = { state.scale },
+                            panXProvider = { state.panX },
+                            panYProvider = { state.panY },
+                            onCommitMove = { newWorldX, newWorldY ->
+                                if (index < state.imageElements.size) {
+                                    state.pushUndoSnapshot()
+                                    state.imageElements[index] = state.imageElements[index].copy(x = newWorldX, y = newWorldY)
+                                    state.saveActivePageData()
+                                }
+                            },
+                            onCommitResize = { newWorldW, newWorldH ->
+                                if (index < state.imageElements.size) {
+                                    state.pushUndoSnapshot()
+                                    state.imageElements[index] = state.imageElements[index].copy(width = newWorldW, height = newWorldH)
+                                    state.saveActivePageData()
+                                }
+                            },
+                            onSelect = {
+                                state.deselectAll()
+                                if (index < state.imageElements.size) {
+                                    state.imageElements[index] = state.imageElements[index].copy(isSelected = true)
+                                }
+                            },
+                            onToggleLock = {
+                                if (index < state.imageElements.size) {
+                                    state.pushUndoSnapshot()
+                                    val nowLocked = !state.imageElements[index].isLocked
+                                    state.imageElements[index] = state.imageElements[index].copy(
+                                        isLocked = nowLocked,
+                                        isSelected = if (nowLocked) false else true
+                                    )
+                                    state.saveActivePageData()
+                                    val msg = if (nowLocked) "Posisi gambar/grafik dikunci" else "Kunci posisi dibuka"
+                                    android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            onDelete = {
+                                state.pushUndoSnapshot()
+                                state.imageElements.remove(img)
+                                state.saveActivePageData()
+                            },
+                            isSelectionEnabled = activeTool == NoteTool.IMAGE
+                        )
+                    }
+                }
             }
 
             // Inking Layer (AndroidX Ink Native Vector Tessellation - Strictly clipped)
@@ -2221,7 +2435,54 @@ private fun NotePaneViewport(
                 }
             }
 
-            // Lasso Tool Selection & Manipulation Layer (Strictly clipped)
+            // Placed Draggable Text Boxes Layer (Rendered inside pane with viewport culling)
+            state.textBoxes.forEachIndexed { index, boxElement ->
+                val isVisible = boxElement.isSelected || (
+                    boxElement.x + boxElement.width >= visWorldLeft && boxElement.x <= visWorldRight &&
+                    boxElement.y + boxElement.height >= visWorldTop && boxElement.y <= visWorldBottom
+                )
+                if (isVisible) {
+                    DraggableTextBox(
+                        box = boxElement,
+                        scale = state.scale,
+                        panXProvider = { state.panX },
+                        panYProvider = { state.panY },
+                        isDarkPaper = state.isDarkPaper,
+                        onCommitMove = { newWorldX, newWorldY ->
+                            if (index < state.textBoxes.size) {
+                                state.pushUndoSnapshot()
+                                state.textBoxes[index] = state.textBoxes[index].copy(x = newWorldX, y = newWorldY)
+                                state.saveActivePageData()
+                            }
+                        },
+                        onCommitResize = { newWorldW, newWorldH ->
+                            if (index < state.textBoxes.size) {
+                                state.pushUndoSnapshot()
+                                state.textBoxes[index] = state.textBoxes[index].copy(width = newWorldW, height = newWorldH)
+                                state.saveActivePageData()
+                            }
+                        },
+                        onTextChange = { newText ->
+                            if (index < state.textBoxes.size) {
+                                state.textBoxes[index] = state.textBoxes[index].copy(text = newText)
+                            }
+                        },
+                        onSelect = {
+                            state.deselectAll()
+                            if (index < state.textBoxes.size) {
+                                state.textBoxes[index] = state.textBoxes[index].copy(isSelected = true)
+                            }
+                        },
+                        onDelete = {
+                            state.pushUndoSnapshot()
+                            state.textBoxes.remove(boxElement)
+                            state.saveActivePageData()
+                        }
+                    )
+                }
+            }
+
+            // Lasso Tool Selection & Manipulation Layer (Strictly clipped - Top-most layer)
             if ((activeTool == NoteTool.LASSO || state.lassoSelection != null) && isActive) {
                 Box(
                     modifier = Modifier
@@ -2326,25 +2587,29 @@ private fun NotePaneViewport(
                                         } else {
                                             val matchedStrokes = state.strokes.filter { LassoHelper.isStrokeSelected(it, loopCopy) }.toMutableList()
                                             val matchedBoxes = state.textBoxes.filter { LassoHelper.isTextBoxSelected(it, loopCopy) }.toMutableList()
-                                            val matchedImages = state.imageElements.filter { LassoHelper.isImageSelected(it, loopCopy) }.toMutableList()
+                                            val wholeImages = state.imageElements.filter { LassoHelper.isWholeImageSelected(it, loopCopy) }.toMutableList()
+                                            val overlappingImages = state.imageElements.filter { img ->
+                                                if (img.isLocked) return@filter false
+                                                val imgRect = Rect(img.x, img.y, img.x + img.width, img.y + img.height)
+                                                (polyBounds != null && imgRect.overlaps(polyBounds)) || LassoHelper.isImageSelected(img, loopCopy)
+                                            }.toMutableList()
 
-                                            val bounds = LassoHelper.computeCombinedBounds(matchedStrokes, matchedBoxes, matchedImages)
-                                            if (bounds != null && (matchedStrokes.isNotEmpty() || matchedBoxes.isNotEmpty() || matchedImages.isNotEmpty())) {
-                                                state.lassoSelection = LassoSelectionState(
-                                                    selectedStrokes = matchedStrokes,
-                                                    selectedTextBoxes = matchedBoxes,
-                                                    selectedImages = matchedImages,
-                                                    bounds = bounds,
-                                                    isRegionCapture = false,
-                                                    lassoPolygon = loopCopy
-                                                )
-                                            } else if (polyBounds != null && polyBounds.width >= 24f && polyBounds.height >= 24f) {
-                                                // Lasso melingkari gambar atau ruang kanvas
-                                                val overlappingImages = state.imageElements.filter { img ->
-                                                    if (img.isLocked) return@filter false
-                                                    val imgRect = Rect(img.x, img.y, img.x + img.width, img.y + img.height)
-                                                    imgRect.overlaps(polyBounds) || LassoHelper.isImageSelected(img, loopCopy)
-                                                }.toMutableList()
+                                            val effectiveImages = if (wholeImages.isNotEmpty()) wholeImages else overlappingImages
+
+                                            if (wholeImages.isNotEmpty() || matchedBoxes.isNotEmpty() || matchedStrokes.isNotEmpty()) {
+                                                val bounds = LassoHelper.computeCombinedBounds(matchedStrokes, matchedBoxes, wholeImages)
+                                                val finalBounds = if (wholeImages.isEmpty() && polyBounds != null) polyBounds else bounds
+                                                if (finalBounds != null) {
+                                                    state.lassoSelection = LassoSelectionState(
+                                                        selectedStrokes = matchedStrokes,
+                                                        selectedTextBoxes = matchedBoxes,
+                                                        selectedImages = effectiveImages,
+                                                        bounds = finalBounds,
+                                                        isRegionCapture = wholeImages.isEmpty() && effectiveImages.isNotEmpty(),
+                                                        lassoPolygon = loopCopy
+                                                    )
+                                                }
+                                            } else if (polyBounds != null && (polyBounds.width >= 12f || polyBounds.height >= 12f)) {
                                                 val regionStrokes = state.strokes.filter {
                                                     LassoHelper.isStrokeInBounds(it, polyBounds) || LassoHelper.isStrokeSelected(it, loopCopy)
                                                 }.toMutableList()
@@ -2642,8 +2907,8 @@ private fun NotePaneViewport(
                                                 sel.selectedStrokes.addAll(newDuplicates)
                                             }
 
-                                            // 2. Duplikasi images jika ada
-                                            if (sel.selectedImages.isNotEmpty()) {
+                                            // 2. Duplikasi images utuh jika ada (hanya saat seleksi seluruh gambar, bukan region crop)
+                                            if (sel.selectedImages.isNotEmpty() && !sel.isRegionCapture) {
                                                 val newImgDups = sel.selectedImages.map { img ->
                                                     img.copy(
                                                         id = UUID.randomUUID().toString(),
@@ -2655,31 +2920,62 @@ private fun NotePaneViewport(
                                                 state.imageElements.addAll(newImgDups)
                                             }
 
-                                            // 3. Jika region capture pada PDF (crop potongan PDF ke catatan baru)
-                                            if (sel.isRegionCapture && state.canvasType == NoteCanvasType.PDF_DOCUMENT) {
-                                                state.pdfPageBitmap?.let { pdfImageBitmap ->
-                                                    runCatching {
-                                                        val pdfBmp = pdfImageBitmap.asAndroidBitmap()
-                                                        if (!pdfBmp.isRecycled) {
-                                                            val scaleX = pdfBmp.width.toFloat() / state.pdfPageWorldWidth.coerceAtLeast(1f)
-                                                            val scaleY = pdfBmp.height.toFloat() / state.pdfPageWorldHeight.coerceAtLeast(1f)
-                                                            val leftPx = (sel.bounds.left * scaleX).roundToInt().coerceIn(0, pdfBmp.width - 1)
-                                                            val topPx = (sel.bounds.top * scaleY).roundToInt().coerceIn(0, pdfBmp.height - 1)
-                                                            val rightPx = (sel.bounds.right * scaleX).roundToInt().coerceIn(leftPx + 1, pdfBmp.width)
-                                                            val bottomPx = (sel.bounds.bottom * scaleY).roundToInt().coerceIn(topPx + 1, pdfBmp.height)
-                                                            val cropW = rightPx - leftPx
-                                                            val cropH = bottomPx - topPx
-                                                            if (cropW > 4 && cropH > 4) {
-                                                                val cropped = android.graphics.Bitmap.createBitmap(pdfBmp, leftPx, topPx, cropW, cropH)
-                                                                val newElem = ImageElement(
-                                                                    id = UUID.randomUUID().toString(),
-                                                                    bitmap = cropped.asImageBitmap(),
-                                                                    x = sel.bounds.left + offsetDelta,
-                                                                    y = sel.bounds.top + offsetDelta,
-                                                                    width = sel.bounds.width,
-                                                                    height = sel.bounds.height
-                                                                )
-                                                                state.imageElements.add(newElem)
+                                            // 3. Jika region capture pada PDF atau Gambar (crop potongan ke catatan baru)
+                                            if (sel.isRegionCapture) {
+                                                if (state.canvasType == NoteCanvasType.PDF_DOCUMENT) {
+                                                    state.pdfPageBitmap?.let { pdfImageBitmap ->
+                                                        runCatching {
+                                                            val pdfBmp = pdfImageBitmap.asAndroidBitmap()
+                                                            if (!pdfBmp.isRecycled) {
+                                                                val scaleX = pdfBmp.width.toFloat() / state.pdfPageWorldWidth.coerceAtLeast(1f)
+                                                                val scaleY = pdfBmp.height.toFloat() / state.pdfPageWorldHeight.coerceAtLeast(1f)
+                                                                val leftPx = (sel.bounds.left * scaleX).roundToInt().coerceIn(0, pdfBmp.width - 1)
+                                                                val topPx = (sel.bounds.top * scaleY).roundToInt().coerceIn(0, pdfBmp.height - 1)
+                                                                val rightPx = (sel.bounds.right * scaleX).roundToInt().coerceIn(leftPx + 1, pdfBmp.width)
+                                                                val bottomPx = (sel.bounds.bottom * scaleY).roundToInt().coerceIn(topPx + 1, pdfBmp.height)
+                                                                val cropW = rightPx - leftPx
+                                                                val cropH = bottomPx - topPx
+                                                                if (cropW > 4 && cropH > 4) {
+                                                                    val cropped = android.graphics.Bitmap.createBitmap(pdfBmp, leftPx, topPx, cropW, cropH)
+                                                                    val newElem = ImageElement(
+                                                                        id = UUID.randomUUID().toString(),
+                                                                        bitmap = cropped.asImageBitmap(),
+                                                                        x = sel.bounds.left + offsetDelta,
+                                                                        y = sel.bounds.top + offsetDelta,
+                                                                        width = sel.bounds.width,
+                                                                        height = sel.bounds.height
+                                                                    )
+                                                                    state.imageElements.add(newElem)
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                } else if (sel.selectedImages.isNotEmpty()) {
+                                                    val img = sel.selectedImages.firstOrNull()
+                                                    if (img != null) {
+                                                        runCatching {
+                                                            val src = img.bitmap.asAndroidBitmap()
+                                                            if (!src.isRecycled) {
+                                                                val scaleX = src.width.toFloat() / img.width.coerceAtLeast(1f)
+                                                                val scaleY = src.height.toFloat() / img.height.coerceAtLeast(1f)
+                                                                val intersectLeft = maxOf(sel.bounds.left, img.x)
+                                                                val intersectTop = maxOf(sel.bounds.top, img.y)
+                                                                val cropX = ((intersectLeft - img.x) * scaleX).roundToInt().coerceIn(0, src.width - 1)
+                                                                val cropY = ((intersectTop - img.y) * scaleY).roundToInt().coerceIn(0, src.height - 1)
+                                                                val cropW = (sel.bounds.width * scaleX).roundToInt().coerceIn(1, src.width - cropX)
+                                                                val cropH = (sel.bounds.height * scaleY).roundToInt().coerceIn(1, src.height - cropY)
+                                                                if (cropW > 4 && cropH > 4) {
+                                                                    val cropped = android.graphics.Bitmap.createBitmap(src, cropX, cropY, cropW, cropH)
+                                                                    val newElem = ImageElement(
+                                                                        id = UUID.randomUUID().toString(),
+                                                                        bitmap = cropped.asImageBitmap(),
+                                                                        x = sel.bounds.left + offsetDelta,
+                                                                        y = sel.bounds.top + offsetDelta,
+                                                                        width = sel.bounds.width,
+                                                                        height = sel.bounds.height
+                                                                    )
+                                                                    state.imageElements.add(newElem)
+                                                                }
                                                             }
                                                         }
                                                     }
@@ -2740,120 +3036,6 @@ private fun NotePaneViewport(
                             }
                         }
                     }
-                }
-            }
-
-
-            // Viewport Spatial Culling for Placed Images & Text Boxes
-            val curScale = state.scale.coerceAtLeast(0.05f)
-            val vpW = if (viewportSize.width > 0) viewportSize.width.toFloat() else 2400f
-            val vpH = if (viewportSize.height > 0) viewportSize.height.toFloat() else 2400f
-            val cullingMargin = 400f
-            val visWorldLeft = -state.panX / curScale - cullingMargin
-            val visWorldTop = -state.panY / curScale - cullingMargin
-            val visWorldRight = (vpW - state.panX) / curScale + cullingMargin
-            val visWorldBottom = (vpH - state.panY) / curScale + cullingMargin
-
-            // Placed Images Layer (Rendered inside pane with viewport culling)
-            state.imageElements.forEachIndexed { index, img ->
-                key(img.id) {
-                    val isVisible = img.isSelected || (
-                        img.x + img.width >= visWorldLeft && img.x <= visWorldRight &&
-                        img.y + img.height >= visWorldTop && img.y <= visWorldBottom
-                    )
-                    if (isVisible) {
-                        DraggableImage(
-                            image = img,
-                            scaleProvider = { state.scale },
-                            panXProvider = { state.panX },
-                            panYProvider = { state.panY },
-                            onCommitMove = { newWorldX, newWorldY ->
-                                if (index < state.imageElements.size) {
-                                    state.pushUndoSnapshot()
-                                    state.imageElements[index] = state.imageElements[index].copy(x = newWorldX, y = newWorldY)
-                                    state.saveActivePageData()
-                                }
-                            },
-                            onCommitResize = { newWorldW, newWorldH ->
-                                if (index < state.imageElements.size) {
-                                    state.pushUndoSnapshot()
-                                    state.imageElements[index] = state.imageElements[index].copy(width = newWorldW, height = newWorldH)
-                                    state.saveActivePageData()
-                                }
-                            },
-                            onSelect = {
-                                state.deselectAll()
-                                if (index < state.imageElements.size) {
-                                    state.imageElements[index] = state.imageElements[index].copy(isSelected = true)
-                                }
-                            },
-                            onToggleLock = {
-                                if (index < state.imageElements.size) {
-                                    state.pushUndoSnapshot()
-                                    val nowLocked = !state.imageElements[index].isLocked
-                                    state.imageElements[index] = state.imageElements[index].copy(
-                                        isLocked = nowLocked,
-                                        isSelected = if (nowLocked) false else true
-                                    )
-                                    state.saveActivePageData()
-                                    val msg = if (nowLocked) "Posisi gambar/grafik dikunci" else "Kunci posisi dibuka"
-                                    android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
-                                }
-                            },
-                            onDelete = {
-                                state.pushUndoSnapshot()
-                                state.imageElements.remove(img)
-                                state.saveActivePageData()
-                            }
-                        )
-                    }
-                }
-            }
-
-            // Placed Draggable Text Boxes Layer (Rendered inside pane with viewport culling)
-            state.textBoxes.forEachIndexed { index, boxElement ->
-                val isVisible = boxElement.isSelected || (
-                    boxElement.x + boxElement.width >= visWorldLeft && boxElement.x <= visWorldRight &&
-                    boxElement.y + boxElement.height >= visWorldTop && boxElement.y <= visWorldBottom
-                )
-                if (isVisible) {
-                    DraggableTextBox(
-                        box = boxElement,
-                        scale = state.scale,
-                        panXProvider = { state.panX },
-                        panYProvider = { state.panY },
-                        isDarkPaper = state.isDarkPaper,
-                        onCommitMove = { newWorldX, newWorldY ->
-                            if (index < state.textBoxes.size) {
-                                state.pushUndoSnapshot()
-                                state.textBoxes[index] = state.textBoxes[index].copy(x = newWorldX, y = newWorldY)
-                                state.saveActivePageData()
-                            }
-                        },
-                        onCommitResize = { newWorldW, newWorldH ->
-                            if (index < state.textBoxes.size) {
-                                state.pushUndoSnapshot()
-                                state.textBoxes[index] = state.textBoxes[index].copy(width = newWorldW, height = newWorldH)
-                                state.saveActivePageData()
-                            }
-                        },
-                        onTextChange = { newText ->
-                            if (index < state.textBoxes.size) {
-                                state.textBoxes[index] = state.textBoxes[index].copy(text = newText)
-                            }
-                        },
-                        onSelect = {
-                            state.deselectAll()
-                            if (index < state.textBoxes.size) {
-                                state.textBoxes[index] = state.textBoxes[index].copy(isSelected = true)
-                            }
-                        },
-                        onDelete = {
-                            state.pushUndoSnapshot()
-                            state.textBoxes.remove(boxElement)
-                            state.saveActivePageData()
-                        }
-                    )
                 }
             }
         }
@@ -3754,6 +3936,8 @@ private fun UnifiedNoteTopBar(
     isDarkPaper: Boolean = false,
     onToggleDarkPaper: () -> Unit = {},
     onOpenGraph: () -> Unit = {},
+    isAiAssistantOpen: Boolean = false,
+    onToggleAiAssistant: () -> Unit = {},
     hasAudioRecording: Boolean = false,
     isAudioBarOpen: Boolean = false,
     onToggleAudioBar: () -> Unit = {},
@@ -3798,6 +3982,8 @@ private fun UnifiedNoteTopBar(
                 isDarkPaper = isDarkPaper,
                 onToggleDarkPaper = onToggleDarkPaper,
                 onOpenGraph = onOpenGraph,
+                isAiAssistantOpen = isAiAssistantOpen,
+                onToggleAiAssistant = onToggleAiAssistant,
                 canUndo = canUndo,
                 onUndo = onUndo,
                 canRedo = canRedo,
@@ -3839,6 +4025,8 @@ private fun UnifiedNoteTopBar(
                 isDarkPaper = isDarkPaper,
                 onToggleDarkPaper = onToggleDarkPaper,
                 onOpenGraph = onOpenGraph,
+                isAiAssistantOpen = isAiAssistantOpen,
+                onToggleAiAssistant = onToggleAiAssistant,
                 canUndo = canUndo,
                 onUndo = onUndo,
                 canRedo = canRedo,
@@ -4148,6 +4336,8 @@ private fun NoteActionsCapsule(
     isDarkPaper: Boolean,
     onToggleDarkPaper: () -> Unit,
     onOpenGraph: () -> Unit = {},
+    isAiAssistantOpen: Boolean = false,
+    onToggleAiAssistant: () -> Unit = {},
     canUndo: Boolean,
     onUndo: () -> Unit,
     canRedo: Boolean,
@@ -4251,6 +4441,24 @@ private fun NoteActionsCapsule(
                         contentDescription = "Buka Grafik Matematika (GeoGebra)",
                         tint = AccentBlue,
                         modifier = Modifier.size(17.dp)
+                    )
+                }
+            }
+
+            // AI Study Assistant Button (Context-Aware Page Assistant)
+            Surface(
+                shape = CircleShape,
+                color = if (isAiAssistantOpen) Color(0xFF8B5CF6) else Color(0xFF8B5CF6).copy(alpha = 0.15f),
+                modifier = Modifier
+                    .size(36.dp)
+                    .clickable(onClick = onToggleAiAssistant)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Filled.AutoAwesome,
+                        contentDescription = "AI Study Assistant (Membaca Halaman)",
+                        tint = if (isAiAssistantOpen) Color.White else Color(0xFF8B5CF6),
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }

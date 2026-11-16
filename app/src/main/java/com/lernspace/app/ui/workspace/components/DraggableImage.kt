@@ -44,6 +44,7 @@ fun DraggableImage(
     onSelect: () -> Unit,
     onToggleLock: () -> Unit = {},
     onDelete: () -> Unit,
+    isSelectionEnabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val density = LocalDensity.current
@@ -117,9 +118,9 @@ fun DraggableImage(
             )
         }
 
-        // Tap to Select (when unselected and unlocked)
+        // Tap to Select (when unselected and unlocked and selection is allowed)
         // Multi-touch gestures (zoom/pan) pass cleanly to the canvas with zero accidental movement!
-        if (!image.isSelected && !image.isLocked) {
+        if (!image.isSelected && !image.isLocked && isSelectionEnabled) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()

@@ -37,6 +37,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
         setContent {
             val isDarkTheme = when (AppSettingsManager.themeMode) {
                 AppThemeMode.SYSTEM -> isSystemInDarkTheme()

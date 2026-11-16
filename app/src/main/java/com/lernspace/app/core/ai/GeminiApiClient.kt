@@ -266,6 +266,7 @@ object GeminiApiClient {
         userPrompt: String,
         imageBitmaps: List<Bitmap>,
         thinkingBudget: Int = 256,
+        maxOutputTokens: Int = 8192,
         onPartialText: suspend (String) -> Unit
     ): Result<String> = withContext(Dispatchers.IO) {
         val parts = buildPartsWithImages(userPrompt, imageBitmaps, jpegQuality = 72)
@@ -273,6 +274,7 @@ object GeminiApiClient {
             systemPrompt = systemPrompt,
             parts = parts,
             thinkingBudget = thinkingBudget,
+            maxOutputTokens = maxOutputTokens,
             onPartialText = onPartialText
         )
         // Fallback without thinkingConfig if a model rejects it with HTTP 400
@@ -281,6 +283,99 @@ object GeminiApiClient {
                 systemPrompt = systemPrompt,
                 parts = parts,
                 thinkingBudget = -1,
+                maxOutputTokens = maxOutputTokens,
+                onPartialText = onPartialText
+            )
+        } else {
+            firstTry
+        }
+    }
+
+    data class ChatTurn(
+        val role: String, // "user" or "model"
+        val text: String,
+        val images: List<Bitmap> = emptyList()
+    )
+
+    /**
+     * Streams multi-turn conversation tokens via SSE with optional page snapshots or images.
+     */
+    suspend fun streamChat(
+        systemPrompt: String,
+        history: List<ChatTurn>,
+        newUserPrompt: String,
+        newImages: List<Bitmap> = emptyList(),
+        thinkingBudget: Int = 256,
+        maxOutputTokens: Int = 8192,
+        onPartialText: suspend (String) -> Unit
+    ): Result<String> = withContext(Dispatchers.IO) {
+        val contents = JSONArray()
+        for (turn in history) {
+            val parts = JSONArray()
+            if (turn.images.isNotEmpty()) {
+                for (bmp in turn.images) {
+                    try {
+                        val baos = ByteArrayOutputStream()
+                        bmp.compress(Bitmap.CompressFormat.JPEG, 70, baos)
+                        val b64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+                        parts.put(
+                            JSONObject().put(
+                                "inline_data",
+                                JSONObject().put("mime_type", "image/jpeg").put("data", b64)
+                            )
+                        )
+                    } catch (_: Exception) {}
+                }
+            }
+            if (turn.text.isNotBlank()) {
+                parts.put(JSONObject().put("text", turn.text))
+            }
+            if (parts.length() > 0) {
+                contents.put(
+                    JSONObject()
+                        .put("role", if (turn.role == "model" || turn.role == "assistant") "model" else "user")
+                        .put("parts", parts)
+                )
+            }
+        }
+
+        // Current turn
+        val currentParts = JSONArray()
+        if (newImages.isNotEmpty()) {
+            for (bmp in newImages) {
+                try {
+                    val baos = ByteArrayOutputStream()
+                    bmp.compress(Bitmap.CompressFormat.JPEG, 72, baos)
+                    val b64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+                    currentParts.put(
+                        JSONObject().put(
+                            "inline_data",
+                            JSONObject().put("mime_type", "image/jpeg").put("data", b64)
+                        )
+                    )
+                } catch (_: Exception) {}
+            }
+        }
+        currentParts.put(JSONObject().put("text", newUserPrompt))
+        contents.put(
+            JSONObject()
+                .put("role", "user")
+                .put("parts", currentParts)
+        )
+
+        val firstTry = executeStreamContents(
+            systemPrompt = systemPrompt,
+            contents = contents,
+            thinkingBudget = thinkingBudget,
+            maxOutputTokens = maxOutputTokens,
+            onPartialText = onPartialText
+        )
+        if (firstTry.isFailure && (firstTry.exceptionOrNull() as? GeminiHttpException)?.statusCode == 400 && thinkingBudget >= 0) {
+            executeStreamContents(
+                systemPrompt = systemPrompt,
+                contents = contents,
+                thinkingBudget = -1,
+                maxOutputTokens = maxOutputTokens,
                 onPartialText = onPartialText
             )
         } else {
@@ -292,6 +387,28 @@ object GeminiApiClient {
         systemPrompt: String,
         parts: JSONArray,
         thinkingBudget: Int,
+        maxOutputTokens: Int = 8192,
+        onPartialText: suspend (String) -> Unit
+    ): Result<String> {
+        val contents = JSONArray().put(
+            JSONObject()
+                .put("role", "user")
+                .put("parts", parts)
+        )
+        return executeStreamContents(
+            systemPrompt = systemPrompt,
+            contents = contents,
+            thinkingBudget = thinkingBudget,
+            maxOutputTokens = maxOutputTokens,
+            onPartialText = onPartialText
+        )
+    }
+
+    private suspend fun executeStreamContents(
+        systemPrompt: String,
+        contents: JSONArray,
+        thinkingBudget: Int,
+        maxOutputTokens: Int = 8192,
         onPartialText: suspend (String) -> Unit
     ): Result<String> = withContext(Dispatchers.IO) {
         var conn: HttpURLConnection? = null
@@ -309,7 +426,7 @@ object GeminiApiClient {
 
             val genConfig = JSONObject().apply {
                 put("temperature", 0.2)
-                put("maxOutputTokens", 1536)
+                put("maxOutputTokens", maxOutputTokens)
                 if (thinkingBudget >= 0) {
                     put("thinkingConfig", JSONObject().put("thinkingBudget", thinkingBudget))
                 }
@@ -320,14 +437,7 @@ object GeminiApiClient {
                     "system_instruction",
                     JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemPrompt)))
                 )
-                put(
-                    "contents",
-                    JSONArray().put(
-                        JSONObject()
-                            .put("role", "user")
-                            .put("parts", parts)
-                    )
-                )
+                put("contents", contents)
                 put("generationConfig", genConfig)
             }
 
@@ -428,7 +538,7 @@ object GeminiApiClient {
 
             val genConfig = JSONObject().apply {
                 put("temperature", temperature)
-                put("maxOutputTokens", 4096)
+                put("maxOutputTokens", 8192)
                 if (expectJson) {
                     put("responseMimeType", "application/json")
                     put(

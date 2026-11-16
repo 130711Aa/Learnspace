@@ -457,7 +457,7 @@ object PdfNoteHelper {
         }
     }
 
-    private fun drawPaperLinesOnCanvas(
+    fun drawPaperLinesOnCanvas(
         canvas: Canvas,
         style: PaperStyle,
         width: Int,

@@ -115,6 +115,26 @@ object LassoHelper {
     }
 
     /**
+     * Tests if an entire ImageElement is enclosed by the lasso polygon
+     * (center point or multiple corners inside the loop).
+     */
+    fun isWholeImageSelected(img: ImageElement, polygon: List<Offset>): Boolean {
+        if (img.isLocked || polygon.size < 3) return false
+        val center = Offset(img.x + img.width / 2f, img.y + img.height / 2f)
+        if (isPointInPolygon(center, polygon)) return true
+        val topLeft = Offset(img.x, img.y)
+        val topRight = Offset(img.x + img.width, img.y)
+        val bottomLeft = Offset(img.x, img.y + img.height)
+        val bottomRight = Offset(img.x + img.width, img.y + img.height)
+        var cornersInside = 0
+        if (isPointInPolygon(topLeft, polygon)) cornersInside++
+        if (isPointInPolygon(topRight, polygon)) cornersInside++
+        if (isPointInPolygon(bottomLeft, polygon)) cornersInside++
+        if (isPointInPolygon(bottomRight, polygon)) cornersInside++
+        return cornersInside >= 2
+    }
+
+    /**
      * Checks if a stroke overlaps with a bounding box.
      */
     fun isStrokeInBounds(stroke: Stroke, bounds: Rect): Boolean {
