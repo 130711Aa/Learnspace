@@ -1,6 +1,6 @@
 workflows:
   android-workflow:
-    name: Android Debug Build
+    name: Android Release Build
     max_build_duration: 60
     instance_type: mac_mini_m2
     environment:
@@ -17,14 +17,14 @@ workflows:
       - name: Set up local.properties
         script: |
           echo "sdk.dir=$ANDROID_SDK_ROOT" > "$CM_BUILD_DIR/local.properties"
-      - name: Build Android Debug APK
+      - name: Build Android Release APK
         script: |
           chmod +x gradlew
-          ./gradlew assembleDebug --stacktrace
+          ./gradlew assembleRelease --stacktrace
     artifacts:
-      - app/build/outputs/apk/debug/*.apk
+      - app/build/outputs/apk/release/*.apk
     publishing:
       scripts:
         - name: Build completed
           script: |
-            echo "Android Debug APK successfully built and ready for download!"
+            echo "Android Release APK successfully built and ready for download!"

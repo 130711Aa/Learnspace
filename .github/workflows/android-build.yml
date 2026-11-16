@@ -5,7 +5,7 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
-  workflow_dispatch: # Memungkinkan kamu trigger build manual via tombol 'Run workflow' di web GitHub
+  workflow_dispatch:
 
 jobs:
   build-android:
@@ -26,12 +26,12 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace
+      - name: Build Release APK
+        run: ./gradlew assembleRelease --stacktrace
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lernspace-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: lernspace-release-apk
+          path: app/build/outputs/apk/release/*.apk
           retention-days: 14
