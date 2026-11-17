@@ -63,6 +63,8 @@ val LernspaceTextSecondary: Color
 
 // ── Accents (Standard Non-Composable Values for Universal Compatibility) ────
 val AccentTeal = Color(0xFF10B981)
+val AccentGreen = Color(0xFF10B981)
+val AccentPurple = Color(0xFF8B5CF6)
 val AccentTealContainer: Color
     @Composable
     get() = if (LocalIsDarkTheme.current) Color(0xFF064E3B) else Color(0xFFECFDF5)

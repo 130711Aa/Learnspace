@@ -5,6 +5,7 @@ import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.EditNote
+import androidx.compose.material.icons.filled.FolderCopy
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Quiz
 import androidx.compose.material.icons.filled.Settings
@@ -22,11 +23,12 @@ sealed class Screen(
     data object Workspace : Screen("workspace", "Workspace", Icons.Filled.EditNote)
     data object Flashcards : Screen("flashcards", "Cards", Icons.Filled.Style)
     data object Quiz : Screen("quiz", "Quiz", Icons.Filled.Quiz)
+    data object BankSoal : Screen("bank_soal", "Bank Soal", Icons.Filled.FolderCopy)
     data object Insights : Screen("insights", "Insights", Icons.Filled.Analytics)
     data object Settings : Screen("settings", "Settings", Icons.Filled.Settings)
 
     companion object {
-        val items get() = listOf(Home, Planner, Learning, Workspace, Flashcards, Quiz, Insights, Settings)
+        val items get() = listOf(Home, Planner, Learning, Workspace, Flashcards, Quiz, BankSoal, Insights, Settings)
     }
 }
 

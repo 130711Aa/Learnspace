@@ -1,5 +1,8 @@
 package com.lernspace.app.ui.settings
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -1748,6 +1751,7 @@ private fun BackupRestoreSection() {
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var isError by remember { mutableStateOf(false) }
     var showRestoreConfirmDialog by remember { mutableStateOf(false) }
+    var showRestoreSuccessDialog by remember { mutableStateOf(false) }
     var pendingRestoreUri by remember { mutableStateOf<Uri?>(null) }
 
     // Backup Launcher (Save to file)
@@ -1960,6 +1964,9 @@ private fun BackupRestoreSection() {
                                 isProcessing = false
                                 isError = !res.success
                                 statusMessage = res.message
+                                if (res.success) {
+                                    showRestoreSuccessDialog = true
+                                }
                             }
                         }
                     },
@@ -1978,6 +1985,51 @@ private fun BackupRestoreSection() {
             }
         )
     }
+
+    // Success Dialog after restoring data
+    if (showRestoreSuccessDialog) {
+        AlertDialog(
+            onDismissRequest = { showRestoreSuccessDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Filled.CheckCircle, null, tint = AccentTeal, modifier = Modifier.size(22.dp))
+                    Text("Data Berhasil Dipulihkan", fontWeight = FontWeight.Bold, color = LernspaceDark)
+                }
+            },
+            text = {
+                Text(
+                    text = "${statusMessage ?: "Seluruh data catatan dan pengaturan telah selesai dipulihkan."}\n\nTekan 'Muat Ulang Tampilan' untuk menyegarkan tampilan sekarang.",
+                    fontSize = 13.sp,
+                    color = LernspaceTextPrimary
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showRestoreSuccessDialog = false
+                        findActivity(context)?.recreate()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark)
+                ) {
+                    Text("Muat Ulang Tampilan", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRestoreSuccessDialog = false }) {
+                    Text("Tutup", color = LernspaceTextSecondary)
+                }
+            }
+        )
+    }
+}
+
+private fun findActivity(context: Context): Activity? {
+    var ctx = context
+    while (ctx is ContextWrapper) {
+        if (ctx is Activity) return ctx
+        ctx = ctx.baseContext
+    }
+    return null
 }
 
 

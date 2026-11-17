@@ -26,6 +26,7 @@ import com.lernspace.app.core.ai.GeneratedQuizQuestion
 import com.lernspace.app.core.ai.HandwrittenNoteRecognizer
 import com.lernspace.app.core.document.DocumentTextExtractor
 import com.lernspace.app.core.document.ExtractedDocumentResult
+import com.lernspace.app.core.supabase.SupabaseBankSoalClient
 import com.lernspace.app.data.repository.AcademicWorkspaceState
 import com.lernspace.app.ui.theme.*
 import com.lernspace.app.ui.workspace.components.MarkdownLatexContent
@@ -87,6 +88,15 @@ fun QuizScreen() {
     var selectedOptionIdx by remember { mutableStateOf<Int?>(null) }
     var correctCount by remember { mutableIntStateOf(0) }
     var activeQuizTitle by remember { mutableStateOf("") }
+
+    // Supabase Bank Soal Sync & AI Taxonomy State
+    var autoUploadToBankSoal by remember { mutableStateOf(true) }
+    var uploadStatusText by remember { mutableStateOf<String?>(null) }
+    var uploadSuccess by remember { mutableStateOf<Boolean?>(null) }
+    var isUploadingToBankSoal by remember { mutableStateOf(false) }
+    var detectedCanonicalSubject by remember { mutableStateOf<String?>(null) }
+    var detectedCanonicalTopic by remember { mutableStateOf<String?>(null) }
+    var detectedCanonicalSubtopic by remember { mutableStateOf<String?>(null) }
 
     val activeSourcePages = remember(sourceMode, selectedNote, selectedTopic, notes) {
         when (sourceMode) {
@@ -189,6 +199,10 @@ fun QuizScreen() {
                         currentIndex = 0
                         selectedOptionIdx = null
                         correctCount = 0
+                        detectedCanonicalSubject = null
+                        detectedCanonicalTopic = null
+                        detectedCanonicalSubtopic = null
+                        uploadStatusText = null
                     },
                     shape = RoundedCornerShape(10.dp),
                     border = BorderStroke(1.dp, LernspaceBorder)
@@ -472,6 +486,51 @@ fun QuizScreen() {
                         }
                     }
 
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(Icons.Filled.CloudUpload, null, modifier = Modifier.size(16.dp), tint = AccentBlue)
+                            Text("Simpan ke Bank Soal Cloud", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = LernspaceDark)
+                        }
+                        Switch(
+                            checked = autoUploadToBankSoal,
+                            onCheckedChange = { autoUploadToBankSoal = it }
+                        )
+                    }
+
+                    if (uploadStatusText != null) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (uploadSuccess == true) AccentGreen.copy(alpha = 0.08f) else LernspaceSurfaceLow,
+                            border = BorderStroke(1.dp, if (uploadSuccess == true) AccentGreen.copy(alpha = 0.3f) else LernspaceBorder)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (uploadSuccess == true) Icons.Filled.CheckCircle else Icons.Filled.Info,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(13.dp),
+                                    tint = if (uploadSuccess == true) AccentGreen else LernspaceTextSecondary
+                                )
+                                Text(
+                                    text = uploadStatusText!!,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = if (uploadSuccess == true) AccentGreen else LernspaceDark
+                                )
+                            }
+                        }
+                    }
+
                     if (errorMsg != null) {
                         Text(errorMsg!!, fontSize = 12.sp, color = AccentRed)
                     }
@@ -528,12 +587,38 @@ fun QuizScreen() {
                                         topicTitle = effectiveTopicTitle,
                                         maxQuestions = questionCount
                                     )
-                                    res.onSuccess { questions ->
-                                        quizQuestions = questions
-                                        activeQuizTitle = effectiveTopicTitle
+                                    res.onSuccess { quizResult ->
+                                        quizQuestions = quizResult.questions
+                                        detectedCanonicalSubject = quizResult.canonicalSubject
+                                        detectedCanonicalTopic = quizResult.canonicalTopic
+                                        detectedCanonicalSubtopic = quizResult.canonicalSubtopic
+                                        activeQuizTitle = "${quizResult.canonicalSubject} • ${quizResult.canonicalTopic}"
                                         currentIndex = 0
                                         selectedOptionIdx = null
                                         correctCount = 0
+
+                                        if (autoUploadToBankSoal) {
+                                            isUploadingToBankSoal = true
+                                            uploadStatusText = "Menormalisasi & menyimpan ke Bank Soal..."
+                                            coroutineScope.launch {
+                                                val upRes = SupabaseBankSoalClient.uploadGeneratedQuestions(
+                                                    questions = quizResult.questions,
+                                                    subjectName = quizResult.canonicalSubject,
+                                                    topicTitle = quizResult.canonicalTopic,
+                                                    subtopicTitle = quizResult.canonicalSubtopic,
+                                                    difficulty = quizResult.difficulty
+                                                )
+                                                upRes.onSuccess { count ->
+                                                    isUploadingToBankSoal = false
+                                                    uploadSuccess = true
+                                                    uploadStatusText = "Tersimpan ke Bank Soal: ${quizResult.canonicalSubject} › ${quizResult.canonicalTopic} ($count soal)"
+                                                }.onFailure { upErr ->
+                                                    isUploadingToBankSoal = false
+                                                    uploadSuccess = false
+                                                    uploadStatusText = "Gagal simpan ke Bank Soal: ${upErr.message}"
+                                                }
+                                            }
+                                        }
                                     }.onFailure { err ->
                                         errorMsg = err.message ?: "Gagal membuat kuis."
                                     }
@@ -632,6 +717,28 @@ fun QuizScreen() {
                                 color = LernspaceDark,
                                 trackColor = LernspaceSurfaceLow
                             )
+
+                            if (!detectedCanonicalSubject.isNullOrBlank()) {
+                                Surface(
+                                    color = AccentBlue.copy(alpha = 0.08f),
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = BorderStroke(1.dp, AccentBlue.copy(alpha = 0.2f))
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Icon(Icons.Filled.AutoAwesome, null, modifier = Modifier.size(13.dp), tint = AccentBlue)
+                                        Text(
+                                            text = "Taksonomi: $detectedCanonicalSubject › $detectedCanonicalTopic › $detectedCanonicalSubtopic",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = AccentBlue
+                                        )
+                                    }
+                                }
+                            }
 
                             MarkdownLatexContent(
                                 markdown = q.question,

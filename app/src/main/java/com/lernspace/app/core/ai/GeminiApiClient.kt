@@ -129,7 +129,7 @@ object GeminiApiClient {
         sourceText: String,
         topicTitle: String,
         maxQuestions: Int
-    ): Result<List<GeneratedQuizQuestion>> = withContext(Dispatchers.IO) {
+    ): Result<GeneratedQuizResult> = withContext(Dispatchers.IO) {
         if (apiKey.isBlank()) {
             return@withContext Result.failure(IllegalStateException("Gemini API Key belum diatur."))
         }
@@ -140,11 +140,16 @@ object GeminiApiClient {
         }
 
         val systemPrompt = """
-            Kamu adalah pembuat kuis latihan belajar dalam Bahasa Indonesia.
-            Buat TEPAT $maxQuestions soal pilihan ganda (4 opsi: index 0..3) yang menguji pemahaman konsep HANYA berdasarkan materi yang diberikan.
-            Jangan mengarang informasi di luar materi. Gunakan LaTeX standar (${'$'}...${'$'}) jika ada rumus.
-            Balas dalam JSON valid sesuai format:
-            {"questions":[{"question":"Pertanyaan","options":["Opsi A","Opsi B","Opsi C","Opsi D"],"correctIndex":0,"explanation":"Penjelasan singkat 1-2 kalimat"}]}
+            Kamu adalah AI pembuat kuis sekaligus Kurator Taksonomi Akademik Bahasa Indonesia.
+            TUGAS UTAMA:
+            1. Analisis konten materi yang diberikan secara mendalam, ABAIKAN judul file/catatan mentah user, dan lakukan NORMALISASI TAKSONOMI AKADEMIK RESMI:
+               - canonicalSubject: Nama Mata Pelajaran / Mata Kuliah baku resmi (contoh: "Kalkulus", "Fisika Dasar", "Algoritma & Pemrograman", "Kimia Dasar", "Biologi", "Ekonomi", "Statistika", "Bahasa Inggris", dll).
+               - canonicalTopic: Bab / Materi Pokok baku resmi (contoh: "Turunan & Aturan Rantai", "Hukum Gerak Newton", "Struktur Data Tree", "Stoikiometri Larutan", dll).
+               - canonicalSubtopic: Sub-bab spesifik dari materi ini (contoh: "Aturan Rantai Fungsi Trigonometri", "Hukum II Newton & Gaya Gesek", "Binary Tree Depth", dll).
+               - difficulty: "EASY", "MEDIUM", atau "HARD" sesuai tingkat kedalaman soal.
+            2. Buat TEPAT $maxQuestions soal pilihan ganda (4 opsi: index 0..3) yang menguji pemahaman konsep HANYA berdasarkan materi yang diberikan.
+               Gunakan LaTeX standar (${'$'}...${'$'}) jika ada rumus matematika atau simbol sains.
+            3. Balas dalam JSON valid sesuai format skema yang diminta.
         """.trimIndent()
 
         val userPrompt = """
@@ -157,9 +162,14 @@ object GeminiApiClient {
             put("type", "OBJECT")
             put(
                 "properties",
-                JSONObject().put(
-                    "questions",
-                    JSONObject().apply {
+                JSONObject().apply {
+                    put("canonicalSubject", JSONObject().put("type", "STRING"))
+                    put("canonicalTopic", JSONObject().put("type", "STRING"))
+                    put("canonicalSubtopic", JSONObject().put("type", "STRING"))
+                    put("difficulty", JSONObject().put("type", "STRING"))
+                    put(
+                        "questions",
+                        JSONObject().apply {
                         put("type", "ARRAY")
                         put(
                             "items",
@@ -181,10 +191,11 @@ object GeminiApiClient {
                                 put("required", JSONArray().put("question").put("options").put("correctIndex").put("explanation"))
                             }
                         )
-                    }
-                )
+                        }
+                    )
+                }
             )
-            put("required", JSONArray().put("questions"))
+            put("required", JSONArray().put("canonicalSubject").put("canonicalTopic").put("canonicalSubtopic").put("questions"))
         }
 
         val responseResult = callGenerateContent(
@@ -197,11 +208,11 @@ object GeminiApiClient {
 
         responseResult.fold(
             onSuccess = { text ->
-                val questions = parseQuizJson(text)
-                if (questions.isEmpty()) {
+                val quizResult = parseQuizResult(text, topicTitle)
+                if (quizResult.questions.isEmpty()) {
                     Result.failure(IllegalStateException("Gemini tidak mengembalikan soal kuis yang valid."))
                 } else {
-                    Result.success(questions.take(maxQuestions))
+                    Result.success(quizResult.copy(questions = quizResult.questions.take(maxQuestions)))
                 }
             },
             onFailure = { err -> Result.failure(err) }
@@ -686,6 +697,74 @@ object GeminiApiClient {
         return results
     }
 
+    private fun parseQuizResult(raw: String, fallbackTopic: String): GeneratedQuizResult {
+        val cleaned = raw.replace("```json", "").replace("```", "").trim()
+        val jsonCandidate = extractJsonPayload(cleaned) ?: cleaned
+        val results = mutableListOf<GeneratedQuizQuestion>()
+        var canonicalSubject = "Umum"
+        var canonicalTopic = fallbackTopic.ifBlank { "Materi Umum" }
+        var canonicalSubtopic = "Latihan Mandiri"
+        var difficulty = "MEDIUM"
+
+        try {
+            val parsed = JSONTokener(jsonCandidate).nextValue()
+            val obj = parsed as? JSONObject
+            if (obj != null) {
+                val subj = obj.optString("canonicalSubject", "").trim()
+                if (subj.isNotBlank()) canonicalSubject = subj
+
+                val top = obj.optString("canonicalTopic", "").trim()
+                if (top.isNotBlank()) canonicalTopic = top
+
+                val subtop = obj.optString("canonicalSubtopic", "").trim()
+                if (subtop.isNotBlank()) canonicalSubtopic = subtop
+
+                val diff = obj.optString("difficulty", "MEDIUM").uppercase().trim()
+                if (diff in listOf("EASY", "MEDIUM", "HARD")) difficulty = diff
+            }
+
+            val arr = when (parsed) {
+                is JSONObject -> parsed.optJSONArray("questions") ?: parsed.optJSONArray("items")
+                is JSONArray -> parsed
+                else -> null
+            } ?: return GeneratedQuizResult(emptyList(), canonicalSubject, canonicalTopic, canonicalSubtopic, difficulty)
+
+            for (i in 0 until arr.length()) {
+                val item = arr.optJSONObject(i) ?: continue
+                val question = item.optString("question").trim()
+                val optsArr = item.optJSONArray("options") ?: continue
+                val options = buildList {
+                    for (j in 0 until optsArr.length()) {
+                        val opt = optsArr.optString(j).trim()
+                        if (opt.isNotEmpty()) add(opt)
+                    }
+                }
+                if (question.isNotBlank() && options.size >= 2) {
+                    val correctIdx = item.optInt("correctIndex", 0).coerceIn(0, options.lastIndex)
+                    val explanation = item.optString("explanation", "").trim()
+                    results.add(
+                        GeneratedQuizQuestion(
+                            question = question,
+                            options = options.take(4),
+                            correctIndex = correctIdx,
+                            explanation = explanation
+                        )
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("GeminiApiClient", "Quiz JSON parse failed: ${e.message} raw=${raw.take(300)}")
+        }
+
+        return GeneratedQuizResult(
+            questions = results,
+            canonicalSubject = canonicalSubject,
+            canonicalTopic = canonicalTopic,
+            canonicalSubtopic = canonicalSubtopic,
+            difficulty = difficulty
+        )
+    }
+
     private fun parseQuizJson(raw: String): List<GeneratedQuizQuestion> {
         val cleaned = raw.replace("```json", "").replace("```", "").trim()
         val jsonCandidate = extractJsonPayload(cleaned) ?: cleaned
@@ -747,6 +826,14 @@ data class GeneratedQuizQuestion(
     val options: List<String>,
     val correctIndex: Int,
     val explanation: String
+)
+
+data class GeneratedQuizResult(
+    val questions: List<GeneratedQuizQuestion>,
+    val canonicalSubject: String,
+    val canonicalTopic: String,
+    val canonicalSubtopic: String,
+    val difficulty: String = "MEDIUM"
 )
 
 class GeminiHttpException(val statusCode: Int, message: String) : Exception(message)

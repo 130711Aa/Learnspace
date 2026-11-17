@@ -119,10 +119,12 @@ object BackupRestoreManager {
                 }
 
                 // 4. Backup Preferences
-                val prefsFile = File(appCtx.applicationInfo.dataDir, "shared_prefs/lernspace_settings.xml")
-                if (prefsFile.exists()) {
-                    addFileToZip(zipOut, prefsFile, "$PREFS_DIR_NAME/${prefsFile.name}")
-                    writtenBytes += prefsFile.length()
+                val prefsDir = File(appCtx.applicationInfo.dataDir, "shared_prefs")
+                if (prefsDir.exists()) {
+                    prefsDir.listFiles()?.filter { it.isFile && it.name.endsWith(".xml") }?.forEach { prefFile ->
+                        addFileToZip(zipOut, prefFile, "$PREFS_DIR_NAME/${prefFile.name}")
+                        writtenBytes += prefFile.length()
+                    }
                 }
             }
 
@@ -190,11 +192,8 @@ object BackupRestoreManager {
                     return@withContext RestoreResult(false, "File cadangan tidak valid (metadata hilang).")
                 }
 
-                // 3. Close active Room DB connection before file replacement
-                val currentDb = LernspaceDatabase.getInstance(appCtx)
-                try {
-                    currentDb.close()
-                } catch (_: Exception) {}
+                // 3. Close active Room DB connection and reset singleton instance before replacing files
+                LernspaceDatabase.closeAndReset()
 
                 // 4. Replace Database files
                 val restoredDbDir = File(tempExtractDir, DB_DIR_NAME)
@@ -228,18 +227,24 @@ object BackupRestoreManager {
                 if (restoredPrefsDir.exists()) {
                     val targetPrefsDir = File(appCtx.applicationInfo.dataDir, "shared_prefs")
                     targetPrefsDir.mkdirs()
-                    File(restoredPrefsDir, "lernspace_settings.xml").let {
-                        if (it.exists()) it.copyTo(File(targetPrefsDir, "lernspace_settings.xml"), overwrite = true)
+                    restoredPrefsDir.listFiles()?.filter { it.isFile && it.name.endsWith(".xml") }?.forEach { prefFile ->
+                        prefFile.copyTo(File(targetPrefsDir, prefFile.name), overwrite = true)
                     }
                 }
 
                 // Count restored notes
                 val noteCount = targetNotesDir.listFiles { f -> f.extension == "json" }?.size ?: 0
 
-                // 7. Reload in-memory SQLite and repository state
+                // 7. Re-open fresh Room database connection
                 val freshDb = LernspaceDatabase.getInstance(appCtx)
+
+                // 8. Re-initialize and fully reload data into AcademicWorkspaceState
                 AcademicDatabaseManager.init(freshDb, appCtx)
+                AcademicDatabaseManager.reloadAllFromDatabase()
+
+                // 9. Re-initialize in-memory preferences and Bank Soal attempt states
                 AppSettingsManager.init(appCtx)
+                com.lernspace.app.core.supabase.BankSoalAttemptManager.init(appCtx)
 
                 RestoreResult(
                     success = true,

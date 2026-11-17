@@ -6,6 +6,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layout
+import com.lernspace.app.ui.banksoal.BankSoalScreen
 import com.lernspace.app.ui.flashcards.FlashcardsScreen
 import com.lernspace.app.ui.home.HomeScreen
 import com.lernspace.app.ui.home.HomeViewModel
@@ -129,6 +130,19 @@ fun LernspaceTabHost(
                     .keepAliveTab(currentRoute == Screen.Quiz.route)
             ) {
                 QuizScreen()
+            }
+        }
+
+        // Tab 7: Bank Soal
+        if (visitedTabs.contains(Screen.BankSoal.route)) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .keepAliveTab(currentRoute == Screen.BankSoal.route)
+            ) {
+                BankSoalScreen(
+                    onNavigateToQuiz = { onNavigate(Screen.Quiz.route) }
+                )
             }
         }
 

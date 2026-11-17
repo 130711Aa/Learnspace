@@ -43,9 +43,19 @@ object AcademicDatabaseManager {
         }
     }
 
+    /**
+     * Fully suspends and reloads all domains into AcademicWorkspaceState.
+     * Essential after restoring a backup so the in-memory state is refreshed immediately.
+     */
+    suspend fun reloadAllFromDatabase() {
+        loadAllFromDatabase()
+    }
+
     private suspend fun loadAllFromDatabase() {
         val database = db ?: return
         val storage = storageManager ?: return
+
+        try {
 
         // 1. Subjects
         val existingSubjects = database.subjectDao().getAllActiveSubjects().firstOrNull() ?: emptyList()
@@ -254,6 +264,9 @@ object AcademicDatabaseManager {
                     createdAt = entity.createdAt
                 )
             })
+        }
+        } catch (e: Exception) {
+            android.util.Log.e("AcademicDatabaseManager", "Error loading data from database", e)
         }
     }
 

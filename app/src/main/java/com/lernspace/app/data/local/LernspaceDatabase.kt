@@ -102,6 +102,19 @@ abstract class LernspaceDatabase : RoomDatabase() {
                 instance
             }
         }
+
+        /**
+         * Safely closes the active database and nulls out the singleton instance.
+         * Essential when restoring database files from backup so a fresh connection is created.
+         */
+        fun closeAndReset() {
+            synchronized(this) {
+                try {
+                    INSTANCE?.close()
+                } catch (_: Exception) {}
+                INSTANCE = null
+            }
+        }
     }
 }
 
