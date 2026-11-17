@@ -47,7 +47,53 @@ data class AiChatMessage(
     val flashcards: List<GeneratedFlashcard>? = null,
     val timestamp: Long = System.currentTimeMillis()
 ) {
+    val displayContent: String
+        get() = cleanContentForDisplay(content, flashcards, isStreaming)
+
     companion object {
+        fun cleanContentForDisplay(
+            rawText: String,
+            flashcards: List<GeneratedFlashcard>? = null,
+            isStreaming: Boolean = false
+        ): String {
+            if (rawText.isBlank()) return ""
+            var text = rawText
+
+            // If not streaming or if closing bracket exists, strip flashcard JSON array from visible text
+            val startIdx = text.indexOf('[')
+            val endIdx = text.lastIndexOf(']')
+            if (startIdx != -1 && (endIdx > startIdx || !isStreaming)) {
+                val potentialJson = if (endIdx > startIdx) text.substring(startIdx, endIdx + 1) else text.substring(startIdx)
+                if (potentialJson.contains("\"front\"") || potentialJson.contains("\"back\"")) {
+                    text = text.substring(0, startIdx).trimEnd()
+                }
+            }
+
+            // Strip ```json ... ``` code blocks
+            text = text.replace(Regex("""```(?:json)?\s*\[\s*\{[\s\S]*?\}\s*\]\s*```"""), "").trimEnd()
+
+            // Convert common inline HTML tags to clean Markdown
+            text = text.replace(Regex("""<br\s*/?>""", RegexOption.IGNORE_CASE), "\n")
+            text = text.replace(Regex("""</?(?:b|strong)>""", RegexOption.IGNORE_CASE), "**")
+            text = text.replace(Regex("""</?(?:i|em)>""", RegexOption.IGNORE_CASE), "*")
+            text = text.replace(Regex("""</?code>""", RegexOption.IGNORE_CASE), "`")
+
+            // Strip structural and container HTML tags (div, p, span, details, summary, table, etc.)
+            text = text.replace(Regex("""</?(?:div|span|p|details|summary|table|thead|tbody|tr|td|th|ul|ol|li)[^>]*>""", RegexOption.IGNORE_CASE), "")
+
+            // Strip any remaining XML/HTML tags
+            text = text.replace(Regex("""<[a-zA-Z/][^>]*>"""), "")
+
+            text = text.trim()
+
+            // If user only got flashcards and no other text, provide a clean summary message
+            if (text.isBlank() && !flashcards.isNullOrEmpty()) {
+                return "✨ Berhasil membuat **${flashcards.size} Flashcard** dari materi halaman ini. Klik tombol di bawah untuk menyimpannya ke Deck."
+            }
+
+            return text
+        }
+
         fun parseFlashcardsIfPresent(text: String): List<GeneratedFlashcard>? {
             return try {
                 val startIdx = text.indexOf('[')

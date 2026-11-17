@@ -5,6 +5,10 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Log
+import com.google.android.gms.tasks.Tasks
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import com.lernspace.app.core.ai.GeminiApiClient
 import com.lernspace.app.ui.workspace.pdf.PdfNoteHelper
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +42,44 @@ object DocumentTextExtractor {
                 // PDF Document
                 mimeType.contains("pdf", ignoreCase = true) || fileName.endsWith(".pdf", ignoreCase = true) -> {
                     extractFromPdf(context, uri, fileName, onProgress)
+                }
+
+                // Microsoft Word (.docx)
+                DocumentToPdfConverter.isDocx(fileName, mimeType) -> {
+                    onProgress(1, 1)
+                    val textRes = DocumentToPdfConverter.extractTextFromDocx(context, uri)
+                    val text = textRes.getOrNull().orEmpty()
+                    if (text.isBlank()) {
+                        return@withContext Result.failure(IllegalStateException("Dokumen Word tidak memiliki teks yang terbaca."))
+                    }
+                    Result.success(
+                        ExtractedDocumentResult(
+                            fileName = fileName,
+                            text = text,
+                            pageCount = 1,
+                            wordCount = countWords(text),
+                            mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        )
+                    )
+                }
+
+                // Microsoft PowerPoint (.pptx)
+                DocumentToPdfConverter.isPptx(fileName, mimeType) -> {
+                    onProgress(1, 1)
+                    val textRes = DocumentToPdfConverter.extractTextFromPptx(context, uri)
+                    val text = textRes.getOrNull().orEmpty()
+                    if (text.isBlank()) {
+                        return@withContext Result.failure(IllegalStateException("Slide PowerPoint tidak memiliki teks yang terbaca."))
+                    }
+                    Result.success(
+                        ExtractedDocumentResult(
+                            fileName = fileName,
+                            text = text,
+                            pageCount = 1,
+                            wordCount = countWords(text),
+                            mimeType = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                        )
+                    )
                 }
 
                 // Plain Text / Markdown / Code / JSON / CSV
@@ -102,7 +144,7 @@ object DocumentTextExtractor {
                         )
                     } else {
                         Result.failure(
-                            IllegalArgumentException("Format file '$fileName' tidak didukung. Harap gunakan PDF, teks (.txt/.md), atau gambar.")
+                            IllegalArgumentException("Format file '$fileName' tidak didukung. Harap gunakan PDF, Word (.docx), PowerPoint (.pptx), teks (.txt/.md), atau gambar.")
                         )
                     }
                 }
@@ -125,29 +167,56 @@ object DocumentTextExtractor {
         }
 
         val sb = StringBuilder()
-        val pagesToProcess = minOf(pageCount, 10)
+        val pagesToProcess = minOf(pageCount, 15)
+        var mlKitRecognizer: com.google.mlkit.vision.text.TextRecognizer? = null
+        try {
+            mlKitRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+        } catch (e: Exception) {
+            Log.w(TAG, "Tidak dapat menginisialisasi ML Kit TextRecognition", e)
+        }
 
-        for (p in 0 until pagesToProcess) {
-            onProgress(p + 1, pagesToProcess)
-            val bmp = PdfNoteHelper.renderPdfPage(context, uri, p, targetWidth = 1200)
-            if (bmp != null) {
-                try {
-                    val pageText = if (GeminiApiClient.isConfigured()) {
-                        GeminiApiClient.generateTextFromImages(
-                            systemPrompt = "Ekstrak seluruh materi teks, soal, dan tabel pada halaman dokumen ini secara terstruktur tanpa sapaan.",
-                            userPrompt = "Ekstrak teks pada halaman dokumen ini:",
-                            imageBitmaps = listOf(bmp)
-                        ).getOrNull()?.trim().orEmpty()
-                    } else ""
+        try {
+            for (p in 0 until pagesToProcess) {
+                onProgress(p + 1, pagesToProcess)
+                val bmp = PdfNoteHelper.renderPdfPageUncached(context, uri, p, targetWidth = 1200)
+                if (bmp != null) {
+                    try {
+                        var pageText = ""
+                        // 1. Coba ML Kit Text Recognition on-device (cepat, hemat token, offline)
+                        if (mlKitRecognizer != null) {
+                            try {
+                                val inputImage = InputImage.fromBitmap(bmp, 0)
+                                val visionText = Tasks.await(mlKitRecognizer.process(inputImage))
+                                pageText = visionText.text.trim()
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Gagal OCR via ML Kit pada hal $p", e)
+                            }
+                        }
 
-                    if (pageText.isNotBlank()) {
-                        if (sb.isNotEmpty()) sb.append("\n\n")
-                        sb.append("--- Halaman ${p + 1} ---\n").append(pageText)
+                        // 2. Fallback: jika ML Kit kosong dan Gemini API key aktif
+                        if (pageText.isBlank() && GeminiApiClient.isConfigured()) {
+                            try {
+                                pageText = GeminiApiClient.generateTextFromImages(
+                                    systemPrompt = "Ekstrak seluruh materi teks, soal, dan tabel pada halaman dokumen ini secara terstruktur tanpa sapaan.",
+                                    userPrompt = "Ekstrak teks pada halaman dokumen ini:",
+                                    imageBitmaps = listOf(bmp)
+                                ).getOrNull()?.trim().orEmpty()
+                            } catch (_: Exception) {}
+                        }
+
+                        if (pageText.isNotBlank()) {
+                            if (sb.isNotEmpty()) sb.append("\n\n")
+                            sb.append("--- Halaman ${p + 1} ---\n").append(pageText)
+                        }
+                    } finally {
+                        bmp.recycle()
                     }
-                } finally {
-                    bmp.recycle()
                 }
             }
+        } finally {
+            try {
+                mlKitRecognizer?.close()
+            } catch (_: Exception) {}
         }
 
         val fullText = sb.toString().trim()

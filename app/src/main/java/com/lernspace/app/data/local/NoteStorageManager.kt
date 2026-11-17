@@ -64,31 +64,141 @@ class NoteStorageManager(private val context: Context) {
                 val pdfsDir = File(notesDir, "pdfs").apply { if (!exists()) mkdirs() }
                 val targetFile = File(pdfsDir, "$noteId.pdf")
 
-                if (uri.scheme == "file" && uri.path == targetFile.absolutePath && targetFile.exists() && targetFile.length() > 0L) {
-                    return Uri.fromFile(targetFile).toString()
+                if (uri.scheme == "file" && uri.path != null) {
+                    val srcFile = File(uri.path!!)
+                    if (srcFile.exists() && srcFile.length() > 0L) {
+                        try {
+                            if (srcFile.canonicalPath == targetFile.canonicalPath) {
+                                return Uri.fromFile(targetFile).toString()
+                            }
+                        } catch (_: Exception) {}
+                    }
                 }
+
+                val tempFile = File(pdfsDir, "$noteId.tmp")
+                tempFile.delete()
 
                 val inputStream = if (uri.scheme == "file" && uri.path != null) {
                     val srcFile = File(uri.path!!)
                     if (srcFile.exists()) srcFile.inputStream() else null
                 } else {
-                    context.contentResolver.openInputStream(uri)
-                } ?: return null
-
-                inputStream.use { input ->
-                    FileOutputStream(targetFile).use { output ->
-                        input.copyTo(output)
-                        output.flush()
+                    try {
+                        context.contentResolver.openInputStream(uri)
+                    } catch (_: Exception) {
+                        null
                     }
                 }
 
-                if (targetFile.exists() && targetFile.length() > 0L) {
-                    Uri.fromFile(targetFile).toString()
-                } else {
-                    null
+                if (inputStream != null) {
+                    inputStream.use { input ->
+                        FileOutputStream(tempFile).use { output ->
+                            input.copyTo(output)
+                            output.flush()
+                        }
+                    }
+                    if (tempFile.exists() && tempFile.length() > 0L) {
+                        targetFile.delete()
+                        tempFile.renameTo(targetFile)
+                        return Uri.fromFile(targetFile).toString()
+                    } else {
+                        tempFile.delete()
+                    }
                 }
+
+                // Fallback: Try disk recovery if input stream was null (e.g. revoked SAF permission)
+                if (recoverPdfFromDisk(context, uri.toString(), targetFile)) {
+                    return Uri.fromFile(targetFile).toString()
+                }
+
+                null
             } catch (e: Exception) {
                 e.printStackTrace()
+                null
+            }
+        }
+
+        private fun recoverPdfFromDisk(context: Context, uriString: String, targetFile: File): Boolean {
+            return try {
+                val uri = Uri.parse(uriString)
+                val uriStr = uri.toString()
+                val candidates = mutableListOf<File>()
+
+                val decoded = Uri.decode(uriStr)
+                if (decoded.contains("/storage/")) {
+                    val path = "/storage/" + decoded.substringAfter("/storage/")
+                    candidates.add(File(path))
+                }
+                if (decoded.contains("primary:")) {
+                    val rel = decoded.substringAfter("primary:").substringBefore(":")
+                    candidates.add(File("/storage/emulated/0", rel))
+                    candidates.add(File(android.os.Environment.getExternalStorageDirectory(), rel))
+                }
+                if (decoded.contains("raw:")) {
+                    val rawPath = decoded.substringAfter("raw:")
+                    candidates.add(File(rawPath))
+                }
+
+                val publicDirs = listOf(
+                    android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS),
+                    android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS),
+                    File("/storage/emulated/0/Download"),
+                    File("/storage/emulated/0/Documents")
+                )
+
+                val fileNameCandidate = uri.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':')
+                if (!fileNameCandidate.isNullOrBlank() && fileNameCandidate.endsWith(".pdf", ignoreCase = true)) {
+                    publicDirs.forEach { dir ->
+                        if (dir.exists()) {
+                            candidates.add(File(dir, fileNameCandidate))
+                        }
+                    }
+                }
+
+                for (candidate in candidates) {
+                    if (candidate.exists() && candidate.isFile && candidate.length() > 0L) {
+                        candidate.inputStream().use { input ->
+                            val tempFile = File(targetFile.parentFile, "${targetFile.name}.tmp")
+                            FileOutputStream(tempFile).use { output ->
+                                input.copyTo(output)
+                                output.flush()
+                            }
+                            if (tempFile.exists() && tempFile.length() > 0L) {
+                                targetFile.delete()
+                                tempFile.renameTo(targetFile)
+                                return true
+                            }
+                        }
+                    }
+                }
+                false
+            } catch (_: Exception) {
+                false
+            }
+        }
+
+        /**
+         * Saves full extracted plain text of an imported document (Word/PPTX/Text) into internal storage
+         * (files/notes/texts/<noteId>.txt) so AI Flashcards, Quizzes, and Chat can instantly read it.
+         */
+        fun saveExtractedText(context: Context, noteId: String, text: String) {
+            try {
+                if (text.isBlank()) return
+                val notesDir = File(context.filesDir, "notes").apply { if (!exists()) mkdirs() }
+                val textsDir = File(notesDir, "texts").apply { if (!exists()) mkdirs() }
+                File(textsDir, "$noteId.txt").writeText(text.trim(), Charsets.UTF_8)
+            } catch (_: Exception) {}
+        }
+
+        /**
+         * Retrieves the stored extracted plain text of an imported document note.
+         */
+        fun getExtractedText(context: Context, noteId: String): String? {
+            return try {
+                val notesDir = File(context.filesDir, "notes").apply { if (!exists()) mkdirs() }
+                val textsDir = File(notesDir, "texts").apply { if (!exists()) mkdirs() }
+                val file = File(textsDir, "$noteId.txt")
+                if (file.exists() && file.length() > 0L) file.readText(Charsets.UTF_8).takeIf { it.isNotBlank() } else null
+            } catch (_: Exception) {
                 null
             }
         }

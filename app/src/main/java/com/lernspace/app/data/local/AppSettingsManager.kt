@@ -6,6 +6,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import com.lernspace.app.ui.workspace.model.GeometricShapeType
+import com.lernspace.app.ui.workspace.model.NoteTool
 import com.lernspace.app.ui.workspace.model.PaperStyle
 
 enum class Handedness(val title: String, val description: String) {
@@ -57,6 +61,17 @@ object AppSettingsManager {
     private const val KEY_ERASER_MODE = "eraser_mode"
     private const val KEY_SCRIBBLE_TO_ERASE = "scribble_to_erase"
 
+    // Note Tool Presets persistence
+    private const val KEY_ACTIVE_TOOL = "active_note_tool"
+    private const val KEY_PEN_COLOR = "pen_color"
+    private const val KEY_PEN_THICKNESS = "pen_thickness"
+    private const val KEY_HIGHLIGHTER_COLOR = "highlighter_color"
+    private const val KEY_HIGHLIGHTER_THICKNESS = "highlighter_thickness"
+    private const val KEY_SELECTED_SHAPE_TYPE = "selected_shape_type"
+
+    val DEFAULT_PEN_COLOR = Color(0xFF0F172A)
+    val DEFAULT_HIGHLIGHTER_COLOR = Color(0xFFFDE047)
+
     var handedness by mutableStateOf(Handedness.RIGHT_HANDED)
     var shapeSensitivity by mutableStateOf(ShapeSnapSensitivity.NORMAL)
     var themeMode by mutableStateOf(AppThemeMode.SYSTEM)
@@ -65,6 +80,14 @@ object AppSettingsManager {
     var eraserRadius by mutableFloatStateOf(30f)
     var eraserMode by mutableStateOf(EraserMode.PIXEL)
     var isScribbleToEraseEnabled by mutableStateOf(true)
+
+    // Reactive states for Note Tool presets
+    var activeTool by mutableStateOf(NoteTool.PEN)
+    var penColor by mutableStateOf(DEFAULT_PEN_COLOR)
+    var penThickness by mutableFloatStateOf(4f)
+    var highlighterColor by mutableStateOf(DEFAULT_HIGHLIGHTER_COLOR)
+    var highlighterThickness by mutableFloatStateOf(24f)
+    var selectedShapeType by mutableStateOf(GeometricShapeType.RECTANGLE)
 
     val isFingerDrawingEnabled: Boolean
         get() = touchInputMode == TouchInputMode.FINGER_AND_STYLUS
@@ -113,6 +136,77 @@ object AppSettingsManager {
         }
 
         isScribbleToEraseEnabled = sp.getBoolean(KEY_SCRIBBLE_TO_ERASE, true)
+
+        activeTool = try {
+            val toolName = sp.getString(KEY_ACTIVE_TOOL, NoteTool.PEN.name) ?: NoteTool.PEN.name
+            val tool = NoteTool.valueOf(toolName)
+            if (tool == NoteTool.IMAGE || tool == NoteTool.TEXT) NoteTool.PEN else tool
+        } catch (e: Exception) {
+            NoteTool.PEN
+        }
+
+        penColor = try {
+            val argb = sp.getInt(KEY_PEN_COLOR, DEFAULT_PEN_COLOR.toArgb())
+            Color(argb)
+        } catch (e: Exception) {
+            DEFAULT_PEN_COLOR
+        }
+
+        penThickness = sp.getFloat(KEY_PEN_THICKNESS, 4f)
+
+        highlighterColor = try {
+            val argb = sp.getInt(KEY_HIGHLIGHTER_COLOR, DEFAULT_HIGHLIGHTER_COLOR.toArgb())
+            Color(argb)
+        } catch (e: Exception) {
+            DEFAULT_HIGHLIGHTER_COLOR
+        }
+
+        highlighterThickness = sp.getFloat(KEY_HIGHLIGHTER_THICKNESS, 24f)
+
+        selectedShapeType = try {
+            val shapeName = sp.getString(KEY_SELECTED_SHAPE_TYPE, GeometricShapeType.RECTANGLE.name) ?: GeometricShapeType.RECTANGLE.name
+            GeometricShapeType.valueOf(shapeName)
+        } catch (e: Exception) {
+            GeometricShapeType.RECTANGLE
+        }
+    }
+
+    fun ensureSafeActiveTool() {
+        if (activeTool == NoteTool.IMAGE || activeTool == NoteTool.TEXT) {
+            activeTool = NoteTool.PEN
+        }
+    }
+
+    fun updateActiveTool(value: NoteTool) {
+        activeTool = value
+        if (value != NoteTool.IMAGE && value != NoteTool.TEXT) {
+            prefs?.edit()?.putString(KEY_ACTIVE_TOOL, value.name)?.apply()
+        }
+    }
+
+    fun updatePenColor(value: Color) {
+        penColor = value
+        prefs?.edit()?.putInt(KEY_PEN_COLOR, value.toArgb())?.apply()
+    }
+
+    fun updatePenThickness(value: Float) {
+        penThickness = value
+        prefs?.edit()?.putFloat(KEY_PEN_THICKNESS, value)?.apply()
+    }
+
+    fun updateHighlighterColor(value: Color) {
+        highlighterColor = value
+        prefs?.edit()?.putInt(KEY_HIGHLIGHTER_COLOR, value.toArgb())?.apply()
+    }
+
+    fun updateHighlighterThickness(value: Float) {
+        highlighterThickness = value
+        prefs?.edit()?.putFloat(KEY_HIGHLIGHTER_THICKNESS, value)?.apply()
+    }
+
+    fun updateSelectedShapeType(value: GeometricShapeType) {
+        selectedShapeType = value
+        prefs?.edit()?.putString(KEY_SELECTED_SHAPE_TYPE, value.name)?.apply()
     }
 
     fun updateHandedness(value: Handedness) {

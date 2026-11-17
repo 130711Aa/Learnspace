@@ -94,6 +94,7 @@ import androidx.ink.rendering.android.canvas.CanvasStrokeRenderer
 import androidx.ink.strokes.Stroke
 import com.lernspace.app.core.ai.GeminiApiClient
 import com.lernspace.app.core.ai.HandwrittenNoteRecognizer
+import com.lernspace.app.core.document.DocumentToPdfConverter
 import com.lernspace.app.core.math.MathPlotHelper
 import com.lernspace.app.core.audio.NoteAudioController
 import com.lernspace.app.ui.workspace.components.AudioLectureBar
@@ -407,8 +408,29 @@ class NotePaneState(
                             pdfPageBitmap = result.bitmap.asImageBitmap()
                             pdfLoadFailed = false
                         } else {
-                            pdfPageBitmap = null
-                            pdfLoadFailed = true
+                            // Retry once with clean renderer cache in case of transient file descriptor contention
+                            coroutineScope.launch(Dispatchers.IO) {
+                                PdfNoteHelper.invalidatePdfCache(effectiveUri.toString())
+                                val retryResult = PdfNoteHelper.renderPdfPageWithBounds(
+                                    context = context,
+                                    uri = effectiveUri,
+                                    pageIndex = pageToLoad,
+                                    targetWidth = 1400
+                                )
+                                withContext(Dispatchers.Main) {
+                                    if (currentPageIndex == pageToLoad) {
+                                        if (retryResult != null) {
+                                            pdfPageWorldWidth = retryResult.worldWidth
+                                            pdfPageWorldHeight = retryResult.worldHeight
+                                            pdfPageBitmap = retryResult.bitmap.asImageBitmap()
+                                            pdfLoadFailed = false
+                                        } else {
+                                            pdfPageBitmap = null
+                                            pdfLoadFailed = true
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -846,13 +868,18 @@ fun NoteEditorScreen(
     val leftState = if (isSwapped && secondaryState != null) secondaryState else primaryState
     val rightState = if (isSwapped) primaryState else secondaryState
 
-    // Tool State: Independent presets for Pen and Highlighter
-    var activeTool by remember { mutableStateOf(NoteTool.PEN) }
-    var penColor by remember { mutableStateOf(Color(0xFF0F172A)) } // Dark slate / Black default for clean writing
-    var penThickness by remember { mutableFloatStateOf(4f) }       // 4 px default for Pen
-    var highlighterColor by remember { mutableStateOf(Color(0xFFFDE047)) } // Soft Pastel Yellow default
-    var highlighterThickness by remember { mutableFloatStateOf(24f) }      // 24 px default for Highlighter
-    var selectedShapeType by remember { mutableStateOf(GeometricShapeType.RECTANGLE) }
+    // Tool State: Independent presets for Pen and Highlighter backed by AppSettingsManager
+    DisposableEffect(Unit) {
+        onDispose {
+            AppSettingsManager.ensureSafeActiveTool()
+        }
+    }
+    val activeTool = AppSettingsManager.activeTool
+    val penColor = AppSettingsManager.penColor
+    val penThickness = AppSettingsManager.penThickness
+    val highlighterColor = AppSettingsManager.highlighterColor
+    val highlighterThickness = AppSettingsManager.highlighterThickness
+    val selectedShapeType = AppSettingsManager.selectedShapeType
     var isExporting by remember { mutableStateOf(false) }
     var exportedPdfFile by remember { mutableStateOf<File?>(null) }
 
@@ -904,6 +931,7 @@ fun NoteEditorScreen(
     fun handleBack() {
         primaryState.saveActivePageData(immediate = true)
         secondaryState?.saveActivePageData(immediate = true)
+        AppSettingsManager.ensureSafeActiveTool()
         onBack()
     }
 
@@ -1135,7 +1163,7 @@ fun NoteEditorScreen(
             onCloseSplit = { handleCloseSplit() },
             activeTool = activeTool,
             onSelectTool = { tool ->
-                activeTool = tool
+                AppSettingsManager.updateActiveTool(tool)
                 if (tool != NoteTool.TEXT) {
                     activeState.deselectAll()
                 } else {
@@ -1156,15 +1184,15 @@ fun NoteEditorScreen(
                 }
             },
             selectedShapeType = selectedShapeType,
-            onSelectShapeType = { selectedShapeType = it },
+            onSelectShapeType = { AppSettingsManager.updateSelectedShapeType(it) },
             penColor = penColor,
-            onSelectPenColor = { penColor = it },
+            onSelectPenColor = { AppSettingsManager.updatePenColor(it) },
             penThickness = penThickness,
-            onSelectPenThickness = { penThickness = it },
+            onSelectPenThickness = { AppSettingsManager.updatePenThickness(it) },
             highlighterColor = highlighterColor,
-            onSelectHighlighterColor = { highlighterColor = it },
+            onSelectHighlighterColor = { AppSettingsManager.updateHighlighterColor(it) },
             highlighterThickness = highlighterThickness,
-            onSelectHighlighterThickness = { highlighterThickness = it },
+            onSelectHighlighterThickness = { AppSettingsManager.updateHighlighterThickness(it) },
             onPickImage = {
                 imagePickerLauncher.launch("image/*")
             },
@@ -1839,7 +1867,21 @@ private fun NotePaneViewport(
 
             coroutineScope.launch {
                 val savedUri = withContext(Dispatchers.IO) {
-                    NoteStorageManager.copyPdfToInternal(context, pickedUri, state.note.id) ?: pickedUri.toString()
+                    val rawName = DocumentToPdfConverter.getFileName(context, pickedUri)
+                    val mime = context.contentResolver.getType(pickedUri)
+                    if (DocumentToPdfConverter.isPdf(rawName, mime)) {
+                        NoteStorageManager.copyPdfToInternal(context, pickedUri, state.note.id) ?: pickedUri.toString()
+                    } else {
+                        val notesDir = File(context.filesDir, "notes").apply { if (!exists()) mkdirs() }
+                        val pdfsDir = File(notesDir, "pdfs").apply { if (!exists()) mkdirs() }
+                        val targetFile = File(pdfsDir, "${state.note.id}.pdf")
+                        val conv = DocumentToPdfConverter.convertDocumentToPdf(context, pickedUri, targetFile)
+                        if (conv.isSuccess) {
+                            Uri.fromFile(targetFile).toString()
+                        } else {
+                            NoteStorageManager.copyPdfToInternal(context, pickedUri, state.note.id) ?: pickedUri.toString()
+                        }
+                    }
                 }
                 val pageCount = withContext(Dispatchers.IO) {
                     PdfNoteHelper.getPdfPageCount(context, Uri.parse(savedUri))
@@ -1849,7 +1891,11 @@ private fun NotePaneViewport(
                 state.totalPages = state.note.pdfTotalPages
                 PdfNoteHelper.invalidatePdfCache(savedUri)
                 AcademicDatabaseManager.persistNote(state.note, immediate = true)
+                state.pdfLoadFailed = false
                 state.loadPdfPage()
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(context, "Dokumen berhasil dipulihkan & tersimpan permanen!", android.widget.Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
@@ -2253,7 +2299,8 @@ private fun NotePaneViewport(
                                 state.imageElements.remove(img)
                                 state.saveActivePageData()
                             },
-                            isSelectionEnabled = activeTool == NoteTool.IMAGE
+                            isSelectionEnabled = activeTool == NoteTool.IMAGE,
+                            modifier = Modifier.zIndex(if (img.isSelected) 5f else 0f)
                         )
                     }
                 }
@@ -2322,7 +2369,7 @@ private fun NotePaneViewport(
                     state.commitUndoTransactionIfChanged()
                     state.saveActivePageData()
                 },
-                modifier = Modifier.fillMaxSize().clipToBounds()
+                modifier = Modifier.fillMaxSize().clipToBounds().zIndex(1f)
             )
 
             // Shape Tool Drawing & Live Preview Layer (Strictly clipped)
@@ -3656,11 +3703,24 @@ private fun NotePaneViewport(
                         fontSize = 12.sp
                     )
                     Button(
-                        onClick = { relinkPdfLauncher.launch(arrayOf("application/pdf")) },
+                        onClick = {
+                            relinkPdfLauncher.launch(
+                                arrayOf(
+                                    "application/pdf",
+                                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                                    "application/msword",
+                                    "application/vnd.ms-powerpoint",
+                                    "text/plain",
+                                    "text/markdown",
+                                    "*/*"
+                                )
+                            )
+                        },
                         shape = RoundedCornerShape(8.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
                     ) {
-                        Text("Pilih Ulang File PDF", color = Color.White)
+                        Text("Pilih Ulang Dokumen", color = Color.White)
                     }
                 }
             }

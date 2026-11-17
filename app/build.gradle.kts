@@ -13,7 +13,7 @@ android {
         applicationId = "com.lernspace.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 21
+        versionCode = 28
         versionName = "2.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

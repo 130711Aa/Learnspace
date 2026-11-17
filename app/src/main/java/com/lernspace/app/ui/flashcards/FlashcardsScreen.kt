@@ -1,5 +1,6 @@
 ﻿package com.lernspace.app.ui.flashcards
 
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -43,6 +44,8 @@ import com.lernspace.app.core.ai.LocalSlmManager
 import com.lernspace.app.core.ai.SlmModelSpec
 import com.lernspace.app.core.document.DocumentTextExtractor
 import com.lernspace.app.core.document.ExtractedDocumentResult
+import com.lernspace.app.data.local.NoteStorageManager
+import com.lernspace.app.ui.workspace.model.NoteCanvasType
 import com.lernspace.app.data.repository.*
 import com.lernspace.app.ui.learning.SubjectUi
 import com.lernspace.app.ui.learning.TopicUi
@@ -1687,13 +1690,59 @@ private fun GenerateFlashcardsFromNoteDialog(
         }
     }
 
-    val notePlainText = remember(selectedNote) {
-        selectedNote?.pages
-            ?.flatMap { it.textBoxes }
-            ?.map { it.text.trim() }
-            ?.filter { it.isNotBlank() }
-            ?.joinToString("\n")
-            ?: ""
+    var noteExtractedText by remember { mutableStateOf("") }
+    var isExtractingNoteText by remember { mutableStateOf(false) }
+
+    // Auto-extract note document text if not already cached
+    LaunchedEffect(selectedNote?.id, selectedNote?.pdfUri) {
+        val note = selectedNote ?: run {
+            noteExtractedText = ""
+            return@LaunchedEffect
+        }
+        val tbText = note.pages
+            .flatMap { it.textBoxes }
+            .map { it.text.trim() }
+            .filter { it.isNotBlank() }
+            .joinToString("\n")
+        if (tbText.isNotBlank()) {
+            noteExtractedText = tbText
+            return@LaunchedEffect
+        }
+
+        val cached = NoteStorageManager.getExtractedText(context, note.id)
+        if (!cached.isNullOrBlank()) {
+            noteExtractedText = cached
+            return@LaunchedEffect
+        }
+
+        val pdfUriStr = note.pdfUri
+        if (!pdfUriStr.isNullOrBlank()) {
+            isExtractingNoteText = true
+            try {
+                val uri = Uri.parse(pdfUriStr)
+                val res = com.lernspace.app.core.document.DocumentTextExtractor.extractTextFromUri(context, uri)
+                res.onSuccess { doc ->
+                    if (doc.text.isNotBlank()) {
+                        noteExtractedText = doc.text
+                        NoteStorageManager.saveExtractedText(context, note.id, doc.text)
+                    }
+                }
+            } catch (_: Exception) {} finally {
+                isExtractingNoteText = false
+            }
+        } else {
+            noteExtractedText = ""
+        }
+    }
+
+    val notePlainText = remember(selectedNote, noteExtractedText) {
+        if (noteExtractedText.isNotBlank()) {
+            noteExtractedText
+        } else if (selectedNote != null) {
+            NoteStorageManager.getExtractedText(context, selectedNote!!.id) ?: ""
+        } else {
+            ""
+        }
     }
 
     val combinedNoteText = remember(notePlainText, recognizedHandwritingText) {
@@ -1705,11 +1754,12 @@ private fun GenerateFlashcardsFromNoteDialog(
     val topicMaterialText = remember(selectedTopic, notes, recognizedHandwritingText) {
         val t = selectedTopic ?: return@remember ""
         val linkedNotesText = notes.filter { it.topicId == t.id }
-            .flatMap { it.pages }
-            .flatMap { it.textBoxes }
-            .map { it.text.trim() }
+            .map { n ->
+                val tb = n.pages.flatMap { it.textBoxes }.map { it.text.trim() }.filter { it.isNotBlank() }.joinToString("\n")
+                if (tb.isNotBlank()) tb else NoteStorageManager.getExtractedText(context, n.id) ?: ""
+            }
             .filter { it.isNotBlank() }
-            .joinToString("\n")
+            .joinToString("\n\n")
         buildString {
             appendLine("Sub-bab: ${t.title}")
             if (t.description.isNotBlank()) appendLine("Deskripsi: ${t.description}")
@@ -1918,7 +1968,9 @@ private fun GenerateFlashcardsFromNoteDialog(
                             }
                             if (combinedNoteText.isBlank() && !isRecognizingInk) {
                                 Text(
-                                    text = if (activeStrokeCount > 0)
+                                    text = if (isExtractingNoteText)
+                                        "Mengekstrak teks materi dokumen..."
+                                    else if (activeStrokeCount > 0)
                                         "Catatan punya $activeStrokeCount coretan tulisan tangan. Ketuk 'Scan Tulisan' di bawah atau tempel materi:"
                                     else
                                         "Catatan ini belum memiliki teks maupun tulisan tangan. Tempel ringkasan materinya di bawah:",
@@ -2061,6 +2113,10 @@ private fun GenerateFlashcardsFromNoteDialog(
                                     documentPickerLauncher.launch(
                                         arrayOf(
                                             "application/pdf",
+                                            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                                            "application/msword",
+                                            "application/vnd.ms-powerpoint",
                                             "text/plain",
                                             "text/markdown",
                                             "image/*",
@@ -2076,7 +2132,7 @@ private fun GenerateFlashcardsFromNoteDialog(
                                 Icon(Icons.Filled.UploadFile, null, tint = LernspaceDark, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = "Pilih Dokumen (PDF, Teks, Gambar)",
+                                    text = "Pilih Dokumen (PDF, Word, PPTX, Teks, Gambar)",
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = LernspaceDark
