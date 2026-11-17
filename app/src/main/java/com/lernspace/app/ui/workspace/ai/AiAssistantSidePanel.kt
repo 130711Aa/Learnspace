@@ -53,7 +53,8 @@ Pedoman Komunikasi:
 3. Buat penjelasan konsep yang intuitif dengan analogi dunia nyata (Teknik Feynman).
 4. Jika user memilih mode 'Uji Pemahaman', ajukan 1 pertanyaan penalaran konseptual dan tunggu respon user sebelum mengevaluasi.
 5. Format jawaban dengan poin-poin tebal (bullet points) agar mudah dibaca sekilas pada tablet.
-6. Bila membuat Flashcards, sertakan format JSON array valid di bagian akhir: [{"front":"...","back":"...","hint":"..."}] agar bisa otomatis disimpan ke database.
+6. DILARANG KERAS menggunakan struktur atau tag HTML apapun (seperti <div>, <span>, <p>, <br>, <table>, <details>, <summary>, dll). Gunakan HANYA format Markdown murni dan KaTeX LaTeX.
+7. Bila user meminta membuat Flashcards, letakkan data JSON HANYA di bagian paling akhir teks: [{"front":"...","back":"...","hint":"..."}] agar bisa otomatis disimpan ke database. Jangan sertakan format JSON jika user tidak meminta flashcards.
 """
 
 @Composable
@@ -476,10 +477,10 @@ fun AiAssistantSidePanel(
                         message = msg,
                         isDarkTheme = isDarkTheme,
                         onCopy = {
-                            clipboard.setPrimaryClip(ClipData.newPlainText("AI Assistant", msg.content))
+                            clipboard.setPrimaryClip(ClipData.newPlainText("AI Assistant", msg.displayContent))
                             Toast.makeText(context, "Teks disalin ke clipboard", Toast.LENGTH_SHORT).show()
                         },
-                        onInsertToNote = { onInsertToNote(msg.content) },
+                        onInsertToNote = { onInsertToNote(msg.displayContent) },
                         onSaveFlashcards = { cards ->
                             onSaveFlashcards(cards)
                             Toast.makeText(context, "${cards.size} flashcards disimpan ke Deck!", Toast.LENGTH_SHORT).show()
@@ -697,9 +698,10 @@ private fun ChatMessageItem(
                 Spacer(Modifier.height(8.dp))
 
                 // Content (Markdown + KaTeX LaTeX)
-                if (message.content.isNotBlank()) {
+                val cleanText = message.displayContent
+                if (cleanText.isNotBlank()) {
                     MarkdownLatexContent(
-                        markdown = message.content,
+                        markdown = cleanText,
                         baseFontSize = 13.sp,
                         textColor = LernspaceTextPrimary,
                         accentColor = Color(0xFF8B5CF6),
@@ -715,7 +717,7 @@ private fun ChatMessageItem(
                 }
 
                 // Action Bar (Copy, Insert to Note, Save Flashcards)
-                if (!message.isStreaming && message.content.isNotBlank() && !message.hasError) {
+                if (!message.isStreaming && (cleanText.isNotBlank() || !message.flashcards.isNullOrEmpty()) && !message.hasError) {
                     Spacer(Modifier.height(10.dp))
                     HorizontalDivider(color = LernspaceBorder.copy(alpha = 0.5f))
                     Spacer(Modifier.height(6.dp))
