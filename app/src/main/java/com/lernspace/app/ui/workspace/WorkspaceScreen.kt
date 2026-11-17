@@ -87,13 +87,16 @@ fun WorkspaceScreen(
                             val copiedUri = NoteStorageManager.copyPdfToInternal(context, pickedUri, noteId)
                             val effectiveUriStr = copiedUri ?: pickedUri.toString()
                             val count = PdfNoteHelper.getPdfPageCount(context, Uri.parse(effectiveUriStr))
-                            try {
-                                val extractRes = com.lernspace.app.core.document.DocumentTextExtractor.extractTextFromUri(context, Uri.parse(effectiveUriStr))
-                                val text = extractRes.getOrNull()?.text.orEmpty()
-                                if (text.isNotBlank()) {
-                                    NoteStorageManager.saveExtractedText(context, noteId, text)
-                                }
-                            } catch (_: Exception) {}
+                            // Extract text asynchronously in background so note editor opens instantaneously
+                            coroutineScope.launch(Dispatchers.IO) {
+                                try {
+                                    val extractRes = com.lernspace.app.core.document.DocumentTextExtractor.extractTextFromUri(context, Uri.parse(effectiveUriStr))
+                                    val text = extractRes.getOrNull()?.text.orEmpty()
+                                    if (text.isNotBlank()) {
+                                        NoteStorageManager.saveExtractedText(context, noteId, text)
+                                    }
+                                } catch (_: Exception) {}
+                            }
                             listOf(name, count.toString(), effectiveUriStr, "Dokumen PDF")
                         } else {
                             val notesDir = File(context.filesDir, "notes").apply { if (!exists()) mkdirs() }
@@ -113,13 +116,15 @@ fun WorkspaceScreen(
                                 val copiedUri = NoteStorageManager.copyPdfToInternal(context, pickedUri, noteId)
                                 val effectiveUriStr = copiedUri ?: pickedUri.toString()
                                 val count = PdfNoteHelper.getPdfPageCount(context, Uri.parse(effectiveUriStr))
-                                try {
-                                    val extractRes = com.lernspace.app.core.document.DocumentTextExtractor.extractTextFromUri(context, pickedUri)
-                                    val text = extractRes.getOrNull()?.text.orEmpty()
-                                    if (text.isNotBlank()) {
-                                        NoteStorageManager.saveExtractedText(context, noteId, text)
-                                    }
-                                } catch (_: Exception) {}
+                                coroutineScope.launch(Dispatchers.IO) {
+                                    try {
+                                        val extractRes = com.lernspace.app.core.document.DocumentTextExtractor.extractTextFromUri(context, pickedUri)
+                                        val text = extractRes.getOrNull()?.text.orEmpty()
+                                        if (text.isNotBlank()) {
+                                            NoteStorageManager.saveExtractedText(context, noteId, text)
+                                        }
+                                    } catch (_: Exception) {}
+                                }
                                 listOf(rawName.substringBeforeLast('.'), count.toString(), effectiveUriStr, "Dokumen")
                             }
                         }
@@ -440,13 +445,15 @@ fun WorkspaceScreen(
                             val mime = context.contentResolver.getType(parsedUri)
                             if (DocumentToPdfConverter.isPdf(rawName, mime)) {
                                 val savedUri = NoteStorageManager.copyPdfToInternal(context, parsedUri, noteId) ?: pdfUri
-                                try {
-                                    val extractRes = com.lernspace.app.core.document.DocumentTextExtractor.extractTextFromUri(context, Uri.parse(savedUri))
-                                    val text = extractRes.getOrNull()?.text.orEmpty()
-                                    if (text.isNotBlank()) {
-                                        NoteStorageManager.saveExtractedText(context, noteId, text)
-                                    }
-                                } catch (_: Exception) {}
+                                coroutineScope.launch(Dispatchers.IO) {
+                                    try {
+                                        val extractRes = com.lernspace.app.core.document.DocumentTextExtractor.extractTextFromUri(context, Uri.parse(savedUri))
+                                        val text = extractRes.getOrNull()?.text.orEmpty()
+                                        if (text.isNotBlank()) {
+                                            NoteStorageManager.saveExtractedText(context, noteId, text)
+                                        }
+                                    } catch (_: Exception) {}
+                                }
                                 savedUri
                             } else {
                                 val notesDir = File(context.filesDir, "notes").apply { if (!exists()) mkdirs() }
@@ -459,13 +466,15 @@ fun WorkspaceScreen(
                                     Uri.fromFile(targetFile).toString()
                                 } else {
                                     val fallbackUri = NoteStorageManager.copyPdfToInternal(context, parsedUri, noteId) ?: pdfUri
-                                    try {
-                                        val extractRes = com.lernspace.app.core.document.DocumentTextExtractor.extractTextFromUri(context, parsedUri)
-                                        val text = extractRes.getOrNull()?.text.orEmpty()
-                                        if (text.isNotBlank()) {
-                                            NoteStorageManager.saveExtractedText(context, noteId, text)
-                                        }
-                                    } catch (_: Exception) {}
+                                    coroutineScope.launch(Dispatchers.IO) {
+                                        try {
+                                            val extractRes = com.lernspace.app.core.document.DocumentTextExtractor.extractTextFromUri(context, parsedUri)
+                                            val text = extractRes.getOrNull()?.text.orEmpty()
+                                            if (text.isNotBlank()) {
+                                                NoteStorageManager.saveExtractedText(context, noteId, text)
+                                            }
+                                        } catch (_: Exception) {}
+                                    }
                                     fallbackUri
                                 }
                             }

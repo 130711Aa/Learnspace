@@ -408,8 +408,29 @@ class NotePaneState(
                             pdfPageBitmap = result.bitmap.asImageBitmap()
                             pdfLoadFailed = false
                         } else {
-                            pdfPageBitmap = null
-                            pdfLoadFailed = true
+                            // Retry once with clean renderer cache in case of transient file descriptor contention
+                            coroutineScope.launch(Dispatchers.IO) {
+                                PdfNoteHelper.invalidatePdfCache(effectiveUri.toString())
+                                val retryResult = PdfNoteHelper.renderPdfPageWithBounds(
+                                    context = context,
+                                    uri = effectiveUri,
+                                    pageIndex = pageToLoad,
+                                    targetWidth = 1400
+                                )
+                                withContext(Dispatchers.Main) {
+                                    if (currentPageIndex == pageToLoad) {
+                                        if (retryResult != null) {
+                                            pdfPageWorldWidth = retryResult.worldWidth
+                                            pdfPageWorldHeight = retryResult.worldHeight
+                                            pdfPageBitmap = retryResult.bitmap.asImageBitmap()
+                                            pdfLoadFailed = false
+                                        } else {
+                                            pdfPageBitmap = null
+                                            pdfLoadFailed = true
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

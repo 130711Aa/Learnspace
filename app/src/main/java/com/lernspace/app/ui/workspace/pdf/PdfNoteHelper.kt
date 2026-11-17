@@ -94,14 +94,62 @@ object PdfNoteHelper {
     }
 
     fun getCachedPage(uri: Uri, pageIndex: Int, targetWidth: Int = 2400): PdfPageRenderResult? {
-        val cached = pageCache.get("${uri}#$pageIndex#$targetWidth")
-        return if (cached != null && !cached.bitmap.isRecycled) cached else null
+        val key = "${uri}#$pageIndex#$targetWidth"
+        val cached = pageCache.get(key)
+        return if (cached != null) {
+            if (!cached.bitmap.isRecycled) cached else {
+                pageCache.remove(key)
+                null
+            }
+        } else null
     }
 
     fun preloadPage(context: Context, uri: Uri, pageIndex: Int, targetWidth: Int = 2400) {
         if (pageIndex < 0) return
         if (getCachedPage(uri, pageIndex, targetWidth) != null) return
         renderPdfPageWithBounds(context, uri, pageIndex, targetWidth)
+    }
+
+    /**
+     * Renders a standalone PDF page bitmap without storing it in the shared [pageCache].
+     * Ideal for background OCR / text extraction where the caller will quickly recycle the bitmap.
+     */
+    fun renderPdfPageUncached(
+        context: Context,
+        uri: Uri,
+        pageIndex: Int,
+        targetWidth: Int = 1200
+    ): Bitmap? {
+        synchronized(pdfRendererLock) {
+            for (attempt in 0..1) {
+                var page: PdfRenderer.Page? = null
+                try {
+                    val renderer = getOrOpenRendererLocked(context, uri) ?: return null
+                    if (pageIndex < 0 || pageIndex >= renderer.pageCount) return null
+                    page = renderer.openPage(pageIndex)
+
+                    val pageWidth = page.width.toFloat().coerceAtLeast(1f)
+                    val pageHeight = page.height.toFloat().coerceAtLeast(1f)
+                    val aspect = pageHeight / pageWidth
+
+                    val bmpWidth = targetWidth.coerceAtLeast(1)
+                    val bmpHeight = (bmpWidth * aspect).roundToInt().coerceAtLeast(1)
+
+                    val bitmap = Bitmap.createBitmap(bmpWidth, bmpHeight, Bitmap.Config.ARGB_8888)
+                    val canvas = Canvas(bitmap)
+                    canvas.drawColor(android.graphics.Color.WHITE)
+
+                    page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    return bitmap
+                } catch (_: Exception) {
+                    closeCachedRendererLocked()
+                    if (attempt == 1) return null
+                } finally {
+                    try { page?.close() } catch (_: Exception) {}
+                }
+            }
+            return null
+        }
     }
 
     private fun openPdfDescriptor(context: Context, uri: Uri): ParcelFileDescriptor? {
@@ -174,11 +222,13 @@ object PdfNoteHelper {
         val cacheKey = "${uri}#$pageIndex#$targetWidth"
         pageCache.get(cacheKey)?.let { cached ->
             if (!cached.bitmap.isRecycled) return cached
+            pageCache.remove(cacheKey)
         }
 
         synchronized(pdfRendererLock) {
             pageCache.get(cacheKey)?.let { cached ->
                 if (!cached.bitmap.isRecycled) return cached
+                pageCache.remove(cacheKey)
             }
             for (attempt in 0..1) {
                 var page: PdfRenderer.Page? = null

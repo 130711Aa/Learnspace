@@ -178,7 +178,7 @@ object DocumentTextExtractor {
         try {
             for (p in 0 until pagesToProcess) {
                 onProgress(p + 1, pagesToProcess)
-                val bmp = PdfNoteHelper.renderPdfPage(context, uri, p, targetWidth = 1400)
+                val bmp = PdfNoteHelper.renderPdfPageUncached(context, uri, p, targetWidth = 1200)
                 if (bmp != null) {
                     try {
                         var pageText = ""
