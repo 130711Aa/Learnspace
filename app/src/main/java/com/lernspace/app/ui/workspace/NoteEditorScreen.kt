@@ -94,6 +94,7 @@ import androidx.ink.rendering.android.canvas.CanvasStrokeRenderer
 import androidx.ink.strokes.Stroke
 import com.lernspace.app.core.ai.GeminiApiClient
 import com.lernspace.app.core.ai.HandwrittenNoteRecognizer
+import com.lernspace.app.core.document.DocumentToPdfConverter
 import com.lernspace.app.core.math.MathPlotHelper
 import com.lernspace.app.core.audio.NoteAudioController
 import com.lernspace.app.ui.workspace.components.AudioLectureBar
@@ -1839,7 +1840,21 @@ private fun NotePaneViewport(
 
             coroutineScope.launch {
                 val savedUri = withContext(Dispatchers.IO) {
-                    NoteStorageManager.copyPdfToInternal(context, pickedUri, state.note.id) ?: pickedUri.toString()
+                    val rawName = DocumentToPdfConverter.getFileName(context, pickedUri)
+                    val mime = context.contentResolver.getType(pickedUri)
+                    if (DocumentToPdfConverter.isPdf(rawName, mime)) {
+                        NoteStorageManager.copyPdfToInternal(context, pickedUri, state.note.id) ?: pickedUri.toString()
+                    } else {
+                        val notesDir = File(context.filesDir, "notes").apply { if (!exists()) mkdirs() }
+                        val pdfsDir = File(notesDir, "pdfs").apply { if (!exists()) mkdirs() }
+                        val targetFile = File(pdfsDir, "${state.note.id}.pdf")
+                        val conv = DocumentToPdfConverter.convertDocumentToPdf(context, pickedUri, targetFile)
+                        if (conv.isSuccess) {
+                            Uri.fromFile(targetFile).toString()
+                        } else {
+                            NoteStorageManager.copyPdfToInternal(context, pickedUri, state.note.id) ?: pickedUri.toString()
+                        }
+                    }
                 }
                 val pageCount = withContext(Dispatchers.IO) {
                     PdfNoteHelper.getPdfPageCount(context, Uri.parse(savedUri))
@@ -2253,7 +2268,8 @@ private fun NotePaneViewport(
                                 state.imageElements.remove(img)
                                 state.saveActivePageData()
                             },
-                            isSelectionEnabled = activeTool == NoteTool.IMAGE
+                            isSelectionEnabled = activeTool == NoteTool.IMAGE,
+                            modifier = Modifier.zIndex(if (img.isSelected) 5f else 0f)
                         )
                     }
                 }
@@ -2322,7 +2338,7 @@ private fun NotePaneViewport(
                     state.commitUndoTransactionIfChanged()
                     state.saveActivePageData()
                 },
-                modifier = Modifier.fillMaxSize().clipToBounds()
+                modifier = Modifier.fillMaxSize().clipToBounds().zIndex(1f)
             )
 
             // Shape Tool Drawing & Live Preview Layer (Strictly clipped)
@@ -3656,11 +3672,24 @@ private fun NotePaneViewport(
                         fontSize = 12.sp
                     )
                     Button(
-                        onClick = { relinkPdfLauncher.launch(arrayOf("application/pdf")) },
+                        onClick = {
+                            relinkPdfLauncher.launch(
+                                arrayOf(
+                                    "application/pdf",
+                                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                                    "application/msword",
+                                    "application/vnd.ms-powerpoint",
+                                    "text/plain",
+                                    "text/markdown",
+                                    "*/*"
+                                )
+                            )
+                        },
                         shape = RoundedCornerShape(8.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
                     ) {
-                        Text("Pilih Ulang File PDF", color = Color.White)
+                        Text("Pilih Ulang Dokumen", color = Color.White)
                     }
                 }
             }

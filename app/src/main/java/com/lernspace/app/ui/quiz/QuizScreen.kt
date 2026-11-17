@@ -1,5 +1,6 @@
 package com.lernspace.app.ui.quiz
 
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -26,6 +27,7 @@ import com.lernspace.app.core.ai.GeneratedQuizQuestion
 import com.lernspace.app.core.ai.HandwrittenNoteRecognizer
 import com.lernspace.app.core.document.DocumentTextExtractor
 import com.lernspace.app.core.document.ExtractedDocumentResult
+import com.lernspace.app.data.local.NoteStorageManager
 import com.lernspace.app.data.repository.AcademicWorkspaceState
 import com.lernspace.app.ui.theme.*
 import com.lernspace.app.ui.workspace.components.MarkdownLatexContent
@@ -48,6 +50,8 @@ fun QuizScreen() {
     var attachedDocument by remember { mutableStateOf<ExtractedDocumentResult?>(null) }
     var isExtractingDoc by remember { mutableStateOf(false) }
     var docExtractionStatus by remember { mutableStateOf("") }
+    var noteExtractedText by remember { mutableStateOf("") }
+    var isExtractingNoteText by remember { mutableStateOf(false) }
 
     val documentPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -99,6 +103,55 @@ fun QuizScreen() {
         HandwrittenNoteRecognizer.countHandwrittenStrokes(activeSourcePages)
     }
 
+    // Auto-extract note text if not already cached in NoteStorageManager
+    LaunchedEffect(selectedNote?.id, selectedNote?.pdfUri) {
+        val note = selectedNote ?: run {
+            noteExtractedText = ""
+            return@LaunchedEffect
+        }
+        val tbText = note.pages
+            .flatMap { it.textBoxes }
+            .map { it.text.trim() }
+            .filter { it.isNotBlank() }
+            .joinToString("\n")
+        if (tbText.isNotBlank()) {
+            noteExtractedText = tbText
+            return@LaunchedEffect
+        }
+
+        val cached = NoteStorageManager.getExtractedText(context, note.id)
+        if (!cached.isNullOrBlank()) {
+            noteExtractedText = cached
+            return@LaunchedEffect
+        }
+
+        val pdfUriStr = note.pdfUri
+        if (!pdfUriStr.isNullOrBlank()) {
+            isExtractingNoteText = true
+            docExtractionStatus = "Mengekstrak teks dokumen catatan..."
+            try {
+                val uri = Uri.parse(pdfUriStr)
+                val res = DocumentTextExtractor.extractTextFromUri(
+                    context = context,
+                    uri = uri,
+                    onProgress = { cur, tot ->
+                        docExtractionStatus = "Membaca catatan (hal $cur/$tot)..."
+                    }
+                )
+                res.onSuccess { doc ->
+                    if (doc.text.isNotBlank()) {
+                        noteExtractedText = doc.text
+                        NoteStorageManager.saveExtractedText(context, note.id, doc.text)
+                    }
+                }
+            } catch (_: Exception) {} finally {
+                isExtractingNoteText = false
+            }
+        } else {
+            noteExtractedText = ""
+        }
+    }
+
     // 0-Token Offline Preview: Hanya membaca offline lokal (ML Kit / Cache) untuk cek kesiapan bahan,
     // TIDAK memanggil Gemini Vision di latar belakang agar hemat token dan bebas rate limit.
     LaunchedEffect(sourceMode, selectedNote?.id, selectedTopic?.id) {
@@ -122,19 +175,17 @@ fun QuizScreen() {
 
     val effectiveSourceText = when (sourceMode) {
         0 -> {
-            val base = selectedNote?.pages
-                ?.flatMap { it.textBoxes }
-                ?.map { it.text.trim() }
-                ?.filter { it.isNotBlank() }
-                ?.joinToString("\n")
-                .orEmpty()
+            val base = noteExtractedText.ifBlank {
+                selectedNote?.let { NoteStorageManager.getExtractedText(context, it.id).orEmpty() } ?: ""
+            }
             listOf(base, recognizedHandwritingText).filter { it.isNotBlank() }.joinToString("\n\n")
         }
         1 -> {
             val topicNotes = notes.filter { it.topicId == selectedTopic?.id }
-            val base = topicNotes.joinToString("\n") { n ->
+            val base = topicNotes.joinToString("\n\n") { n ->
                 val tbText = n.pages.flatMap { it.textBoxes }.map { it.text.trim() }.filter { it.isNotBlank() }.joinToString("\n")
-                if (tbText.isNotBlank()) "${n.title}\n$tbText" else ""
+                val text = if (tbText.isNotBlank()) tbText else NoteStorageManager.getExtractedText(context, n.id).orEmpty()
+                if (text.isNotBlank()) "${n.title}\n$text" else ""
             }.trim()
             listOf(base, recognizedHandwritingText).filter { it.isNotBlank() }.joinToString("\n\n")
         }
@@ -303,6 +354,10 @@ fun QuizScreen() {
                                             documentPickerLauncher.launch(
                                                 arrayOf(
                                                     "application/pdf",
+                                                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                                    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                                                    "application/msword",
+                                                    "application/vnd.ms-powerpoint",
                                                     "text/plain",
                                                     "text/markdown",
                                                     "image/*",
@@ -318,7 +373,7 @@ fun QuizScreen() {
                                         Icon(Icons.Filled.UploadFile, null, tint = LernspaceDark, modifier = Modifier.size(18.dp))
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Text(
-                                            text = "Pilih Dokumen (PDF, Teks, Gambar)",
+                                            text = "Pilih Dokumen (PDF, Word, PPTX, Teks, Gambar)",
                                             color = LernspaceDark,
                                             fontSize = 13.sp,
                                             fontWeight = FontWeight.SemiBold
@@ -409,11 +464,12 @@ fun QuizScreen() {
                         }
                     }
 
+                    val isAnyExtracting = isExtractingDoc || isExtractingNoteText
                     val hasEnoughBaseContent = when (sourceMode) {
                         0, 1 -> activeStrokeCount > 0 || effectiveSourceText.trim().length >= 15
-                        else -> !isExtractingDoc && effectiveSourceText.trim().length >= 15
+                        else -> !isAnyExtracting && effectiveSourceText.trim().length >= 15
                     }
-                    val isReady = !isRecognizingInk && !isExtractingDoc && hasEnoughBaseContent
+                    val isReady = !isRecognizingInk && !isAnyExtracting && hasEnoughBaseContent
                     Surface(
                         shape = RoundedCornerShape(10.dp),
                         color = LernspaceSurfaceLow,
@@ -425,7 +481,7 @@ fun QuizScreen() {
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            if (isRecognizingInk || isExtractingDoc) {
+                            if (isRecognizingInk || isAnyExtracting) {
                                 CircularProgressIndicator(modifier = Modifier.size(15.dp), strokeWidth = 2.dp, color = LernspaceDark)
                             } else {
                                 Icon(
@@ -438,7 +494,7 @@ fun QuizScreen() {
                             Text(
                                 text = when {
                                     isRecognizingInk -> "Memeriksa coretan catatan (offline)..."
-                                    isExtractingDoc -> docExtractionStatus
+                                    isAnyExtracting -> docExtractionStatus
                                     sourceMode == 2 && attachedDocument != null -> "Dokumen \"${attachedDocument!!.fileName}\" siap dijadikan kuis"
                                     sourceMode == 2 && isReady -> "Teks materi siap dijadikan kuis"
                                     sourceMode == 2 -> "Ketik materi atau pilih dokumen untuk dijadikan kuis"

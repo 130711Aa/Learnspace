@@ -94,6 +94,33 @@ class NoteStorageManager(private val context: Context) {
         }
 
         /**
+         * Saves full extracted plain text of an imported document (Word/PPTX/Text) into internal storage
+         * (files/notes/texts/<noteId>.txt) so AI Flashcards, Quizzes, and Chat can instantly read it.
+         */
+        fun saveExtractedText(context: Context, noteId: String, text: String) {
+            try {
+                if (text.isBlank()) return
+                val notesDir = File(context.filesDir, "notes").apply { if (!exists()) mkdirs() }
+                val textsDir = File(notesDir, "texts").apply { if (!exists()) mkdirs() }
+                File(textsDir, "$noteId.txt").writeText(text.trim(), Charsets.UTF_8)
+            } catch (_: Exception) {}
+        }
+
+        /**
+         * Retrieves the stored extracted plain text of an imported document note.
+         */
+        fun getExtractedText(context: Context, noteId: String): String? {
+            return try {
+                val notesDir = File(context.filesDir, "notes").apply { if (!exists()) mkdirs() }
+                val textsDir = File(notesDir, "texts").apply { if (!exists()) mkdirs() }
+                val file = File(textsDir, "$noteId.txt")
+                if (file.exists() && file.length() > 0L) file.readText(Charsets.UTF_8).takeIf { it.isNotBlank() } else null
+            } catch (_: Exception) {
+                null
+            }
+        }
+
+        /**
          * Ensures a note's PDF resides in internal storage, migrating legacy content:// URIs if readable.
          */
         fun ensurePdfInternal(context: Context, noteId: String, currentUriString: String): String? {

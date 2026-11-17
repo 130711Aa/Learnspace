@@ -30,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.lernspace.app.core.document.DocumentToPdfConverter
 import com.lernspace.app.data.local.AcademicDatabaseManager
 import com.lernspace.app.data.local.AppSettingsManager
 import com.lernspace.app.data.local.NoteStorageManager
@@ -40,6 +41,7 @@ import com.lernspace.app.ui.workspace.pdf.PdfNoteHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -61,8 +63,8 @@ fun WorkspaceScreen(
     var showNewNoteDialog by remember { mutableStateOf(false) }
     var noteToEditLink by remember { mutableStateOf<NoteUiModel?>(null) }
 
-    // Direct PDF Import Launcher
-    val importPdfLauncher = rememberLauncherForActivityResult(
+    // Direct Document (PDF, Word, PPTX, Text) Import Launcher
+    val importDocumentLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let { pickedUri ->
@@ -75,29 +77,74 @@ fun WorkspaceScreen(
 
             coroutineScope.launch {
                 val noteId = UUID.randomUUID().toString()
-                val (fileName, pageCount, savedPdfUri) = withContext(Dispatchers.IO) {
-                    val name = PdfNoteHelper.getFileName(context, pickedUri).removeSuffix(".pdf")
-                    val copiedUri = NoteStorageManager.copyPdfToInternal(context, pickedUri, noteId)
-                    val effectiveUriStr = copiedUri ?: pickedUri.toString()
-                    val count = PdfNoteHelper.getPdfPageCount(context, Uri.parse(effectiveUriStr))
-                    Triple(name, count, effectiveUriStr)
+                try {
+                    val (titleName, pageCount, savedPdfUri, docSubject) = withContext(Dispatchers.IO) {
+                        val rawName = DocumentToPdfConverter.getFileName(context, pickedUri)
+                        val mime = context.contentResolver.getType(pickedUri)
+
+                        if (DocumentToPdfConverter.isPdf(rawName, mime)) {
+                            val name = rawName.removeSuffix(".pdf")
+                            val copiedUri = NoteStorageManager.copyPdfToInternal(context, pickedUri, noteId)
+                            val effectiveUriStr = copiedUri ?: pickedUri.toString()
+                            val count = PdfNoteHelper.getPdfPageCount(context, Uri.parse(effectiveUriStr))
+                            try {
+                                val extractRes = com.lernspace.app.core.document.DocumentTextExtractor.extractTextFromUri(context, Uri.parse(effectiveUriStr))
+                                val text = extractRes.getOrNull()?.text.orEmpty()
+                                if (text.isNotBlank()) {
+                                    NoteStorageManager.saveExtractedText(context, noteId, text)
+                                }
+                            } catch (_: Exception) {}
+                            listOf(name, count.toString(), effectiveUriStr, "Dokumen PDF")
+                        } else {
+                            val notesDir = File(context.filesDir, "notes").apply { if (!exists()) mkdirs() }
+                            val pdfsDir = File(notesDir, "pdfs").apply { if (!exists()) mkdirs() }
+                            val targetFile = File(pdfsDir, "$noteId.pdf")
+                            val conv = DocumentToPdfConverter.convertDocumentToPdf(context, pickedUri, targetFile)
+                            if (conv.isSuccess) {
+                                val res = conv.getOrThrow()
+                                NoteStorageManager.saveExtractedText(context, noteId, res.extractedText)
+                                val subjectLabel = when {
+                                    DocumentToPdfConverter.isDocx(rawName, mime) -> "Dokumen Word"
+                                    DocumentToPdfConverter.isPptx(rawName, mime) -> "Slide PPTX"
+                                    else -> "Dokumen Teks"
+                                }
+                                listOf(res.title, res.pageCount.toString(), Uri.fromFile(targetFile).toString(), subjectLabel)
+                            } else {
+                                val copiedUri = NoteStorageManager.copyPdfToInternal(context, pickedUri, noteId)
+                                val effectiveUriStr = copiedUri ?: pickedUri.toString()
+                                val count = PdfNoteHelper.getPdfPageCount(context, Uri.parse(effectiveUriStr))
+                                try {
+                                    val extractRes = com.lernspace.app.core.document.DocumentTextExtractor.extractTextFromUri(context, pickedUri)
+                                    val text = extractRes.getOrNull()?.text.orEmpty()
+                                    if (text.isNotBlank()) {
+                                        NoteStorageManager.saveExtractedText(context, noteId, text)
+                                    }
+                                } catch (_: Exception) {}
+                                listOf(rawName.substringBeforeLast('.'), count.toString(), effectiveUriStr, "Dokumen")
+                            }
+                        }
+                    }
+
+                    val pageCountInt = pageCount.toIntOrNull() ?: 1
+                    val timeStr = "Today, " + SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
+                    val newNote = NoteUiModel(
+                        id = noteId,
+                        title = titleName,
+                        subject = docSubject,
+                        date = timeStr,
+                        snippet = "Anotasi $docSubject ($pageCountInt Halaman)...",
+                        canvasType = NoteCanvasType.PDF_DOCUMENT,
+                        paperStyle = PaperStyle.BLANK,
+                        pdfUri = savedPdfUri,
+                        pdfTotalPages = pageCountInt,
+                        pages = mutableListOf(NotePageData(pageIndex = 0))
+                    )
+                    notes.add(0, newNote)
+                    AcademicDatabaseManager.persistNote(newNote)
+                    AcademicWorkspaceState.openNoteEditor(newNote)
+                } catch (e: Exception) {
+                    android.widget.Toast.makeText(context, "Gagal mengimpor dokumen: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
                 }
-                val timeStr = "Today, " + SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
-                val newNote = NoteUiModel(
-                    id = noteId,
-                    title = fileName,
-                    subject = "PDF Document",
-                    date = timeStr,
-                    snippet = "Anotasi PDF ($pageCount Halaman)...",
-                    canvasType = NoteCanvasType.PDF_DOCUMENT,
-                    paperStyle = PaperStyle.BLANK,
-                    pdfUri = savedPdfUri,
-                    pdfTotalPages = pageCount,
-                    pages = mutableListOf(NotePageData(pageIndex = 0))
-                )
-                notes.add(0, newNote)
-                AcademicDatabaseManager.persistNote(newNote)
-                AcademicWorkspaceState.openNoteEditor(newNote)
             }
         }
     }
@@ -160,17 +207,30 @@ fun WorkspaceScreen(
                 }
             }
 
-            // Action Buttons (Impor PDF, Quick Scratchpad, New Note)
+            // Action Buttons (Impor Dokumen, Quick Scratchpad, New Note)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                // Import PDF Button
+                // Import Document (PDF, Word, PPTX, Text) Button
                 OutlinedButton(
-                    onClick = { importPdfLauncher.launch(arrayOf("application/pdf")) },
+                    onClick = {
+                        importDocumentLauncher.launch(
+                            arrayOf(
+                                "application/pdf",
+                                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                                "application/msword",
+                                "application/vnd.ms-powerpoint",
+                                "text/plain",
+                                "text/markdown",
+                                "*/*"
+                            )
+                        )
+                    },
                     shape = RoundedCornerShape(10.dp),
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
                 ) {
-                    Icon(imageVector = Icons.Filled.PictureAsPdf, contentDescription = null, modifier = Modifier.size(17.dp), tint = Color(0xFFDC2626))
+                    Icon(imageVector = Icons.Filled.Description, contentDescription = null, modifier = Modifier.size(17.dp), tint = Color(0xFF2563EB))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Impor PDF", fontWeight = FontWeight.SemiBold, color = LernspaceDark)
+                    Text("Impor Dokumen", fontWeight = FontWeight.SemiBold, color = LernspaceDark)
                 }
 
                 // Quick Scratchpad Button
@@ -375,7 +435,40 @@ fun WorkspaceScreen(
                     val noteId = UUID.randomUUID().toString()
                     val finalPdfUri = if (canvasType == NoteCanvasType.PDF_DOCUMENT && !pdfUri.isNullOrBlank()) {
                         withContext(Dispatchers.IO) {
-                            NoteStorageManager.copyPdfToInternal(context, Uri.parse(pdfUri), noteId) ?: pdfUri
+                            val parsedUri = Uri.parse(pdfUri)
+                            val rawName = DocumentToPdfConverter.getFileName(context, parsedUri)
+                            val mime = context.contentResolver.getType(parsedUri)
+                            if (DocumentToPdfConverter.isPdf(rawName, mime)) {
+                                val savedUri = NoteStorageManager.copyPdfToInternal(context, parsedUri, noteId) ?: pdfUri
+                                try {
+                                    val extractRes = com.lernspace.app.core.document.DocumentTextExtractor.extractTextFromUri(context, Uri.parse(savedUri))
+                                    val text = extractRes.getOrNull()?.text.orEmpty()
+                                    if (text.isNotBlank()) {
+                                        NoteStorageManager.saveExtractedText(context, noteId, text)
+                                    }
+                                } catch (_: Exception) {}
+                                savedUri
+                            } else {
+                                val notesDir = File(context.filesDir, "notes").apply { if (!exists()) mkdirs() }
+                                val pdfsDir = File(notesDir, "pdfs").apply { if (!exists()) mkdirs() }
+                                val targetFile = File(pdfsDir, "$noteId.pdf")
+                                val conv = DocumentToPdfConverter.convertDocumentToPdf(context, parsedUri, targetFile)
+                                if (conv.isSuccess) {
+                                    val res = conv.getOrThrow()
+                                    NoteStorageManager.saveExtractedText(context, noteId, res.extractedText)
+                                    Uri.fromFile(targetFile).toString()
+                                } else {
+                                    val fallbackUri = NoteStorageManager.copyPdfToInternal(context, parsedUri, noteId) ?: pdfUri
+                                    try {
+                                        val extractRes = com.lernspace.app.core.document.DocumentTextExtractor.extractTextFromUri(context, parsedUri)
+                                        val text = extractRes.getOrNull()?.text.orEmpty()
+                                        if (text.isNotBlank()) {
+                                            NoteStorageManager.saveExtractedText(context, noteId, text)
+                                        }
+                                    } catch (_: Exception) {}
+                                    fallbackUri
+                                }
+                            }
                         }
                     } else {
                         pdfUri
@@ -386,7 +479,7 @@ fun WorkspaceScreen(
                         title = title,
                         subject = if (canvasType == NoteCanvasType.INFINITE_SCRATCHPAD) "Quick Scratchpad" else (subject?.name ?: "General Study"),
                         date = timeStr,
-                        snippet = if (canvasType == NoteCanvasType.PDF_DOCUMENT) "Dokumen PDF ($pdfPages Halaman)..." else "Catatan ${paperStyle.displayName}...",
+                        snippet = if (canvasType == NoteCanvasType.PDF_DOCUMENT) "Dokumen ($pdfPages Halaman)..." else "Catatan ${paperStyle.displayName}...",
                         subjectId = if (canvasType == NoteCanvasType.INFINITE_SCRATCHPAD) null else subject?.id,
                         topicId = if (canvasType == NoteCanvasType.INFINITE_SCRATCHPAD) null else topic?.id,
                         topicName = if (canvasType == NoteCanvasType.INFINITE_SCRATCHPAD) null else topic?.title,
@@ -661,13 +754,22 @@ private fun CreateNoteDialog(
                     Intent.FLAG_GRANT_READ_URI_PERMISSION
                 )
             } catch (_: Exception) {}
-            val fileName = PdfNoteHelper.getFileName(context, it).removeSuffix(".pdf")
-            val pages = PdfNoteHelper.getPdfPageCount(context, it)
-            selectedPdfUri = it.toString()
-            selectedPdfName = fileName
-            selectedPdfPages = pages
+            val rawName = DocumentToPdfConverter.getFileName(context, it)
+            val mime = context.contentResolver.getType(it)
+            val baseName = rawName.substringBeforeLast('.')
+
+            if (DocumentToPdfConverter.isPdf(rawName, mime)) {
+                val pages = PdfNoteHelper.getPdfPageCount(context, it)
+                selectedPdfUri = it.toString()
+                selectedPdfName = baseName
+                selectedPdfPages = pages
+            } else {
+                selectedPdfUri = it.toString()
+                selectedPdfName = baseName
+                selectedPdfPages = 1
+            }
             if (title.isBlank()) {
-                title = fileName
+                title = baseName
             }
         }
     }
@@ -737,20 +839,31 @@ private fun CreateNoteDialog(
                         }
                     }
 
-                    // Option B: PDF Document
+                    // Option B: Document Annotation (PDF, Word, PPTX, Text)
                     Surface(
                         shape = RoundedCornerShape(10.dp),
-                        color = if (selectedCanvasType == NoteCanvasType.PDF_DOCUMENT) Color(0xFFFEE2E2) else LernspaceSurfaceLow,
+                        color = if (selectedCanvasType == NoteCanvasType.PDF_DOCUMENT) Color(0xFFEFF6FF) else LernspaceSurfaceLow,
                         border = androidx.compose.foundation.BorderStroke(
                             1.dp,
-                            if (selectedCanvasType == NoteCanvasType.PDF_DOCUMENT) Color(0xFFDC2626) else Color.Transparent
+                            if (selectedCanvasType == NoteCanvasType.PDF_DOCUMENT) AccentBlue else Color.Transparent
                         ),
                         modifier = Modifier
                             .weight(1f)
                             .clickable {
                                 selectedCanvasType = NoteCanvasType.PDF_DOCUMENT
                                 if (selectedPdfUri == null) {
-                                    pdfPickerLauncher.launch(arrayOf("application/pdf"))
+                                    pdfPickerLauncher.launch(
+                                        arrayOf(
+                                            "application/pdf",
+                                            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                                            "application/msword",
+                                            "application/vnd.ms-powerpoint",
+                                            "text/plain",
+                                            "text/markdown",
+                                            "*/*"
+                                        )
+                                    )
                                 }
                             }
                     ) {
@@ -759,9 +872,9 @@ private fun CreateNoteDialog(
                             verticalArrangement = Arrangement.spacedBy(4.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            Icon(Icons.Filled.PictureAsPdf, null, tint = if (selectedCanvasType == NoteCanvasType.PDF_DOCUMENT) Color(0xFFDC2626) else LernspaceDark, modifier = Modifier.size(20.dp))
-                            Text("Anotasi PDF", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
-                            Text("Impor PDF", fontSize = 9.sp, color = LernspaceTextSecondary)
+                            Icon(Icons.Filled.Description, null, tint = if (selectedCanvasType == NoteCanvasType.PDF_DOCUMENT) AccentBlue else LernspaceDark, modifier = Modifier.size(20.dp))
+                            Text("Anotasi Dokumen", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                            Text("PDF, Word, PPT", fontSize = 9.sp, color = LernspaceTextSecondary)
                         }
                     }
 
@@ -818,24 +931,37 @@ private fun CreateNoteDialog(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = selectedPdfName ?: "Belum ada file PDF yang dipilih",
+                                    text = selectedPdfName ?: "Belum ada dokumen yang dipilih",
                                     style = MaterialTheme.typography.bodySmall,
                                     fontWeight = FontWeight.Bold,
                                     color = LernspaceDark,
                                     maxLines = 1
                                 )
                                 Text(
-                                    text = if (selectedPdfUri != null) "$selectedPdfPages Halaman terdeteksi" else "Ketuk tombol untuk memilih dokumen",
+                                    text = if (selectedPdfUri != null) "$selectedPdfPages Halaman / Dokumen siap" else "Pilih file PDF, Word (.docx), PPT (.pptx), atau teks",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = LernspaceTextSecondary
                                 )
                             }
                             OutlinedButton(
-                                onClick = { pdfPickerLauncher.launch(arrayOf("application/pdf")) },
+                                onClick = {
+                                    pdfPickerLauncher.launch(
+                                        arrayOf(
+                                            "application/pdf",
+                                            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                                            "application/msword",
+                                            "application/vnd.ms-powerpoint",
+                                            "text/plain",
+                                            "text/markdown",
+                                            "*/*"
+                                        )
+                                    )
+                                },
                                 shape = RoundedCornerShape(8.dp),
                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                             ) {
-                                Text("Pilih PDF", fontSize = 11.sp)
+                                Text(if (selectedPdfUri != null) "Ganti Dokumen" else "Pilih Dokumen", fontSize = 11.sp)
                             }
                         }
                     }
