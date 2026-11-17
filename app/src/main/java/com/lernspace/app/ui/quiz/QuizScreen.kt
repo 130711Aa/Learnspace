@@ -1,6 +1,7 @@
 package com.lernspace.app.ui.quiz
 
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -17,6 +18,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -27,6 +29,10 @@ import com.lernspace.app.core.ai.GeneratedQuizQuestion
 import com.lernspace.app.core.ai.HandwrittenNoteRecognizer
 import com.lernspace.app.core.document.DocumentTextExtractor
 import com.lernspace.app.core.document.ExtractedDocumentResult
+import com.lernspace.app.core.supabase.QuizSubmission
+import com.lernspace.app.core.supabase.QuizSubmissionAnswer
+import com.lernspace.app.core.supabase.SupabaseClient
+import com.lernspace.app.core.supabase.SupabaseQuestion
 import com.lernspace.app.data.local.NoteStorageManager
 import com.lernspace.app.data.repository.AcademicWorkspaceState
 import com.lernspace.app.ui.theme.*
@@ -36,6 +42,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun QuizScreen() {
     val context = LocalContext.current
+    val subjects = AcademicWorkspaceState.subjects
     val topics = AcademicWorkspaceState.topics
     val notes = AcademicWorkspaceState.notes
     val coroutineScope = rememberCoroutineScope()
@@ -91,6 +98,37 @@ fun QuizScreen() {
     var selectedOptionIdx by remember { mutableStateOf<Int?>(null) }
     var correctCount by remember { mutableIntStateOf(0) }
     var activeQuizTitle by remember { mutableStateOf("") }
+
+    // Supabase Cloud Bank Soal state
+    var cloudQuestions by remember { mutableStateOf<List<SupabaseQuestion>>(emptyList()) }
+    var isLoadingCloudQuestions by remember { mutableStateOf(false) }
+    var cloudSubjectFilter by remember { mutableStateOf("Semua") }
+    var cloudDifficultyFilter by remember { mutableStateOf("Semua") }
+    var showAddQuestionDialog by remember { mutableStateOf(false) }
+    var refreshCloudTrigger by remember { mutableIntStateOf(0) }
+    var isSubmittingToCloud by remember { mutableStateOf(false) }
+    var cloudSubmissionStatus by remember { mutableStateOf<String?>(null) }
+    var activeCloudQuestionIds by remember { mutableStateOf<List<String>>(emptyList()) }
+    var activeRecordedAnswers by remember { mutableStateOf<MutableList<QuizSubmissionAnswer>>(mutableListOf()) }
+    var quizStartTime by remember { mutableLongStateOf(0L) }
+
+    LaunchedEffect(sourceMode, cloudSubjectFilter, cloudDifficultyFilter, refreshCloudTrigger) {
+        if (sourceMode == 3) {
+            isLoadingCloudQuestions = true
+            errorMsg = null
+            val res = SupabaseClient.fetchQuestions(
+                subjectName = if (cloudSubjectFilter == "Semua") null else cloudSubjectFilter,
+                difficulty = if (cloudDifficultyFilter == "Semua") null else cloudDifficultyFilter
+            )
+            res.onSuccess { list ->
+                cloudQuestions = list
+                isLoadingCloudQuestions = false
+            }.onFailure { err ->
+                errorMsg = "Gagal memuat dari Supabase: ${err.message}"
+                isLoadingCloudQuestions = false
+            }
+        }
+    }
 
     val activeSourcePages = remember(sourceMode, selectedNote, selectedTopic, notes) {
         when (sourceMode) {
@@ -282,12 +320,23 @@ fun QuizScreen() {
                         color = LernspaceDark
                     )
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(0 to "Catatan", 1 to "Sub-bab", 2 to "Manual / Dokumen").forEach { (idx, label) ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(
+                            0 to "Catatan",
+                            1 to "Sub-bab",
+                            2 to "Dokumen",
+                            3 to "Bank Soal Cloud"
+                        ).forEach { (idx, label) ->
                             FilterChip(
                                 selected = sourceMode == idx,
-                                onClick = { sourceMode = idx },
-                                label = { Text(label, fontSize = 12.sp) },
+                                onClick = {
+                                    sourceMode = idx
+                                    errorMsg = null
+                                },
+                                label = { Text(label, fontSize = 11.sp) },
                                 shape = RoundedCornerShape(8.dp)
                             )
                         }
@@ -462,14 +511,207 @@ fun QuizScreen() {
                                 )
                             }
                         }
+                        3 -> {
+                            // Bank Soal Cloud Supabase Config View
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Filter Bank Soal:",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = LernspaceTextSecondary
+                                    )
+                                    FilledTonalButton(
+                                        onClick = { showAddQuestionDialog = true },
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                    ) {
+                                        Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(14.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Tambah Soal", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+
+                                val subjects = AcademicWorkspaceState.subjects
+                                val allSubjects = remember(subjects, cloudQuestions) {
+                                    val list = mutableListOf("Semua")
+                                    list.addAll(cloudQuestions.map { it.subjectName }.distinct())
+                                    subjects.forEach { s -> if (!list.contains(s.name)) list.add(s.name) }
+                                    list
+                                }
+                                var subjDropdownOpen by remember { mutableStateOf(false) }
+                                Box {
+                                    OutlinedButton(
+                                        onClick = { subjDropdownOpen = true },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(10.dp),
+                                        border = BorderStroke(1.dp, LernspaceBorder)
+                                    ) {
+                                        Text(
+                                            text = "Mata Kuliah: $cloudSubjectFilter",
+                                            modifier = Modifier.weight(1f),
+                                            color = LernspaceTextPrimary,
+                                            fontSize = 12.sp
+                                        )
+                                        Icon(Icons.Filled.ArrowDropDown, null, tint = LernspaceTextSecondary)
+                                    }
+                                    DropdownMenu(expanded = subjDropdownOpen, onDismissRequest = { subjDropdownOpen = false }) {
+                                        allSubjects.forEach { sName ->
+                                            DropdownMenuItem(
+                                                text = { Text(sName, fontSize = 13.sp) },
+                                                onClick = {
+                                                    cloudSubjectFilter = sName
+                                                    subjDropdownOpen = false
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    listOf("Semua", "EASY", "MEDIUM", "HARD").forEach { diff ->
+                                        FilterChip(
+                                            selected = cloudDifficultyFilter == diff,
+                                            onClick = { cloudDifficultyFilter = diff },
+                                            label = {
+                                                Text(
+                                                    when (diff) {
+                                                        "EASY" -> "Mudah"
+                                                        "MEDIUM" -> "Sedang"
+                                                        "HARD" -> "Sulit"
+                                                        else -> "Semua"
+                                                    },
+                                                    fontSize = 11.sp
+                                                )
+                                            },
+                                            shape = RoundedCornerShape(8.dp)
+                                        )
+                                    }
+                                }
+
+                                if (isLoadingCloudQuestions) {
+                                    Box(modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp), contentAlignment = Alignment.Center) {
+                                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp, color = LernspaceDark)
+                                    }
+                                } else if (cloudQuestions.isEmpty()) {
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = LernspaceSurfaceLow,
+                                        border = BorderStroke(1.dp, LernspaceBorder),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.padding(14.dp),
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Text("Belum ada soal dengan filter ini di Cloud.", fontSize = 12.sp, color = LernspaceTextSecondary)
+                                            TextButton(onClick = { showAddQuestionDialog = true }) {
+                                                Text("+ Buat Soal Pertama", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    Text(
+                                        text = "${cloudQuestions.size} soal siap diujikan dari Cloud Supabase",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = LernspaceDark
+                                    )
+                                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        cloudQuestions.take(4).forEachIndexed { idx, q ->
+                                            Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = LernspaceSurfaceLow,
+                                                border = BorderStroke(1.dp, LernspaceBorder),
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.padding(8.dp),
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(20.dp)
+                                                            .clip(RoundedCornerShape(4.dp))
+                                                            .background(LernspaceDark),
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        Text("${idx + 1}", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                                    }
+                                                    Column(modifier = Modifier.weight(1f)) {
+                                                        Text(
+                                                            text = q.topicTitle,
+                                                            fontSize = 11.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = LernspaceDark,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                        Text(
+                                                            text = q.questionText,
+                                                            fontSize = 11.sp,
+                                                            color = LernspaceTextSecondary,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                    }
+                                                    Surface(
+                                                        shape = RoundedCornerShape(4.dp),
+                                                        color = when (q.difficulty) {
+                                                            "EASY" -> Color(0xFFDCFCE7)
+                                                            "HARD" -> Color(0xFFFEE2E2)
+                                                            else -> Color(0xFFFEF3C7)
+                                                        }
+                                                    ) {
+                                                        Text(
+                                                            text = q.difficulty,
+                                                            fontSize = 9.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = when (q.difficulty) {
+                                                                "EASY" -> Color(0xFF166534)
+                                                                "HARD" -> Color(0xFF991B1B)
+                                                                else -> Color(0xFF92400E)
+                                                            },
+                                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if (cloudQuestions.size > 4) {
+                                            Text(
+                                                text = "+ ${cloudQuestions.size - 4} soal lainnya",
+                                                fontSize = 11.sp,
+                                                color = LernspaceTextSecondary,
+                                                modifier = Modifier.padding(start = 4.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     val isAnyExtracting = isExtractingDoc || isExtractingNoteText
                     val hasEnoughBaseContent = when (sourceMode) {
                         0, 1 -> activeStrokeCount > 0 || effectiveSourceText.trim().length >= 15
+                        3 -> cloudQuestions.isNotEmpty()
                         else -> !isAnyExtracting && effectiveSourceText.trim().length >= 15
                     }
-                    val isReady = !isRecognizingInk && !isAnyExtracting && hasEnoughBaseContent
+                    val isReady = if (sourceMode == 3) {
+                        !isLoadingCloudQuestions && cloudQuestions.isNotEmpty()
+                    } else {
+                        !isRecognizingInk && !isAnyExtracting && hasEnoughBaseContent
+                    }
                     Surface(
                         shape = RoundedCornerShape(10.dp),
                         color = LernspaceSurfaceLow,
@@ -481,7 +723,7 @@ fun QuizScreen() {
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            if (isRecognizingInk || isAnyExtracting) {
+                            if (isRecognizingInk || isAnyExtracting || (sourceMode == 3 && isLoadingCloudQuestions)) {
                                 CircularProgressIndicator(modifier = Modifier.size(15.dp), strokeWidth = 2.dp, color = LernspaceDark)
                             } else {
                                 Icon(
@@ -493,6 +735,9 @@ fun QuizScreen() {
                             }
                             Text(
                                 text = when {
+                                    sourceMode == 3 && isLoadingCloudQuestions -> "Memuat bank soal dari Supabase..."
+                                    sourceMode == 3 && isReady -> "${cloudQuestions.size} soal siap diujikan dari Cloud Supabase"
+                                    sourceMode == 3 -> "Belum ada soal dengan filter ini di Cloud"
                                     isRecognizingInk -> "Memeriksa coretan catatan (offline)..."
                                     isAnyExtracting -> docExtractionStatus
                                     sourceMode == 2 && attachedDocument != null -> "Dokumen \"${attachedDocument!!.fileName}\" siap dijadikan kuis"
@@ -510,20 +755,22 @@ fun QuizScreen() {
                         }
                     }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Jumlah Soal", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = LernspaceDark)
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            listOf(5, 8, 10).forEach { count ->
-                                FilterChip(
-                                    selected = questionCount == count,
-                                    onClick = { questionCount = count },
-                                    label = { Text("$count", fontSize = 12.sp) },
-                                    shape = RoundedCornerShape(8.dp)
-                                )
+                    if (sourceMode != 3) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Jumlah Soal", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = LernspaceDark)
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                listOf(5, 8, 10).forEach { count ->
+                                    FilterChip(
+                                        selected = questionCount == count,
+                                        onClick = { questionCount = count },
+                                        label = { Text("$count", fontSize = 12.sp) },
+                                        shape = RoundedCornerShape(8.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -535,8 +782,35 @@ fun QuizScreen() {
                     Spacer(modifier = Modifier.weight(1f, fill = false))
 
                     Button(
-                        enabled = !isGenerating && !isRecognizingInk && !isExtractingDoc && hasEnoughBaseContent,
+                        enabled = if (sourceMode == 3) {
+                            !isLoadingCloudQuestions && cloudQuestions.isNotEmpty()
+                        } else {
+                            !isGenerating && !isRecognizingInk && !isExtractingDoc && hasEnoughBaseContent
+                        },
                         onClick = {
+                            if (sourceMode == 3) {
+                                val questionsToRun = cloudQuestions.map { q ->
+                                    val opts = q.options.map { it.optionText }
+                                    val correctIdx = q.options.indexOfFirst { it.isCorrect }.let { if (it >= 0) it else 0 }
+                                    GeneratedQuizQuestion(
+                                        question = q.questionText,
+                                        options = opts,
+                                        correctIndex = correctIdx,
+                                        explanation = q.explanation ?: ""
+                                    )
+                                }
+                                quizQuestions = questionsToRun
+                                activeCloudQuestionIds = cloudQuestions.map { it.id }
+                                activeRecordedAnswers = mutableListOf()
+                                quizStartTime = System.currentTimeMillis()
+                                activeQuizTitle = "Bank Soal: " + (if (cloudSubjectFilter != "Semua") cloudSubjectFilter else "Semua Materi")
+                                currentIndex = 0
+                                selectedOptionIdx = null
+                                correctCount = 0
+                                cloudSubmissionStatus = null
+                                return@Button
+                            }
+
                             if (!GeminiApiClient.isConfigured()) {
                                 errorMsg = "Gemini API Key belum diatur di Pengaturan."
                                 return@Button
@@ -586,10 +860,14 @@ fun QuizScreen() {
                                     )
                                     res.onSuccess { questions ->
                                         quizQuestions = questions
+                                        activeCloudQuestionIds = emptyList()
+                                        activeRecordedAnswers = mutableListOf()
+                                        quizStartTime = System.currentTimeMillis()
                                         activeQuizTitle = effectiveTopicTitle
                                         currentIndex = 0
                                         selectedOptionIdx = null
                                         correctCount = 0
+                                        cloudSubmissionStatus = null
                                     }.onFailure { err ->
                                         errorMsg = err.message ?: "Gagal membuat kuis."
                                     }
@@ -609,6 +887,10 @@ fun QuizScreen() {
                             CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = LernspaceSurfaceCard)
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(generationStatusText, fontWeight = FontWeight.SemiBold)
+                        } else if (sourceMode == 3) {
+                            Icon(Icons.Filled.PlayArrow, null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Mulai Latihan dari Bank Soal", fontWeight = FontWeight.SemiBold)
                         } else {
                             Icon(Icons.Filled.AutoAwesome, null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(8.dp))
@@ -728,7 +1010,21 @@ fun QuizScreen() {
                                         .clip(RoundedCornerShape(10.dp))
                                         .clickable(enabled = !isAnswered) {
                                             selectedOptionIdx = idx
-                                            if (idx == q.correctIndex) correctCount++
+                                            val isCorrect = (idx == q.correctIndex)
+                                            if (isCorrect) correctCount++
+                                            if (activeCloudQuestionIds.isNotEmpty() && currentIndex in activeCloudQuestionIds.indices) {
+                                                val qId = activeCloudQuestionIds[currentIndex]
+                                                val matchingCloudQ = cloudQuestions.find { it.id == qId }
+                                                val optId = matchingCloudQ?.options?.getOrNull(idx)?.id
+                                                activeRecordedAnswers.add(
+                                                    QuizSubmissionAnswer(
+                                                        questionId = qId,
+                                                        selectedOptionId = optId,
+                                                        isCorrect = isCorrect,
+                                                        timeSpentSeconds = 0
+                                                    )
+                                                )
+                                            }
                                         }
                                 ) {
                                     Row(
@@ -791,6 +1087,32 @@ fun QuizScreen() {
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                                     Button(
                                         onClick = {
+                                            if (currentIndex == quizQuestions.lastIndex) {
+                                                if (activeCloudQuestionIds.isNotEmpty()) {
+                                                    isSubmittingToCloud = true
+                                                    val totalSec = ((System.currentTimeMillis() - quizStartTime) / 1000).toInt().coerceAtLeast(1)
+                                                    val scoreVal = if (quizQuestions.isNotEmpty()) (correctCount.toDouble() / quizQuestions.size.toDouble()) * 100.0 else 0.0
+                                                    coroutineScope.launch {
+                                                        val res = SupabaseClient.submitQuizSession(
+                                                            QuizSubmission(
+                                                                title = activeQuizTitle,
+                                                                subjectName = if (cloudSubjectFilter != "Semua") cloudSubjectFilter else "Umum",
+                                                                totalQuestions = quizQuestions.size,
+                                                                correctAnswers = correctCount,
+                                                                score = scoreVal,
+                                                                durationSeconds = totalSec,
+                                                                answers = activeRecordedAnswers
+                                                            )
+                                                        )
+                                                        isSubmittingToCloud = false
+                                                        res.onSuccess {
+                                                            cloudSubmissionStatus = "✅ Hasil kuis tersimpan di Supabase Cloud!"
+                                                        }.onFailure { err ->
+                                                            cloudSubmissionStatus = "⚠️ Selesai lokal (Gagal sync ke Cloud: ${err.message})"
+                                                        }
+                                                    }
+                                                }
+                                            }
                                             selectedOptionIdx = null
                                             currentIndex++
                                         },
@@ -832,12 +1154,83 @@ fun QuizScreen() {
                                     fontSize = 13.sp,
                                     color = LernspaceTextSecondary
                                 )
+                                if (cloudSubmissionStatus != null) {
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = LernspaceSurfaceLow,
+                                        border = BorderStroke(1.dp, LernspaceBorder)
+                                    ) {
+                                        Text(
+                                            text = cloudSubmissionStatus!!,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = LernspaceDark,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                        )
+                                    }
+                                }
+                                if (isSubmittingToCloud) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = LernspaceDark)
+                                        Text("Menyimpan hasil ke Supabase Cloud...", fontSize = 12.sp, color = LernspaceTextSecondary)
+                                    }
+                                }
+
+                                // Tombol upload soal AI ke Supabase jika kuis berasal dari AI
+                                if (activeCloudQuestionIds.isEmpty() && quizQuestions.isNotEmpty()) {
+                                    var isUploadingQuestions by remember { mutableStateOf(false) }
+                                    var uploadSuccess by remember { mutableStateOf(false) }
+                                    Button(
+                                        onClick = {
+                                            isUploadingQuestions = true
+                                            coroutineScope.launch {
+                                                var count = 0
+                                                val subj = selectedTopic?.let { t -> subjects.find { it.id == t.subjectId }?.name }
+                                                    ?: selectedNote?.subject ?: "Materi AI"
+                                                for (q in quizQuestions) {
+                                                    val opts = q.options.mapIndexed { oIdx, oText ->
+                                                        oText to (oIdx == q.correctIndex)
+                                                    }
+                                                    val r = SupabaseClient.insertQuestion(
+                                                        subjectName = subj,
+                                                        topicTitle = activeQuizTitle,
+                                                        questionText = q.question,
+                                                        difficulty = "MEDIUM",
+                                                        explanation = q.explanation,
+                                                        options = opts
+                                                    )
+                                                    if (r.isSuccess) count++
+                                                }
+                                                isUploadingQuestions = false
+                                                uploadSuccess = true
+                                                refreshCloudTrigger++
+                                                Toast.makeText(context, "$count soal berhasil disimpan ke Bank Soal Supabase!", Toast.LENGTH_SHORT).show()
+                                            }
+                                        },
+                                        enabled = !isUploadingQuestions && !uploadSuccess,
+                                        shape = RoundedCornerShape(10.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark)
+                                    ) {
+                                        if (isUploadingQuestions) {
+                                            CircularProgressIndicator(modifier = Modifier.size(14.dp), color = LernspaceSurfaceCard, strokeWidth = 2.dp)
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text("Mengunggah ke Cloud...", fontSize = 12.sp)
+                                        } else {
+                                            Icon(Icons.Filled.CloudUpload, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(if (uploadSuccess) "✅ Tersimpan di Bank Soal Supabase" else "Simpan Soal ke Bank Soal Cloud", fontSize = 12.sp)
+                                        }
+                                    }
+                                }
+
                                 Spacer(modifier = Modifier.height(6.dp))
                                 OutlinedButton(
                                     onClick = {
                                         currentIndex = 0
                                         selectedOptionIdx = null
                                         correctCount = 0
+                                        cloudSubmissionStatus = null
+                                        activeRecordedAnswers = mutableListOf()
                                     },
                                     shape = RoundedCornerShape(10.dp),
                                     border = BorderStroke(1.dp, LernspaceBorder)
@@ -850,5 +1243,15 @@ fun QuizScreen() {
                 }
             }
         }
+    }
+
+    if (showAddQuestionDialog) {
+        AddQuestionDialog(
+            initialSubject = if (cloudSubjectFilter != "Semua") cloudSubjectFilter else null,
+            onDismiss = { showAddQuestionDialog = false },
+            onQuestionAdded = {
+                refreshCloudTrigger++
+            }
+        )
     }
 }

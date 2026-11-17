@@ -868,13 +868,18 @@ fun NoteEditorScreen(
     val leftState = if (isSwapped && secondaryState != null) secondaryState else primaryState
     val rightState = if (isSwapped) primaryState else secondaryState
 
-    // Tool State: Independent presets for Pen and Highlighter
-    var activeTool by remember { mutableStateOf(NoteTool.PEN) }
-    var penColor by remember { mutableStateOf(Color(0xFF0F172A)) } // Dark slate / Black default for clean writing
-    var penThickness by remember { mutableFloatStateOf(4f) }       // 4 px default for Pen
-    var highlighterColor by remember { mutableStateOf(Color(0xFFFDE047)) } // Soft Pastel Yellow default
-    var highlighterThickness by remember { mutableFloatStateOf(24f) }      // 24 px default for Highlighter
-    var selectedShapeType by remember { mutableStateOf(GeometricShapeType.RECTANGLE) }
+    // Tool State: Independent presets for Pen and Highlighter backed by AppSettingsManager
+    DisposableEffect(Unit) {
+        onDispose {
+            AppSettingsManager.ensureSafeActiveTool()
+        }
+    }
+    val activeTool = AppSettingsManager.activeTool
+    val penColor = AppSettingsManager.penColor
+    val penThickness = AppSettingsManager.penThickness
+    val highlighterColor = AppSettingsManager.highlighterColor
+    val highlighterThickness = AppSettingsManager.highlighterThickness
+    val selectedShapeType = AppSettingsManager.selectedShapeType
     var isExporting by remember { mutableStateOf(false) }
     var exportedPdfFile by remember { mutableStateOf<File?>(null) }
 
@@ -926,6 +931,7 @@ fun NoteEditorScreen(
     fun handleBack() {
         primaryState.saveActivePageData(immediate = true)
         secondaryState?.saveActivePageData(immediate = true)
+        AppSettingsManager.ensureSafeActiveTool()
         onBack()
     }
 
@@ -1157,7 +1163,7 @@ fun NoteEditorScreen(
             onCloseSplit = { handleCloseSplit() },
             activeTool = activeTool,
             onSelectTool = { tool ->
-                activeTool = tool
+                AppSettingsManager.updateActiveTool(tool)
                 if (tool != NoteTool.TEXT) {
                     activeState.deselectAll()
                 } else {
@@ -1178,15 +1184,15 @@ fun NoteEditorScreen(
                 }
             },
             selectedShapeType = selectedShapeType,
-            onSelectShapeType = { selectedShapeType = it },
+            onSelectShapeType = { AppSettingsManager.updateSelectedShapeType(it) },
             penColor = penColor,
-            onSelectPenColor = { penColor = it },
+            onSelectPenColor = { AppSettingsManager.updatePenColor(it) },
             penThickness = penThickness,
-            onSelectPenThickness = { penThickness = it },
+            onSelectPenThickness = { AppSettingsManager.updatePenThickness(it) },
             highlighterColor = highlighterColor,
-            onSelectHighlighterColor = { highlighterColor = it },
+            onSelectHighlighterColor = { AppSettingsManager.updateHighlighterColor(it) },
             highlighterThickness = highlighterThickness,
-            onSelectHighlighterThickness = { highlighterThickness = it },
+            onSelectHighlighterThickness = { AppSettingsManager.updateHighlighterThickness(it) },
             onPickImage = {
                 imagePickerLauncher.launch("image/*")
             },
