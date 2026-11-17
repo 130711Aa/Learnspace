@@ -1864,7 +1864,11 @@ private fun NotePaneViewport(
                 state.totalPages = state.note.pdfTotalPages
                 PdfNoteHelper.invalidatePdfCache(savedUri)
                 AcademicDatabaseManager.persistNote(state.note, immediate = true)
+                state.pdfLoadFailed = false
                 state.loadPdfPage()
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(context, "Dokumen berhasil dipulihkan & tersimpan permanen!", android.widget.Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
