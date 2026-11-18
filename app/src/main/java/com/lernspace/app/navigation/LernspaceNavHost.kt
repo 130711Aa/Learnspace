@@ -162,6 +162,12 @@ fun LernspaceTabHost(
                     },
                     onNavigateToWorkspace = {
                         onNavigate(Screen.Workspace.route)
+                    },
+                    onNavigateToBankSoal = {
+                        onNavigate(Screen.BankSoal.route)
+                    },
+                    onNavigateToFlashcards = {
+                        onNavigate(Screen.Flashcards.route)
                     }
                 )
             }

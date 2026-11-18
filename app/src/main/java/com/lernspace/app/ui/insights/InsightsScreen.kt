@@ -21,6 +21,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lernspace.app.data.repository.AcademicWorkspaceState
+import com.lernspace.app.ui.insights.components.CompetencyRadarCockpitCard
 import com.lernspace.app.ui.learning.TopicStatus
 import com.lernspace.app.ui.theme.*
 
@@ -28,7 +29,9 @@ import com.lernspace.app.ui.theme.*
 fun InsightsScreen(
     onNavigateToSyllabus: ((subjectId: String?) -> Unit)? = null,
     onNavigateToPlanner: (() -> Unit)? = null,
-    onNavigateToWorkspace: (() -> Unit)? = null
+    onNavigateToWorkspace: (() -> Unit)? = null,
+    onNavigateToBankSoal: (() -> Unit)? = null,
+    onNavigateToFlashcards: (() -> Unit)? = null
 ) {
     val subjects = AcademicWorkspaceState.subjects
     val topics = AcademicWorkspaceState.topics
@@ -156,7 +159,23 @@ fun InsightsScreen(
             }
         }
 
-        // ── 3. Main Landscape Two-Pane Analytics Cockpit ──────────────────────
+        // ── 3. Competency Radar & Talent Diagnostic Cockpit (Spider Chart) ─────
+        item {
+            CompetencyRadarCockpitCard(
+                subjects = subjects,
+                topics = topics,
+                totalWeeklyHours = totalWeeklyHours,
+                taskRate = taskRate,
+                completedTasks = completedTasks,
+                totalTasks = totalTasks,
+                onNavigateToSyllabus = onNavigateToSyllabus,
+                onNavigateToPlanner = onNavigateToPlanner,
+                onNavigateToBankSoal = onNavigateToBankSoal,
+                onNavigateToFlashcards = onNavigateToFlashcards
+            )
+        }
+
+        // ── 4. Main Landscape Two-Pane Analytics Cockpit ──────────────────────
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
