@@ -8,17 +8,51 @@ import java.util.UUID
 enum class AiQuickAction(
     val title: String,
     val emoji: String,
-    val defaultPrompt: String
+    val defaultPrompt: String,
+    val isFeatured: Boolean = false
 ) {
+    CHEAT_SHEET(
+        title = "Cheat Sheet Ujian",
+        emoji = "⚡",
+        defaultPrompt = """
+Buatkan Cheat Sheet Ujian (Lembar Sontekan Revisi Kilat One-Pager) yang super padat, terstruktur, dan bernilai tinggi dari materi pada halaman ini.
+Struktur output wajib seperti lembar sontekan profesional berikut:
+
+### ⚡ CHEAT SHEET UJIAN
+
+1. 📌 **Intisari & Teorema Kunci**: 2-3 kalimat ringkas esensi materi.
+2. 📐 **Formula & Persamaan Kunci**: Tuliskan semua rumus dalam format LaTeX (contoh ${'$'}E = mc^2${'$'} atau $$...$$), lengkapi dengan keterangan simbol & satuan SI.
+3. 🔑 **Terminologi & Jembatan Keledai (Mnemonics)**: Istilah penting + akronim/trik mudah ingat.
+4. ⚠️ **Jebakan Ujian (Common Pitfalls)**: Kesalahan paling umum mahasiswa saat mengerjakan soal bab ini.
+5. 💡 **Shortcut & Aturan Praktis**: Trik cepat mengeliminasi opsi salah atau langkah kilat solusinya.
+
+Prioritaskan kepadatan informasi, keterbacaan tinggi, dan akurasi rumus LaTeX.
+        """.trimIndent(),
+        isFeatured = true
+    ),
     SUMMARIZE(
-        title = "Rangkum Halaman",
+        title = "Rangkuman Eksekutif",
         emoji = "📝",
-        defaultPrompt = "Rangkum seluruh materi pada halaman yang sedang saya buka ini secara terstruktur, lengkap dengan poin-poin penting, intisari materi, dan kesimpulan utamanya."
+        defaultPrompt = """
+Rangkum seluruh materi pada halaman ini menjadi Executive Summary yang terstruktur dan padat:
+
+### 📝 EXECUTIVE SUMMARY
+
+1. 🎯 **TL;DR (3 Poin Utama)**: Intisari esensial paling penting.
+2. 🔍 **Poin-Poin Pembahasan**: Uraian ringkas ide pokok, argumen, atau alur konsep.
+3. 🏁 **Takeaway & Kesimpulan**: Inti yang harus diingat mahasiswa setelah membaca materi ini.
+        """.trimIndent(),
+        isFeatured = true
     ),
     KEY_CONCEPTS(
         title = "Konsep Kunci",
         emoji = "💡",
         defaultPrompt = "Identifikasi dan jelaskan konsep-konsep kunci, istilah penting, atau definisi utama pada halaman ini menggunakan analogi yang mudah dipahami mahasiswa."
+    ),
+    FORMULAS(
+        title = "Bedah Rumus",
+        emoji = "📐",
+        defaultPrompt = "Identifikasi semua rumus atau persamaan matematika/fisika/kimia di halaman ini. Tuliskan dalam format LaTeX bersih, lalu jelaskan arti setiap variabel, satuannya, dan kondisi berlakunya rumus tersebut."
     ),
     QUIZ(
         title = "Uji Pemahaman",
@@ -29,11 +63,6 @@ enum class AiQuickAction(
         title = "Buat Flashcards",
         emoji = "🃏",
         defaultPrompt = "Ekstrak 3 sampai 5 kartu tanya-jawab (Flashcards) dari materi di halaman ini. Format output dalam JSON array valid dengan struktur: [{\"front\": \"pertanyaan\", \"back\": \"jawaban\", \"hint\": \"petunjuk singkat\"}]. Selain JSON, sertakan ulasan singkat."
-    ),
-    FORMULAS(
-        title = "Bedah Rumus",
-        emoji = "📐",
-        defaultPrompt = "Identifikasi semua rumus atau persamaan matematika/fisika/kimia di halaman ini. Tuliskan dalam format LaTeX bersih, lalu jelaskan arti setiap variabel, satuannya, dan kondisi berlakunya rumus tersebut."
     )
 }
 
@@ -49,6 +78,12 @@ data class AiChatMessage(
 ) {
     val displayContent: String
         get() = cleanContentForDisplay(content, flashcards, isStreaming)
+
+    val isCheatSheet: Boolean
+        get() = content.contains("CHEAT SHEET", ignoreCase = true) || content.contains("Sontekan", ignoreCase = true)
+
+    val isSummary: Boolean
+        get() = content.contains("EXECUTIVE SUMMARY", ignoreCase = true) || content.contains("Rangkuman", ignoreCase = true)
 
     companion object {
         fun cleanContentForDisplay(

@@ -4,6 +4,9 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.widget.Toast
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.UUID
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -111,6 +114,7 @@ import com.lernspace.app.ui.workspace.components.MarkdownLatexContent
 import com.lernspace.app.ui.workspace.components.NoteFloatingToolbar
 import com.lernspace.app.ui.workspace.components.PaperBackground
 import com.lernspace.app.ui.workspace.ai.AiAssistantSidePanel
+import com.lernspace.app.ui.workspace.ai.AiQuickAction
 import com.lernspace.app.ui.workspace.ai.PageCaptureHelper
 import com.lernspace.app.data.repository.FlashcardDeckUi
 import com.lernspace.app.data.repository.FlashcardUi
@@ -949,6 +953,7 @@ fun NoteEditorScreen(
     var showInteractiveGraphDialog by remember { mutableStateOf(false) }
     var showClearCanvasDialog by remember { mutableStateOf(false) }
     var showAiAssistantPanel by remember { mutableStateOf(false) }
+    var pendingAiAction by remember { mutableStateOf<AiQuickAction?>(null) }
 
     BackHandler {
         if (showAiAssistantPanel) {
@@ -1212,6 +1217,10 @@ fun NoteEditorScreen(
             isAiAssistantOpen = showAiAssistantPanel,
             onToggleAiAssistant = {
                 showAiAssistantPanel = !showAiAssistantPanel
+            },
+            onTriggerCheatSheet = {
+                showAiAssistantPanel = true
+                pendingAiAction = AiQuickAction.CHEAT_SHEET
             },
             hasAudioRecording = audioController.hasExistingRecording,
             isAudioBarOpen = showAudioBar,
@@ -1479,7 +1488,47 @@ fun NoteEditorScreen(
                             )
                         )
                     }
-                }
+                },
+                onSaveAsNewNote = { title, content ->
+                    val lineCount = content.lines().size.coerceAtLeast(content.length / 38)
+                    val calculatedHeight = (lineCount * 36f + 80f).coerceIn(320f, 960f)
+                    val newNote = NoteUiModel(
+                        id = UUID.randomUUID().toString(),
+                        title = title,
+                        subject = activeState.subject,
+                        date = "Today, " + SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date()),
+                        snippet = content.take(120).replace("\n", " ") + "...",
+                        subjectId = activeState.note.subjectId,
+                        topicId = activeState.note.topicId,
+                        topicName = activeState.note.topicName,
+                        canvasType = NoteCanvasType.PAGED_NOTE,
+                        paperStyle = PaperStyle.BLANK,
+                        isDarkPaper = activeState.isDarkPaper,
+                        isScratchpad = false
+                    )
+                    val firstPage = NotePageData(
+                        pageIndex = 0,
+                        textBoxes = mutableListOf(
+                            TextBoxElement(
+                                x = 60f,
+                                y = 80f,
+                                width = 680f,
+                                height = calculatedHeight,
+                                text = content,
+                                fontSize = 24f,
+                                hasBackground = true,
+                                isSelected = false
+                            )
+                        )
+                    )
+                    newNote.pages.clear()
+                    newNote.pages.add(firstPage)
+                    AcademicWorkspaceState.notes.add(0, newNote)
+                    com.lernspace.app.data.local.AcademicDatabaseManager.persistNote(newNote)
+                    android.widget.Toast.makeText(context, "Dokumen \"$title\" tersimpan di Study Desk", android.widget.Toast.LENGTH_LONG).show()
+                },
+                pendingQuickAction = pendingAiAction,
+                onQuickActionHandled = { pendingAiAction = null }
             )
         }
     }
@@ -4002,6 +4051,7 @@ private fun UnifiedNoteTopBar(
     onOpenGraph: () -> Unit = {},
     isAiAssistantOpen: Boolean = false,
     onToggleAiAssistant: () -> Unit = {},
+    onTriggerCheatSheet: () -> Unit = {},
     hasAudioRecording: Boolean = false,
     isAudioBarOpen: Boolean = false,
     onToggleAudioBar: () -> Unit = {},
@@ -4048,6 +4098,7 @@ private fun UnifiedNoteTopBar(
                 onOpenGraph = onOpenGraph,
                 isAiAssistantOpen = isAiAssistantOpen,
                 onToggleAiAssistant = onToggleAiAssistant,
+                onTriggerCheatSheet = onTriggerCheatSheet,
                 canUndo = canUndo,
                 onUndo = onUndo,
                 canRedo = canRedo,
@@ -4091,6 +4142,7 @@ private fun UnifiedNoteTopBar(
                 onOpenGraph = onOpenGraph,
                 isAiAssistantOpen = isAiAssistantOpen,
                 onToggleAiAssistant = onToggleAiAssistant,
+                onTriggerCheatSheet = onTriggerCheatSheet,
                 canUndo = canUndo,
                 onUndo = onUndo,
                 canRedo = canRedo,
@@ -4402,6 +4454,7 @@ private fun NoteActionsCapsule(
     onOpenGraph: () -> Unit = {},
     isAiAssistantOpen: Boolean = false,
     onToggleAiAssistant: () -> Unit = {},
+    onTriggerCheatSheet: () -> Unit = {},
     canUndo: Boolean,
     onUndo: () -> Unit,
     canRedo: Boolean,
@@ -4523,6 +4576,30 @@ private fun NoteActionsCapsule(
                         contentDescription = "Mimo - AI Learning Companion",
                         tint = if (isAiAssistantOpen) Color.White else Color(0xFF8B5CF6),
                         modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+
+            // Quick Cheat Sheet Trigger Pill
+            Surface(
+                shape = RoundedCornerShape(18.dp),
+                color = Color(0xFF8B5CF6).copy(alpha = 0.12f),
+                border = BorderStroke(1.dp, Color(0xFF8B5CF6).copy(alpha = 0.35f)),
+                modifier = Modifier
+                    .height(36.dp)
+                    .clickable(onClick = onTriggerCheatSheet)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(text = "⚡", fontSize = 12.sp)
+                    Text(
+                        text = "Cheat Sheet",
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF8B5CF6)
                     )
                 }
             }

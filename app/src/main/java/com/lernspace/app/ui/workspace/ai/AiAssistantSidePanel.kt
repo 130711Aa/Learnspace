@@ -103,7 +103,10 @@ fun AiAssistantSidePanel(
     onCapturePageSnapshot: suspend () -> Bitmap?,
     onExtractPageText: () -> String,
     onInsertToNote: (String) -> Unit,
+    onSaveAsNewNote: ((title: String, content: String) -> Unit)? = null,
     onSaveFlashcards: (List<GeneratedFlashcard>) -> Unit,
+    pendingQuickAction: AiQuickAction? = null,
+    onQuickActionHandled: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -278,6 +281,16 @@ fun AiAssistantSidePanel(
                 }
             } finally {
                 isGenerating = false
+            }
+        }
+    }
+
+    // Auto-trigger pending quick action if requested
+    LaunchedEffect(pendingQuickAction) {
+        pendingQuickAction?.let { action ->
+            if (!isGenerating) {
+                sendMessage(action.title, action.defaultPrompt)
+                onQuickActionHandled?.invoke()
             }
         }
     }
@@ -463,10 +476,31 @@ fun AiAssistantSidePanel(
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 AiQuickAction.entries.forEach { action ->
+                    val isFeatured = action.isFeatured
+                    val chipBorder = if (isFeatured) {
+                        if (action == AiQuickAction.CHEAT_SHEET) {
+                            BorderStroke(1.2.dp, Color(0xFF8B5CF6))
+                        } else {
+                            BorderStroke(1.2.dp, AccentBlue)
+                        }
+                    } else {
+                        BorderStroke(1.dp, LernspaceBorder)
+                    }
+
+                    val chipBg = if (isFeatured) {
+                        if (action == AiQuickAction.CHEAT_SHEET) {
+                            Color(0xFF8B5CF6).copy(alpha = 0.10f)
+                        } else {
+                            AccentBlue.copy(alpha = 0.08f)
+                        }
+                    } else {
+                        LernspaceSurfaceLow
+                    }
+
                     Surface(
                         shape = RoundedCornerShape(16.dp),
-                        color = LernspaceSurfaceLow,
-                        border = BorderStroke(1.dp, LernspaceBorder),
+                        color = chipBg,
+                        border = chipBorder,
                         modifier = Modifier.clickable(enabled = !isGenerating) {
                             sendMessage(action.title, action.defaultPrompt)
                         }
@@ -480,8 +514,14 @@ fun AiAssistantSidePanel(
                             Text(
                                 text = action.title,
                                 fontSize = 11.5.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = LernspaceTextPrimary
+                                fontWeight = if (isFeatured) FontWeight.Bold else FontWeight.SemiBold,
+                                color = if (action == AiQuickAction.CHEAT_SHEET) {
+                                    Color(0xFF8B5CF6)
+                                } else if (action == AiQuickAction.SUMMARIZE) {
+                                    AccentBlue
+                                } else {
+                                    LernspaceTextPrimary
+                                }
                             )
                         }
                     }
@@ -509,12 +549,15 @@ fun AiAssistantSidePanel(
                 items(messages, key = { it.id }) { msg ->
                     ChatMessageItem(
                         message = msg,
+                        noteTitle = noteTitle,
+                        currentPage = currentPage,
                         isDarkTheme = isDarkTheme,
                         onCopy = {
                             clipboard.setPrimaryClip(ClipData.newPlainText("AI Assistant", msg.displayContent))
                             Toast.makeText(context, "Teks disalin ke clipboard", Toast.LENGTH_SHORT).show()
                         },
                         onInsertToNote = { onInsertToNote(msg.displayContent) },
+                        onSaveAsNewNote = onSaveAsNewNote,
                         onSaveFlashcards = { cards ->
                             onSaveFlashcards(cards)
                             Toast.makeText(context, "${cards.size} flashcards disimpan ke Deck!", Toast.LENGTH_SHORT).show()
@@ -629,9 +672,12 @@ fun AiAssistantSidePanel(
 @Composable
 private fun ChatMessageItem(
     message: AiChatMessage,
+    noteTitle: String,
+    currentPage: Int,
     isDarkTheme: Boolean,
     onCopy: () -> Unit,
     onInsertToNote: () -> Unit,
+    onSaveAsNewNote: ((title: String, content: String) -> Unit)?,
     onSaveFlashcards: (List<GeneratedFlashcard>) -> Unit
 ) {
     val isUser = message.role == "user"
@@ -708,6 +754,36 @@ private fun ChatMessageItem(
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF8B5CF6)
                         )
+
+                        if (message.isCheatSheet) {
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = Color(0xFF8B5CF6).copy(alpha = 0.15f),
+                                border = BorderStroke(1.dp, Color(0xFF8B5CF6).copy(alpha = 0.35f))
+                            ) {
+                                Text(
+                                    text = "⚡ Cheat Sheet",
+                                    fontSize = 9.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF8B5CF6),
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        } else if (message.isSummary) {
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = AccentBlue.copy(alpha = 0.12f),
+                                border = BorderStroke(1.dp, AccentBlue.copy(alpha = 0.3f))
+                            ) {
+                                Text(
+                                    text = "📝 Rangkuman",
+                                    fontSize = 9.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = AccentBlue,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
                     }
 
                     if (message.isStreaming) {
@@ -750,7 +826,7 @@ private fun ChatMessageItem(
                     )
                 }
 
-                // Action Bar (Copy, Insert to Note, Save Flashcards)
+                // Action Bar (Copy, Insert to Note, Save as New Note, Save Flashcards)
                 if (!message.isStreaming && (cleanText.isNotBlank() || !message.flashcards.isNullOrEmpty()) && !message.hasError) {
                     Spacer(Modifier.height(10.dp))
                     HorizontalDivider(color = LernspaceBorder.copy(alpha = 0.5f))
@@ -787,7 +863,25 @@ private fun ChatMessageItem(
                             Text("Tempel ke Catatan", fontSize = 11.sp, color = Color(0xFF8B5CF6), fontWeight = FontWeight.SemiBold)
                         }
 
-                        // 3. Save Flashcards Button (if flashcards detected)
+                        // 3. Save as New Standalone Note
+                        if (onSaveAsNewNote != null && (message.isCheatSheet || message.isSummary)) {
+                            OutlinedButton(
+                                onClick = {
+                                    val title = if (message.isCheatSheet) "⚡ Cheat Sheet · $noteTitle" else "📝 Rangkuman · $noteTitle"
+                                    onSaveAsNewNote(title, cleanText)
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                border = BorderStroke(1.dp, LernspaceBorder),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                modifier = Modifier.height(28.dp)
+                            ) {
+                                Icon(Icons.Filled.NoteAdd, contentDescription = null, modifier = Modifier.size(13.dp), tint = LernspaceDark)
+                                Spacer(Modifier.width(4.dp))
+                                Text("Lembar Baru", fontSize = 11.sp, color = LernspaceDark, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+
+                        // 4. Save Flashcards Button (if flashcards detected)
                         val cards = message.flashcards
                         if (!cards.isNullOrEmpty()) {
                             Button(
