@@ -58,64 +58,13 @@ fun InsightsScreen(
     ) {
         // ── 1. Top Header Bar ────────────────────────────────────────────────
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            text = "Insights & Analytics",
-                            style = MaterialTheme.typography.headlineLarge,
-                            color = LernspaceDark,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = LernspaceSurfaceLow,
-                            border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder)
-                        ) {
-                            Text(
-                                text = "Semester Ganjil 2026/2027",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = LernspaceDark,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                            )
-                        }
-                    }
-                }
-
-                // Live Sync Status Chip
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = LernspaceSurfaceLow,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(LernspaceDark)
-                        )
-                        Text(
-                            text = "Local-First Live Sync",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = LernspaceDark
-                        )
-                    }
-                }
-            }
+            Text(
+                text = "Insights & Analytics",
+                style = MaterialTheme.typography.headlineLarge,
+                color = LernspaceDark,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(vertical = 4.dp)
+            )
         }
 
         // ── 2. Top KPI Metric Cards (Row of 4) ──────────────────────────────
