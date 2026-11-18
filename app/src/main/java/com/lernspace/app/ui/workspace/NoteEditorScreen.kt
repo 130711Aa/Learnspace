@@ -1461,7 +1461,7 @@ fun NoteEditorScreen(
                 onSaveFlashcards = { cards ->
                     val deck = FlashcardDeckUi(
                         title = "${activeState.noteTitle} · Flashcards",
-                        description = "Dihasilkan otomatis oleh AI Assistant dari Halaman ${activeState.currentPageIndex + 1}",
+                        description = "Dihasilkan otomatis oleh Mimo dari Halaman ${activeState.currentPageIndex + 1}",
                         subjectId = activeState.note.subjectId,
                         subjectName = activeState.subject,
                         sourceNoteId = activeState.note.id
@@ -4516,7 +4516,7 @@ private fun NoteActionsCapsule(
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
                         imageVector = Icons.Filled.AutoAwesome,
-                        contentDescription = "AI Study Assistant (Membaca Halaman)",
+                        contentDescription = "Mimo - AI Learning Companion",
                         tint = if (isAiAssistantOpen) Color.White else Color(0xFF8B5CF6),
                         modifier = Modifier.size(18.dp)
                     )

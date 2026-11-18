@@ -154,9 +154,9 @@ fun WorkspaceScreen(
         }
     }
 
-    // Filtered notes - uses direct observable mapping including topicId & topicName
+    // Filtered notes - uses snapshot state observation without allocating intermediate lists
     val filteredNotes = remember(
-        notes.map { listOf(it.id, it.title, it.subjectId, it.topicId, it.topicName, it.subject) },
+        notes.size,
         selectedFilterKey,
         searchQuery
     ) {

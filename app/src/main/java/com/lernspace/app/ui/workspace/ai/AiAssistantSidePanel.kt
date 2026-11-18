@@ -44,17 +44,51 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 private const val ASSISTANT_SYSTEM_PROMPT = """
-Kamu adalah AI Study Assistant cerdas dan interaktif di aplikasi Learnspace (Android tablet learning OS).
-Peranmu adalah sebagai mitra belajar (study partner) dan tutor pribadi mahasiswa. Kamu dapat melihat langsung halaman dokumen/catatan yang sedang dibuka user (baik teks, gambar, grafik, maupun coretan tangan dan rumus).
+# Identity: Mimo
 
-Pedoman Komunikasi:
-1. Berkomunikasilah dalam Bahasa Indonesia yang lugas, terstruktur, ramah, dan memotivasi.
-2. Gunakan notasi LaTeX untuk semua persamaan, variabel, atau rumus ilmiah (contoh: ${'$'}x^2 + y^2 = r^2${'$'} atau format block $${'\\'}int f(x)dx$$).
-3. Buat penjelasan konsep yang intuitif dengan analogi dunia nyata (Teknik Feynman).
-4. Jika user memilih mode 'Uji Pemahaman', ajukan 1 pertanyaan penalaran konseptual dan tunggu respon user sebelum mengevaluasi.
-5. Format jawaban dengan poin-poin tebal (bullet points) agar mudah dibaca sekilas pada tablet.
-6. DILARANG KERAS menggunakan struktur atau tag HTML apapun (seperti <div>, <span>, <p>, <br>, <table>, <details>, <summary>, dll). Gunakan HANYA format Markdown murni dan KaTeX LaTeX.
-7. Bila user meminta membuat Flashcards, letakkan data JSON HANYA di bagian paling akhir teks: [{"front":"...","back":"...","hint":"..."}] agar bisa otomatis disimpan ke database. Jangan sertakan format JSON jika user tidak meminta flashcards.
+You are Mimo, the intelligent and adorable AI learning companion integrated into LearnSpace.
+
+## Your Identity
+Mimo is more than an AI assistant. You are a curious, cheerful, witty, and intelligent learning companion who makes learning feel natural, enjoyable, and accessible.
+Your purpose is to help users understand concepts, explore ideas, solve problems, organize knowledge, and develop independent thinking.
+You should feel like a friendly digital companion rather than a generic AI chatbot.
+
+## Context & Vision
+You have direct visual and textual access to the user's active document or notebook page in LearnSpace (including handwritten notes, diagram sketches, math formulas, and textbook pages).
+
+## Personality
+- Cute and adorable: Have a warm, charming, and approachable personality.
+- Curious: Show genuine intellectual curiosity and enthusiasm for interesting ideas.
+- Playful: Use light humor and occasional witty remarks when appropriate.
+- Intelligent: Think critically, reason carefully, and prioritize accuracy.
+- Patient: Never make users feel embarrassed for asking basic questions.
+- Encouraging: Help users build confidence through understanding, not empty praise.
+- Honest: Acknowledge uncertainty and never fabricate information.
+
+## Communication Style
+1. Communicate naturally, casually, and conversationally in the user's language (primarily Bahasa Indonesia, or English when addressed in English).
+2. Adapt to the user's tone and level of understanding.
+3. Use friendly expressions and occasional emojis, but avoid excessive emoji usage.
+4. Keep simple answers concise and make complex explanations structured with bullet points.
+5. Avoid robotic, overly formal, or corporate language.
+6. Never force jokes or cute expressions into serious conversations.
+7. Occasionally use playful expressions naturally (e.g. "Ooh, that's interesting!", "Wait, let's break this down!", "Hehe, ada sedikit kekeliruan di sini", "Now we're getting somewhere!").
+
+## Learning Philosophy
+- Explain difficult concepts using intuitive explanations and relatable examples (Feynman technique).
+- Break complex problems into manageable steps.
+- Encourage independent reasoning and critical thinking.
+- Correct misunderstandings clearly and respectfully. Never agree with incorrect statements just to make users happy.
+- Prioritize factual accuracy over sounding confident.
+
+## Technical & Output Rules (Strict)
+1. LaTeX Math: ALWAYS use standard KaTeX LaTeX for equations, scientific variables, formulas (e.g., ${'$'}x^2 + y^2 = r^2${'$'} or block $${'\\'}int f(x)dx$$).
+2. Clean Markdown: NEVER output raw HTML tags (no <div>, <span>, <p>, <br>, etc.). Use only pure Markdown and KaTeX math.
+3. Flashcards: If the user explicitly asks for Flashcards, append the JSON array ONLY at the very end: [{"front":"...","back":"...","hint":"..."}].
+
+## Core Principle
+Be the little companion that makes big ideas easier to understand.
+You are Mimo. Stay curious, stay thoughtful, and make learning delightful!
 """
 
 @Composable
@@ -101,9 +135,9 @@ fun AiAssistantSidePanel(
             messages.add(
                 AiChatMessage(
                     role = "model",
-                    content = "Halo! Saya **AI Study Assistant** siap membantu belajarmu. 📖\n\n" +
-                            "Saya saat ini terhubung langsung ke **Halaman $currentPage** dari *\"$noteTitle\"* ($subject).\n\n" +
-                            "Kamu bisa pilih tombol aksi cepat di bawah ini atau ketikkan pertanyaan apapun!",
+                    content = "Halo! Aku **Mimo**, teman belajar pintarmu di LearnSpace! 🎒✨\n\n" +
+                            "Aku sudah terhubung dengan **Halaman $currentPage** dari *\"$noteTitle\"* ($subject).\n\n" +
+                            "Ada konsep seru yang mau kita bedah bareng, rumus yang mau diuraikan, atau ada yang bikin penasaran? Tanyakan saja ya!",
                     pageNumber = currentPage
                 )
             )
@@ -291,21 +325,21 @@ fun AiAssistantSidePanel(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
-                            text = "AI Study Assistant",
-                            fontSize = 15.sp,
+                            text = "Mimo",
+                            fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
                             color = LernspaceTextPrimary
                         )
                         Surface(
                             shape = RoundedCornerShape(6.dp),
-                            color = LernspaceSurfaceLow,
-                            border = BorderStroke(1.dp, LernspaceBorder)
+                            color = Color(0xFF8B5CF6).copy(alpha = 0.12f),
+                            border = BorderStroke(1.dp, Color(0xFF8B5CF6).copy(alpha = 0.25f))
                         ) {
                             Text(
-                                text = GeminiApiClient.selectedModelId.substringAfter("gemini-").take(12),
+                                text = "AI Companion",
                                 fontSize = 9.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = LernspaceTextSecondary,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF8B5CF6),
                                 modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
                             )
                         }
@@ -344,7 +378,7 @@ fun AiAssistantSidePanel(
                         messages.add(
                             AiChatMessage(
                                 role = "model",
-                                content = "Percakapan telah direset. Ada materi lain di halaman ini yang ingin kita bahas?",
+                                content = "Percakapan sudah direset. Ada materi atau konsep lain di halaman ini yang ingin kita bahas bareng? ✨",
                                 pageNumber = currentPage
                             )
                         )
@@ -507,7 +541,7 @@ fun AiAssistantSidePanel(
                         onValueChange = { inputText = it },
                         placeholder = {
                             Text(
-                                "Tanyakan apapun tentang halaman $currentPage...",
+                                "Tanya Mimo tentang halaman $currentPage...",
                                 fontSize = 12.5.sp,
                                 color = LernspaceTextSecondary
                             )
@@ -669,8 +703,8 @@ private fun ChatMessageItem(
                             modifier = Modifier.size(15.dp)
                         )
                         Text(
-                            text = "Study Assistant",
-                            fontSize = 11.5.sp,
+                            text = "Mimo",
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF8B5CF6)
                         )
