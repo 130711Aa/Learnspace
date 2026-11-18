@@ -1,29 +1,18 @@
 package com.lernspace.app.ui.workspace.document
 
+import android.annotation.SuppressLint
 import android.content.Context
-import android.graphics.Typeface
-import android.text.Editable
-import android.text.Html
-import android.text.Spannable
-import android.text.SpannableStringBuilder
-import android.text.Spanned
-import android.text.TextWatcher
-import android.text.style.AbsoluteSizeSpan
-import android.text.style.BackgroundColorSpan
-import android.text.style.ForegroundColorSpan
-import android.text.style.StrikethroughSpan
-import android.text.style.StyleSpan
-import android.text.style.TypefaceSpan
-import android.text.style.URLSpan
-import android.text.style.UnderlineSpan
-import android.util.AttributeSet
-import android.view.Gravity
-import android.view.ViewGroup
-import android.widget.EditText
+import android.net.Uri
+import android.util.Base64
+import android.util.Log
+import android.webkit.JavascriptInterface
+import android.webkit.WebChromeClient
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -33,7 +22,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
 import androidx.compose.material.icons.automirrored.filled.Redo
@@ -57,142 +45,619 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.lernspace.app.ui.theme.*
 
-// ── CUSTOM EDITTEXT FOR SELECTION LISTENING ──────────────────────────────────
-class DocumentRichEditText @JvmOverloads constructor(
+// ── ENUMS ────────────────────────────────────────────────────────────────────
+enum class DocParagraphStyle(val label: String, val htmlTag: String) {
+    NORMAL("Teks Normal", "p"),
+    TITLE("Judul Dokumen", "h1"),
+    HEADING_1("Heading 1 (Besar)", "h2"),
+    HEADING_2("Heading 2 (Sedang)", "h3"),
+    HEADING_3("Heading 3 (Kecil)", "h4")
+}
+
+enum class DocFontFamily(val label: String, val cssValue: String, val composeFont: FontFamily) {
+    DEFAULT("Calibri / Sans", "Inter, system-ui, sans-serif", FontFamily.SansSerif),
+    SERIF("Merriweather / Serif", "Georgia, 'Times New Roman', serif", FontFamily.Serif),
+    MONO("JetBrains / Mono", "'Courier New', Courier, monospace", FontFamily.Monospace)
+}
+
+// ── WEBVIEW BRIDGE ────────────────────────────────────────────────────────────
+class DocumentJsBridge(
+    private val onContentChanged: (String) -> Unit,
+    private val onWordCountChanged: (Int, Int) -> Unit
+) {
+    @JavascriptInterface
+    fun onContentChange(html: String) {
+        onContentChanged(html)
+        // Count words from plain text
+        val plain = html.replace(Regex("<[^>]+>"), " ").replace(Regex("\\s+"), " ").trim()
+        val words = if (plain.isBlank()) 0 else plain.split(" ").filter { it.isNotBlank() }.size
+        onWordCountChanged(words, plain.length)
+    }
+}
+
+// ── WEBVIEW DOCUMENT EDITOR ───────────────────────────────────────────────────
+@SuppressLint("SetJavaScriptEnabled")
+fun buildDocumentWebView(
     context: Context,
-    attrs: AttributeSet? = null,
-    defStyleAttr: Int = android.R.attr.editTextStyle
-) : EditText(context, attrs, defStyleAttr) {
-
-    var onSelectionChangedListener: ((start: Int, end: Int) -> Unit)? = null
-
-    override fun onSelectionChanged(selStart: Int, selEnd: Int) {
-        super.onSelectionChanged(selStart, selEnd)
-        onSelectionChangedListener?.invoke(selStart, selEnd)
-    }
-}
-
-// ── RICH DOCUMENT CONVERTER (HTML <-> SPANNED) ──────────────────────────────
-object RichDocumentConverter {
-    fun toHtml(spanned: Spanned): String {
-        return try {
-            val baseHtml = Html.toHtml(spanned, Html.TO_HTML_PARAGRAPH_LINES_CONSECUTIVE)
-            val bgSpans = spanned.getSpans(0, spanned.length, BackgroundColorSpan::class.java)
-            if (bgSpans.isEmpty()) return baseHtml
-
-            var result = baseHtml
-            for (span in bgSpans) {
-                val start = spanned.getSpanStart(span)
-                val end = spanned.getSpanEnd(span)
-                if (start in 0 until end && end <= spanned.length) {
-                    val rawPiece = spanned.subSequence(start, end).toString()
-                    if (rawPiece.isNotBlank()) {
-                        val hex = String.format("#%06X", 0xFFFFFF and span.backgroundColor)
-                        val escaped = Html.escapeHtml(rawPiece)
-                        if (!result.contains("background-color:$hex")) {
-                            result = result.replace(escaped, "<mark style=\"background-color:$hex\">$escaped</mark>")
-                        }
-                    }
-                }
-            }
-            result
-        } catch (_: Exception) {
-            spanned.toString()
+    isDarkTheme: Boolean,
+    initialHtml: String,
+    bridge: DocumentJsBridge
+): WebView {
+    return WebView(context).apply {
+        settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            allowFileAccess = true
+            allowContentAccess = true
+            loadWithOverviewMode = true
+            useWideViewPort = true
+            cacheMode = WebSettings.LOAD_NO_CACHE
+            setSupportZoom(false)
+            builtInZoomControls = false
+            displayZoomControls = false
         }
-    }
-
-    fun fromHtml(raw: String): Spanned {
-        if (raw.isBlank()) return SpannableStringBuilder("")
-        return try {
-            val containsHtml = raw.contains("<") && raw.contains(">")
-            val spanned = if (containsHtml) {
-                Html.fromHtml(raw, Html.FROM_HTML_MODE_COMPACT)
-            } else {
-                SpannableStringBuilder(raw)
-            }
-            val ssb = SpannableStringBuilder(spanned)
-
-            // Parse background colors from <mark style="background-color:..."> or <span style="background-color:...">
-            val bgPattern = Regex("""<(?:mark|span)\s+style="background-color:\s*(#[0-9a-fA-F]{6})">(.*?)<\/(?:mark|span)>""", RegexOption.DOT_MATCHES_ALL)
-            for (match in bgPattern.findAll(raw)) {
-                val colorHex = match.groupValues[1]
-                val innerHtml = match.groupValues[2]
-                val plainText = Html.fromHtml(innerHtml, Html.FROM_HTML_MODE_COMPACT).toString()
-                if (colorHex.isNotEmpty() && plainText.isNotEmpty()) {
-                    val colorInt = try { android.graphics.Color.parseColor(colorHex) } catch (_: Exception) { null }
-                    if (colorInt != null) {
-                        var searchStart = 0
-                        while (searchStart < ssb.length) {
-                            val idx = ssb.indexOf(plainText, searchStart)
-                            if (idx == -1) break
-                            ssb.setSpan(BackgroundColorSpan(colorInt), idx, idx + plainText.length, Spanned.SPAN_EXCLUSIVE_INCLUSIVE)
-                            searchStart = idx + plainText.length
-                        }
-                    }
-                }
-            }
-            ssb
-        } catch (_: Exception) {
-            SpannableStringBuilder(raw)
-        }
+        addJavascriptInterface(bridge, "LernspaceDoc")
+        webChromeClient = WebChromeClient()
+        webViewClient = WebViewClient()
+        isHorizontalScrollBarEnabled = false
+        isVerticalScrollBarEnabled = true
+        setBackgroundColor(0x00000000)
+        isNestedScrollingEnabled = false
     }
 }
 
-// ── ENUMS FOR PARAGRAPH STYLE & FONT FAMILY ─────────────────────────────────
-enum class DocParagraphStyle(val label: String, val sizeSp: Int, val isBold: Boolean) {
-    NORMAL("Teks Normal", 15, false),
-    TITLE("Judul Dokumen", 28, true),
-    HEADING_1("Heading 1 (Besar)", 22, true),
-    HEADING_2("Heading 2 (Sedang)", 18, true),
-    HEADING_3("Heading 3 (Kecil)", 16, true)
+// ── GENERATE EDITOR HTML PAGE ─────────────────────────────────────────────────
+fun generateEditorHtml(isDarkTheme: Boolean, initialContent: String): String {
+    val bg = if (isDarkTheme) "#1E202B" else "#FFFFFF"
+    val textColor = if (isDarkTheme) "#F1F5F9" else "#1E293B"
+    val borderColor = if (isDarkTheme) "#334155" else "#E2E8F0"
+    val selectionColor = if (isDarkTheme) "#2563EB33" else "#2563EB22"
+    val tableBorder = if (isDarkTheme) "#475569" else "#CBD5E1"
+    val tableHeaderBg = if (isDarkTheme) "#1E293B" else "#F8FAFC"
+    val placeholderColor = if (isDarkTheme) "#64748B" else "#94A3B8"
+    val linkColor = if (isDarkTheme) "#60A5FA" else "#2563EB"
+
+    val safeContent = if (initialContent.isBlank()) "<p><br></p>" else initialContent
+
+    return """
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  
+  html, body {
+    background: transparent;
+    font-family: Inter, system-ui, sans-serif;
+    -webkit-text-size-adjust: 100%;
+    height: 100%;
+  }
+
+  #editor {
+    min-height: 100vh;
+    padding: 0 0 120px 0;
+    outline: none;
+    caret-color: #2563EB;
+    color: $textColor;
+    font-size: 15px;
+    line-height: 1.75;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+  }
+
+  #editor:empty::before {
+    content: 'Mulai mengetik dokumen di sini...';
+    color: $placeholderColor;
+    font-style: italic;
+    pointer-events: none;
+  }
+  
+  #editor p { margin: 0 0 8px 0; min-height: 1.75em; }
+  #editor h1 { font-size: 26px; font-weight: 700; margin: 16px 0 8px 0; color: $textColor; }
+  #editor h2 { font-size: 21px; font-weight: 700; margin: 14px 0 6px 0; color: $textColor; }
+  #editor h3 { font-size: 18px; font-weight: 600; margin: 12px 0 5px 0; color: $textColor; }
+  #editor h4 { font-size: 16px; font-weight: 600; margin: 10px 0 4px 0; color: $textColor; }
+  #editor strong { font-weight: 700; }
+  #editor em { font-style: italic; }
+  #editor u { text-decoration: underline; }
+  #editor s { text-decoration: line-through; }
+  
+  /* Links */
+  #editor a { color: $linkColor; text-decoration: underline; cursor: pointer; }
+  
+  /* Lists */
+  #editor ul {
+    list-style-type: disc;
+    margin: 6px 0 10px 0;
+    padding-left: 28px;
+  }
+  #editor ol {
+    list-style-type: decimal;
+    margin: 6px 0 10px 0;
+    padding-left: 28px;
+  }
+  #editor li {
+    margin: 3px 0;
+    line-height: 1.65;
+  }
+  
+  /* Checklist */
+  #editor ul.checklist { list-style: none; padding-left: 6px; }
+  #editor ul.checklist li { display: flex; align-items: flex-start; gap: 8px; margin: 4px 0; }
+  #editor ul.checklist li input[type="checkbox"] {
+    margin-top: 3px;
+    width: 16px;
+    height: 16px;
+    accent-color: #2563EB;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  #editor ul.checklist li.done span { text-decoration: line-through; opacity: 0.55; }
+  
+  /* Blockquote / callout */
+  #editor blockquote {
+    border-left: 3px solid #2563EB;
+    margin: 10px 0;
+    padding: 8px 16px;
+    background: ${if (isDarkTheme) "#1E293B" else "#EFF6FF"};
+    border-radius: 0 6px 6px 0;
+    color: ${if (isDarkTheme) "#93C5FD" else "#1D4ED8"};
+    font-style: italic;
+  }
+  
+  /* Horizontal rule */
+  #editor hr {
+    border: none;
+    border-top: 1.5px solid $borderColor;
+    margin: 16px 0;
+  }
+  
+  /* Code block */
+  #editor pre {
+    background: ${if (isDarkTheme) "#0F172A" else "#F1F5F9"};
+    border: 1px solid $borderColor;
+    border-radius: 6px;
+    padding: 12px 16px;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    overflow-x: auto;
+    margin: 10px 0;
+    color: ${if (isDarkTheme) "#7DD3FC" else "#0F172A"};
+  }
+
+  /* ── TABLES ── */
+  #editor table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 12px 0;
+    font-size: 14px;
+    table-layout: fixed;
+  }
+  #editor table td, #editor table th {
+    border: 1.5px solid $tableBorder;
+    padding: 8px 12px;
+    min-width: 60px;
+    min-height: 36px;
+    vertical-align: top;
+    outline: none;
+    word-wrap: break-word;
+    line-height: 1.6;
+  }
+  #editor table th {
+    background: $tableHeaderBg;
+    font-weight: 600;
+    text-align: left;
+  }
+  #editor table td:focus, #editor table th:focus {
+    outline: 2px solid #2563EB;
+    outline-offset: -2px;
+  }
+  
+  /* Table toolbar popup */
+  #table-toolbar {
+    display: none;
+    position: fixed;
+    background: ${if (isDarkTheme) "#1E202B" else "#FFFFFF"};
+    border: 1.5px solid $borderColor;
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+    padding: 4px 8px;
+    gap: 4px;
+    flex-direction: row;
+    align-items: center;
+    z-index: 9999;
+    flex-wrap: wrap;
+    max-width: 280px;
+  }
+  #table-toolbar button {
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    color: $textColor;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  #table-toolbar button:active { background: ${if (isDarkTheme) "#334155" else "#EFF6FF"}; }
+  #table-toolbar .sep {
+    width: 1px; height: 18px;
+    background: $borderColor;
+    margin: 0 2px;
+  }
+
+  /* Images */
+  #editor img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 10px auto;
+    border-radius: 6px;
+    border: 1.5px solid $borderColor;
+  }
+  #editor img.selected { outline: 2px solid #2563EB; outline-offset: 2px; }
+
+  /* Selection color */
+  ::selection { background: $selectionColor; }
+
+</style>
+</head>
+<body>
+<div id="table-toolbar">
+  <button onclick="addRowAbove()">↑ Baris di atas</button>
+  <button onclick="addRowBelow()">↓ Baris di bawah</button>
+  <div class="sep"></div>
+  <button onclick="addColLeft()">← Kolom kiri</button>
+  <button onclick="addColRight()">→ Kolom kanan</button>
+  <div class="sep"></div>
+  <button onclick="deleteCurrentRow()" style="color:#DC2626">✕ Hapus Baris</button>
+  <button onclick="deleteCurrentCol()" style="color:#DC2626">✕ Hapus Kolom</button>
+  <div class="sep"></div>
+  <button onclick="deleteTable()" style="color:#DC2626">🗑 Hapus Tabel</button>
+</div>
+
+<div id="editor" contenteditable="true">$safeContent</div>
+
+<script>
+var editor = document.getElementById('editor');
+var tableToolbar = document.getElementById('table-toolbar');
+var debounceTimer = null;
+var currentCell = null;
+
+// ── Notify Kotlin on content change ──
+function notifyChange() {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(function() {
+    var html = editor.innerHTML;
+    LernspaceDoc.onContentChange(html);
+  }, 400);
+}
+editor.addEventListener('input', notifyChange);
+editor.addEventListener('keyup', notifyChange);
+
+// ── EXEC COMMAND WRAPPERS ──
+function exec(cmd, val) {
+  editor.focus();
+  document.execCommand(cmd, false, val || null);
+  notifyChange();
 }
 
-enum class DocFontFamily(val label: String, val typefaceName: String, val composeFont: FontFamily) {
-    DEFAULT("Calibri / Sans", "sans-serif", FontFamily.SansSerif),
-    SERIF("Merriweather / Serif", "serif", FontFamily.Serif),
-    MONO("JetBrains / Mono", "monospace", FontFamily.Monospace)
+function formatBlock(tag) { exec('formatBlock', tag); }
+function toggleBold() { exec('bold'); }
+function toggleItalic() { exec('italic'); }
+function toggleUnderline() { exec('underline'); }
+function toggleStrikethrough() { exec('strikeThrough'); }
+function setFontFamily(css) { exec('fontName', css); }
+function setFontSize(px) {
+  // execCommand fontSize is limited (1-7), use span instead
+  var sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return;
+  var range = sel.getRangeAt(0);
+  if (range.collapsed) return;
+  var span = document.createElement('span');
+  span.style.fontSize = px + 'px';
+  range.surroundContents(span);
+  notifyChange();
+}
+function setTextColor(color) { exec('foreColor', color); }
+function setHighlight(color) { exec('hiliteColor', color); }
+function alignLeft() { exec('justifyLeft'); }
+function alignCenter() { exec('justifyCenter'); }
+function alignRight() { exec('justifyRight'); }
+function alignJustify() { exec('justifyFull'); }
+
+function undo() { exec('undo'); }
+function redo() { exec('redo'); }
+
+// ── LISTS ──
+function insertBulletList() {
+  exec('insertUnorderedList');
+}
+function insertNumberedList() {
+  exec('insertOrderedList');
+}
+function insertChecklist() {
+  editor.focus();
+  var sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return;
+  var range = sel.getRangeAt(0);
+  var ul = document.createElement('ul');
+  ul.className = 'checklist';
+  var li = document.createElement('li');
+  var cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.addEventListener('change', function() {
+    li.classList.toggle('done', cb.checked);
+    notifyChange();
+  });
+  var span = document.createElement('span');
+  span.textContent = sel.toString() || 'Item';
+  li.appendChild(cb);
+  li.appendChild(span);
+  ul.appendChild(li);
+  range.deleteContents();
+  range.insertNode(ul);
+  // Move cursor to span
+  var newRange = document.createRange();
+  newRange.setStart(span, 0);
+  newRange.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(newRange);
+  notifyChange();
 }
 
-// ── UNDO / REDO MANAGER ─────────────────────────────────────────────────────
-class RichTextUndoRedoManager(private val maxHistory: Int = 30) {
-    private val undoStack = mutableListOf<String>()
-    private val redoStack = mutableListOf<String>()
-    var isUndoingOrRedoing = false
-
-    fun pushState(stateHtml: String) {
-        if (isUndoingOrRedoing) return
-        if (undoStack.isNotEmpty() && undoStack.last() == stateHtml) return
-        undoStack.add(stateHtml)
-        if (undoStack.size > maxHistory) {
-            undoStack.removeAt(0)
-        }
-        redoStack.clear()
-    }
-
-    fun canUndo(): Boolean = undoStack.size > 1
-    fun canRedo(): Boolean = redoStack.isNotEmpty()
-
-    fun undo(): String? {
-        if (!canUndo()) return null
-        isUndoingOrRedoing = true
-        val current = undoStack.removeAt(undoStack.lastIndex)
-        redoStack.add(current)
-        val prev = undoStack.last()
-        isUndoingOrRedoing = false
-        return prev
-    }
-
-    fun redo(): String? {
-        if (!canRedo()) return null
-        isUndoingOrRedoing = true
-        val next = redoStack.removeAt(redoStack.lastIndex)
-        undoStack.add(next)
-        isUndoingOrRedoing = false
-        return next
-    }
+function insertBlockquote() {
+  exec('formatBlock', 'blockquote');
+}
+function insertHorizontalRule() {
+  exec('insertHorizontalRule');
 }
 
-// ── MAIN DOCUMENT EDITOR VIEWPORT ───────────────────────────────────────────
+// ── LINK ──
+function insertLink(text, url) {
+  editor.focus();
+  var sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return;
+  var range = sel.getRangeAt(0);
+  var a = document.createElement('a');
+  a.href = url;
+  a.textContent = text;
+  range.deleteContents();
+  range.insertNode(a);
+  var newRange = document.createRange();
+  newRange.setStartAfter(a);
+  newRange.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(newRange);
+  notifyChange();
+}
+
+// ── MATH EQUATION ──
+function insertMath(latex) {
+  editor.focus();
+  var sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return;
+  var range = sel.getRangeAt(0);
+  var span = document.createElement('span');
+  span.className = 'math-inline';
+  span.style.cssText = 'font-family: Courier New, monospace; color: #1D4ED8; background: #EFF6FF; padding: 2px 6px; border-radius: 4px; font-size: 14px;';
+  span.textContent = latex;
+  span.setAttribute('data-latex', latex);
+  range.deleteContents();
+  range.insertNode(span);
+  var newRange = document.createRange();
+  newRange.setStartAfter(span);
+  newRange.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(newRange);
+  notifyChange();
+}
+
+// ── IMAGE ──
+function insertImage(dataUri) {
+  editor.focus();
+  var sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return;
+  var range = sel.getRangeAt(0);
+  var img = document.createElement('img');
+  img.src = dataUri;
+  img.style.maxWidth = '100%';
+  range.insertNode(img);
+  var newRange = document.createRange();
+  newRange.setStartAfter(img);
+  newRange.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(newRange);
+  notifyChange();
+}
+
+// ── TABLE INSERTION ──
+function insertTable(rows, cols) {
+  editor.focus();
+  var table = document.createElement('table');
+  for (var r = 0; r < rows; r++) {
+    var tr = document.createElement('tr');
+    for (var c = 0; c < cols; c++) {
+      var cell = (r === 0) ? document.createElement('th') : document.createElement('td');
+      cell.contentEditable = 'true';
+      cell.textContent = (r === 0) ? 'Kolom ' + (c + 1) : '';
+      tr.appendChild(cell);
+    }
+    table.appendChild(tr);
+  }
+  var sel = window.getSelection();
+  if (sel && sel.rangeCount > 0) {
+    var range = sel.getRangeAt(0);
+    range.deleteContents();
+    range.insertNode(table);
+    var br = document.createElement('p');
+    br.innerHTML = '<br>';
+    table.parentNode.insertBefore(br, table.nextSibling);
+  } else {
+    editor.appendChild(table);
+  }
+  notifyChange();
+}
+
+// ── TABLE TOOLBAR ──
+var currentRow = null;
+var currentTable = null;
+
+function getParentCell(node) {
+  while (node) {
+    if (node.tagName === 'TD' || node.tagName === 'TH') return node;
+    node = node.parentNode;
+  }
+  return null;
+}
+function getParentTable(node) {
+  while (node) {
+    if (node.tagName === 'TABLE') return node;
+    node = node.parentNode;
+  }
+  return null;
+}
+
+editor.addEventListener('click', function(e) {
+  var cell = getParentCell(e.target);
+  if (cell) {
+    currentCell = cell;
+    currentRow = cell.parentNode;
+    currentTable = getParentTable(cell);
+    // Position toolbar
+    var rect = cell.getBoundingClientRect();
+    tableToolbar.style.display = 'flex';
+    tableToolbar.style.top = (rect.bottom + 6) + 'px';
+    tableToolbar.style.left = Math.max(4, rect.left) + 'px';
+  } else {
+    tableToolbar.style.display = 'none';
+    currentCell = null;
+  }
+});
+
+document.addEventListener('click', function(e) {
+  if (!tableToolbar.contains(e.target) && !getParentCell(e.target)) {
+    tableToolbar.style.display = 'none';
+  }
+});
+
+function addRowBelow() {
+  if (!currentTable || !currentRow) return;
+  var newRow = document.createElement('tr');
+  var colCount = currentTable.rows[0].cells.length;
+  for (var i = 0; i < colCount; i++) {
+    var td = document.createElement('td');
+    td.contentEditable = 'true';
+    newRow.appendChild(td);
+  }
+  currentRow.parentNode.insertBefore(newRow, currentRow.nextSibling);
+  notifyChange();
+}
+
+function addRowAbove() {
+  if (!currentTable || !currentRow) return;
+  var newRow = document.createElement('tr');
+  var colCount = currentTable.rows[0].cells.length;
+  for (var i = 0; i < colCount; i++) {
+    var td = document.createElement('td');
+    td.contentEditable = 'true';
+    newRow.appendChild(td);
+  }
+  currentRow.parentNode.insertBefore(newRow, currentRow);
+  notifyChange();
+}
+
+function addColRight() {
+  if (!currentTable || !currentCell) return;
+  var colIdx = currentCell.cellIndex;
+  for (var r = 0; r < currentTable.rows.length; r++) {
+    var row = currentTable.rows[r];
+    var newCell = (r === 0) ? document.createElement('th') : document.createElement('td');
+    newCell.contentEditable = 'true';
+    if (r === 0) newCell.textContent = 'Kolom';
+    if (colIdx + 1 < row.cells.length) {
+      row.insertBefore(newCell, row.cells[colIdx + 1]);
+    } else {
+      row.appendChild(newCell);
+    }
+  }
+  notifyChange();
+}
+
+function addColLeft() {
+  if (!currentTable || !currentCell) return;
+  var colIdx = currentCell.cellIndex;
+  for (var r = 0; r < currentTable.rows.length; r++) {
+    var row = currentTable.rows[r];
+    var newCell = (r === 0) ? document.createElement('th') : document.createElement('td');
+    newCell.contentEditable = 'true';
+    if (r === 0) newCell.textContent = 'Kolom';
+    row.insertBefore(newCell, row.cells[colIdx]);
+  }
+  notifyChange();
+}
+
+function deleteCurrentRow() {
+  if (!currentRow) return;
+  currentRow.parentNode.removeChild(currentRow);
+  tableToolbar.style.display = 'none';
+  currentRow = null;
+  currentCell = null;
+  notifyChange();
+}
+
+function deleteCurrentCol() {
+  if (!currentTable || !currentCell) return;
+  var colIdx = currentCell.cellIndex;
+  for (var r = 0; r < currentTable.rows.length; r++) {
+    var row = currentTable.rows[r];
+    if (colIdx < row.cells.length) {
+      row.removeChild(row.cells[colIdx]);
+    }
+  }
+  tableToolbar.style.display = 'none';
+  currentCell = null;
+  notifyChange();
+}
+
+function deleteTable() {
+  if (!currentTable) return;
+  currentTable.parentNode.removeChild(currentTable);
+  tableToolbar.style.display = 'none';
+  currentTable = null;
+  currentRow = null;
+  currentCell = null;
+  notifyChange();
+}
+
+// ── SET CONTENT (from Kotlin) ──
+function setContent(html) {
+  editor.innerHTML = html || '<p><br></p>';
+  notifyChange();
+}
+
+// ── GET CURRENT SELECTION TEXT ──
+function getSelectedText() {
+  var sel = window.getSelection();
+  return sel ? sel.toString() : '';
+}
+
+// ── CLEAR FORMATTING ──
+function clearFormatting() { exec('removeFormat'); }
+
+// ── Keep focus ──
+editor.focus();
+</script>
+</body>
+</html>
+""".trimIndent()
+}
+
+// ── MAIN DOCUMENT EDITOR VIEWPORT COMPOSABLE ──────────────────────────────────
+@SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun DocumentEditorViewport(
     title: String,
@@ -208,300 +673,52 @@ fun DocumentEditorViewport(
 ) {
     val context = LocalContext.current
 
-    // Reference to native EditText
-    var editTextRef by remember { mutableStateOf<DocumentRichEditText?>(null) }
-    val undoRedoManager = remember { RichTextUndoRedoManager() }
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+    var wordCount by remember { mutableIntStateOf(0) }
+    var charCount by remember { mutableIntStateOf(0) }
+    var lastLoadedContent by remember { mutableStateOf("") }
+    var isWebViewReady by remember { mutableStateOf(false) }
 
-    // Text metrics
-    var textSnapshot by remember { mutableStateOf("") }
-    val wordCount = remember(textSnapshot) {
-        textSnapshot.trim().split(Regex("""\s+""")).filter { it.isNotBlank() }.size
-    }
-    val charCount = textSnapshot.length
-
-    // Formatting Toolbar States
-    var selectedParagraphStyle by remember { mutableStateOf(DocParagraphStyle.NORMAL) }
-    var selectedFontFamily by remember { mutableStateOf(DocFontFamily.DEFAULT) }
+    // Toolbar dropdowns
+    var selectedStyle by remember { mutableStateOf(DocParagraphStyle.NORMAL) }
+    var selectedFont by remember { mutableStateOf(DocFontFamily.DEFAULT) }
     var fontSizeSp by remember { mutableIntStateOf(15) }
-    var isSelectionBold by remember { mutableStateOf(false) }
-    var isSelectionItalic by remember { mutableStateOf(false) }
-    var isSelectionUnderline by remember { mutableStateOf(false) }
-    var isSelectionStrike by remember { mutableStateOf(false) }
-
-    // Dropdown visibility states
     var showStyleDropdown by remember { mutableStateOf(false) }
     var showFontDropdown by remember { mutableStateOf(false) }
     var showColorDropdown by remember { mutableStateOf(false) }
     var showHighlightDropdown by remember { mutableStateOf(false) }
+    var showTableDialog by remember { mutableStateOf(false) }
 
     // Dialogs
     var showLinkDialog by remember { mutableStateOf(false) }
-    var linkDialogInitialText by remember { mutableStateOf("") }
     var showMathDialog by remember { mutableStateOf(false) }
 
-    // Internal sync flags
-    var isInternalUpdate by remember { mutableStateOf(false) }
-    var lastExportedHtml by remember { mutableStateOf("") }
-
-    // Selection target helper
-    fun getTargetRange(editText: DocumentRichEditText): Pair<Int, Int>? {
-        val start = editText.selectionStart
-        val end = editText.selectionEnd
-        if (start < 0) return null
-        if (start != end) {
-            return Pair(minOf(start, end), maxOf(start, end))
-        }
-        val text = editText.text ?: return null
-        if (text.isEmpty()) return null
-        var wStart = (start - 1).coerceAtLeast(0)
-        while (wStart >= 0 && !text[wStart].isWhitespace()) {
-            wStart--
-        }
-        wStart++
-        var wEnd = start.coerceAtMost(text.length)
-        while (wEnd < text.length && !text[wEnd].isWhitespace()) {
-            wEnd++
-        }
-        return if (wStart < wEnd) Pair(wStart, wEnd) else null
+    // JS executor helper
+    fun js(script: String) {
+        webViewRef?.evaluateJavascript(script, null)
     }
 
-    // Line helper
-    fun getLineRange(text: CharSequence, cursor: Int): Pair<Int, Int> {
-        if (text.isEmpty()) return Pair(0, 0)
-        val c = cursor.coerceIn(0, text.length)
-        val lastNewLine = text.lastIndexOf('\n', (c - 1).coerceAtLeast(0))
-        val lineStart = if (lastNewLine == -1) 0 else lastNewLine + 1
-        val nextNewLine = text.indexOf('\n', c)
-        val lineEnd = if (nextNewLine == -1) text.length else nextNewLine
-        return Pair(lineStart, lineEnd)
-    }
-
-    // Sync HTML back to parent
-    fun notifyContentChanged() {
-        val et = editTextRef ?: return
-        val html = RichDocumentConverter.toHtml(et.text)
-        lastExportedHtml = html
-        undoRedoManager.pushState(html)
-        onContentChange(html)
-        textSnapshot = et.text.toString()
-    }
-
-    // ── FORMATTING OPERATIONS ───────────────────────────────────────────────
-    fun toggleBold() {
-        val et = editTextRef ?: return
-        val (start, end) = getTargetRange(et) ?: return
-        val editable = et.text ?: return
-        val spans = editable.getSpans(start, end, StyleSpan::class.java)
-        var hasBold = false
-        for (span in spans) {
-            val sStart = editable.getSpanStart(span)
-            val sEnd = editable.getSpanEnd(span)
-            if (sStart <= start && sEnd >= end && (span.style == Typeface.BOLD || span.style == Typeface.BOLD_ITALIC)) {
-                hasBold = true
-                editable.removeSpan(span)
-                if (span.style == Typeface.BOLD_ITALIC) {
-                    editable.setSpan(StyleSpan(Typeface.ITALIC), sStart, sEnd, Spanned.SPAN_EXCLUSIVE_INCLUSIVE)
-                }
-            }
-        }
-        if (!hasBold) {
-            editable.setSpan(StyleSpan(Typeface.BOLD), start, end, Spanned.SPAN_EXCLUSIVE_INCLUSIVE)
-        }
-        isSelectionBold = !hasBold
-        notifyContentChanged()
-    }
-
-    fun toggleItalic() {
-        val et = editTextRef ?: return
-        val (start, end) = getTargetRange(et) ?: return
-        val editable = et.text ?: return
-        val spans = editable.getSpans(start, end, StyleSpan::class.java)
-        var hasItalic = false
-        for (span in spans) {
-            val sStart = editable.getSpanStart(span)
-            val sEnd = editable.getSpanEnd(span)
-            if (sStart <= start && sEnd >= end && (span.style == Typeface.ITALIC || span.style == Typeface.BOLD_ITALIC)) {
-                hasItalic = true
-                editable.removeSpan(span)
-                if (span.style == Typeface.BOLD_ITALIC) {
-                    editable.setSpan(StyleSpan(Typeface.BOLD), sStart, sEnd, Spanned.SPAN_EXCLUSIVE_INCLUSIVE)
-                }
-            }
-        }
-        if (!hasItalic) {
-            editable.setSpan(StyleSpan(Typeface.ITALIC), start, end, Spanned.SPAN_EXCLUSIVE_INCLUSIVE)
-        }
-        isSelectionItalic = !hasItalic
-        notifyContentChanged()
-    }
-
-    fun toggleUnderline() {
-        val et = editTextRef ?: return
-        val (start, end) = getTargetRange(et) ?: return
-        val editable = et.text ?: return
-        val spans = editable.getSpans(start, end, UnderlineSpan::class.java)
-        var hasUnderline = false
-        for (span in spans) {
-            val sStart = editable.getSpanStart(span)
-            val sEnd = editable.getSpanEnd(span)
-            if (sStart <= start && sEnd >= end) {
-                hasUnderline = true
-                editable.removeSpan(span)
-            }
-        }
-        if (!hasUnderline) {
-            editable.setSpan(UnderlineSpan(), start, end, Spanned.SPAN_EXCLUSIVE_INCLUSIVE)
-        }
-        isSelectionUnderline = !hasUnderline
-        notifyContentChanged()
-    }
-
-    fun toggleStrikethrough() {
-        val et = editTextRef ?: return
-        val (start, end) = getTargetRange(et) ?: return
-        val editable = et.text ?: return
-        val spans = editable.getSpans(start, end, StrikethroughSpan::class.java)
-        var hasStrike = false
-        for (span in spans) {
-            val sStart = editable.getSpanStart(span)
-            val sEnd = editable.getSpanEnd(span)
-            if (sStart <= start && sEnd >= end) {
-                hasStrike = true
-                editable.removeSpan(span)
-            }
-        }
-        if (!hasStrike) {
-            editable.setSpan(StrikethroughSpan(), start, end, Spanned.SPAN_EXCLUSIVE_INCLUSIVE)
-        }
-        isSelectionStrike = !hasStrike
-        notifyContentChanged()
-    }
-
-    fun applyTextColor(colorHex: String) {
-        val et = editTextRef ?: return
-        val (start, end) = getTargetRange(et) ?: return
-        val editable = et.text ?: return
-        val colorInt = try { android.graphics.Color.parseColor(colorHex) } catch (_: Exception) { return }
-        val existing = editable.getSpans(start, end, ForegroundColorSpan::class.java)
-        for (s in existing) editable.removeSpan(s)
-        editable.setSpan(ForegroundColorSpan(colorInt), start, end, Spanned.SPAN_EXCLUSIVE_INCLUSIVE)
-        notifyContentChanged()
-    }
-
-    fun applyHighlightColor(colorHex: String?) {
-        val et = editTextRef ?: return
-        val (start, end) = getTargetRange(et) ?: return
-        val editable = et.text ?: return
-        val existing = editable.getSpans(start, end, BackgroundColorSpan::class.java)
-        for (s in existing) editable.removeSpan(s)
-        if (!colorHex.isNullOrEmpty()) {
-            val colorInt = try { android.graphics.Color.parseColor(colorHex) } catch (_: Exception) { return }
-            editable.setSpan(BackgroundColorSpan(colorInt), start, end, Spanned.SPAN_EXCLUSIVE_INCLUSIVE)
-        }
-        notifyContentChanged()
-    }
-
-    fun applyFontSize(sizeSp: Int) {
-        val et = editTextRef ?: return
-        val (start, end) = getTargetRange(et) ?: return
-        val editable = et.text ?: return
-        val existing = editable.getSpans(start, end, AbsoluteSizeSpan::class.java)
-        for (s in existing) editable.removeSpan(s)
-        editable.setSpan(AbsoluteSizeSpan(sizeSp, true), start, end, Spanned.SPAN_EXCLUSIVE_INCLUSIVE)
-        notifyContentChanged()
-    }
-
-    fun applyFontFamily(typefaceName: String) {
-        val et = editTextRef ?: return
-        val (start, end) = getTargetRange(et) ?: return
-        val editable = et.text ?: return
-        val existing = editable.getSpans(start, end, TypefaceSpan::class.java)
-        for (s in existing) editable.removeSpan(s)
-        editable.setSpan(TypefaceSpan(typefaceName), start, end, Spanned.SPAN_EXCLUSIVE_INCLUSIVE)
-        notifyContentChanged()
-    }
-
-    fun applyParagraphStyle(style: DocParagraphStyle) {
-        val et = editTextRef ?: return
-        val editable = et.text ?: return
-        val cursor = et.selectionStart.coerceAtLeast(0)
-        val (lineStart, lineEnd) = getLineRange(editable, cursor)
-        if (lineStart >= lineEnd) return
-
-        val sizeSpans = editable.getSpans(lineStart, lineEnd, AbsoluteSizeSpan::class.java)
-        for (s in sizeSpans) editable.removeSpan(s)
-        val styleSpans = editable.getSpans(lineStart, lineEnd, StyleSpan::class.java)
-        for (s in styleSpans) editable.removeSpan(s)
-
-        editable.setSpan(AbsoluteSizeSpan(style.sizeSp, true), lineStart, lineEnd, Spanned.SPAN_EXCLUSIVE_INCLUSIVE)
-        if (style.isBold) {
-            editable.setSpan(StyleSpan(Typeface.BOLD), lineStart, lineEnd, Spanned.SPAN_EXCLUSIVE_INCLUSIVE)
-        }
-        notifyContentChanged()
-    }
-
-    fun applyLink(linkText: String, url: String) {
-        val et = editTextRef ?: return
-        val editable = et.text ?: return
-        val start = minOf(et.selectionStart, et.selectionEnd).coerceAtLeast(0)
-        val end = maxOf(et.selectionStart, et.selectionEnd).coerceAtLeast(0)
-
-        if (start != end) {
-            val existing = editable.getSpans(start, end, URLSpan::class.java)
-            for (s in existing) editable.removeSpan(s)
-            editable.setSpan(URLSpan(url), start, end, Spanned.SPAN_EXCLUSIVE_INCLUSIVE)
-            editable.setSpan(ForegroundColorSpan(android.graphics.Color.parseColor("#2563EB")), start, end, Spanned.SPAN_EXCLUSIVE_INCLUSIVE)
-            editable.setSpan(UnderlineSpan(), start, end, Spanned.SPAN_EXCLUSIVE_INCLUSIVE)
-        } else {
-            editable.insert(start, linkText)
-            val newEnd = start + linkText.length
-            editable.setSpan(URLSpan(url), start, newEnd, Spanned.SPAN_EXCLUSIVE_INCLUSIVE)
-            editable.setSpan(ForegroundColorSpan(android.graphics.Color.parseColor("#2563EB")), start, newEnd, Spanned.SPAN_EXCLUSIVE_INCLUSIVE)
-            editable.setSpan(UnderlineSpan(), start, newEnd, Spanned.SPAN_EXCLUSIVE_INCLUSIVE)
-            et.setSelection(newEnd)
-        }
-        notifyContentChanged()
-    }
-
-    fun insertMathEquation(equation: String) {
-        val et = editTextRef ?: return
-        val editable = et.text ?: return
-        val cursor = et.selectionStart.coerceAtLeast(0)
-        val formatted = " $equation "
-        editable.insert(cursor, formatted)
-        val endPos = cursor + formatted.length
-        editable.setSpan(TypefaceSpan("monospace"), cursor, endPos, Spanned.SPAN_EXCLUSIVE_INCLUSIVE)
-        editable.setSpan(ForegroundColorSpan(android.graphics.Color.parseColor("#1D4ED8")), cursor, endPos, Spanned.SPAN_EXCLUSIVE_INCLUSIVE)
-        editable.setSpan(BackgroundColorSpan(android.graphics.Color.parseColor("#EFF6FF")), cursor, endPos, Spanned.SPAN_EXCLUSIVE_INCLUSIVE)
-        et.setSelection(endPos)
-        notifyContentChanged()
-    }
-
-    fun prefixCurrentLine(prefix: String) {
-        val et = editTextRef ?: return
-        val editable = et.text ?: return
-        val cursor = et.selectionStart.coerceAtLeast(0)
-        val (lineStart, _) = getLineRange(editable, cursor)
-        editable.insert(lineStart, prefix)
-        et.setSelection((cursor + prefix.length).coerceAtMost(editable.length))
-        notifyContentChanged()
-    }
-
-    // Image Picker
+    // Image picker – encode to base64 data URI so WebView can render it natively
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
-    ) { uri ->
+    ) { uri: Uri? ->
         if (uri != null) {
-            val et = editTextRef ?: return@rememberLauncherForActivityResult
-            val cursor = et.selectionStart.coerceAtLeast(0)
-            val imgText = "\n[📷 Gambar: $uri]\n"
-            et.text?.insert(cursor, imgText)
-            val endPos = cursor + imgText.length
-            et.text?.setSpan(StyleSpan(Typeface.ITALIC), cursor, endPos, Spanned.SPAN_EXCLUSIVE_INCLUSIVE)
-            et.text?.setSpan(ForegroundColorSpan(android.graphics.Color.parseColor("#475569")), cursor, endPos, Spanned.SPAN_EXCLUSIVE_INCLUSIVE)
-            et.setSelection(endPos)
-            notifyContentChanged()
-            Toast.makeText(context, "Gambar berhasil disisipkan", Toast.LENGTH_SHORT).show()
+            try {
+                val inputStream = context.contentResolver.openInputStream(uri)
+                val bytes = inputStream?.readBytes()
+                inputStream?.close()
+                if (bytes != null) {
+                    val mimeType = context.contentResolver.getType(uri) ?: "image/jpeg"
+                    val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                    val dataUri = "data:$mimeType;base64,$b64"
+                    // Escape for JS string
+                    js("insertImage('$dataUri');")
+                    Toast.makeText(context, "Gambar berhasil disisipkan", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                Toast.makeText(context, "Gagal memuat gambar: ${e.message}", Toast.LENGTH_SHORT).show()
+                Log.e("DocEditor", "Image load failed", e)
+            }
         }
     }
 
@@ -510,7 +727,7 @@ fun DocumentEditorViewport(
             .fillMaxSize()
             .background(if (isDarkTheme) Color(0xFF13141C) else Color(0xFFF1F5F9))
     ) {
-        // ── 1. GOOGLE DOCS NATIVE WYSIWYG FORMATTING RIBBON ──────────────────
+        // ── TOOLBAR ────────────────────────────────────────────────────────
         Surface(
             modifier = Modifier.fillMaxWidth(),
             color = if (isDarkTheme) Color(0xFF1E202B) else Color(0xFFEDF2FA),
@@ -523,164 +740,83 @@ fun DocumentEditorViewport(
                     .horizontalScroll(rememberScrollState())
                     .padding(horizontal = 10.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                horizontalArrangement = Arrangement.spacedBy(3.dp)
             ) {
-                // ── Group A: Undo / Redo / Print ──
-                ToolbarIconButton(
-                    icon = Icons.AutoMirrored.Filled.Undo,
-                    tooltip = "Undo",
-                    enabled = undoRedoManager.canUndo(),
-                    onClick = {
-                        val prevHtml = undoRedoManager.undo()
-                        if (prevHtml != null) {
-                            editTextRef?.let { et ->
-                                isInternalUpdate = true
-                                val spanned = RichDocumentConverter.fromHtml(prevHtml)
-                                et.setText(spanned)
-                                et.setSelection(spanned.length)
-                                lastExportedHtml = prevHtml
-                                onContentChange(prevHtml)
-                                textSnapshot = et.text.toString()
-                                isInternalUpdate = false
-                            }
-                        }
-                    }
-                )
-                ToolbarIconButton(
-                    icon = Icons.AutoMirrored.Filled.Redo,
-                    tooltip = "Redo",
-                    enabled = undoRedoManager.canRedo(),
-                    onClick = {
-                        val nextHtml = undoRedoManager.redo()
-                        if (nextHtml != null) {
-                            editTextRef?.let { et ->
-                                isInternalUpdate = true
-                                val spanned = RichDocumentConverter.fromHtml(nextHtml)
-                                et.setText(spanned)
-                                et.setSelection(spanned.length)
-                                lastExportedHtml = nextHtml
-                                onContentChange(nextHtml)
-                                textSnapshot = et.text.toString()
-                                isInternalUpdate = false
-                            }
-                        }
-                    }
-                )
-                ToolbarIconButton(
-                    icon = Icons.Filled.Print,
-                    tooltip = "Print / Export PDF",
-                    onClick = onExportPdf
-                )
+                // Undo / Redo / Print
+                DocToolbarIcon(Icons.AutoMirrored.Filled.Undo, "Undo") { js("undo();") }
+                DocToolbarIcon(Icons.AutoMirrored.Filled.Redo, "Redo") { js("redo();") }
+                DocToolbarIcon(Icons.Filled.Print, "Print/Export PDF", onClick = onExportPdf)
 
-                ToolbarDivider()
+                DocToolbarDiv()
 
-                // ── Group B: Paragraph Style Dropdown ──
+                // Paragraph Style
                 Box {
                     Surface(
                         shape = RoundedCornerShape(6.dp),
                         color = Color.Transparent,
-                        modifier = Modifier
-                            .height(32.dp)
-                            .clickable { showStyleDropdown = true }
-                            .padding(horizontal = 6.dp)
+                        modifier = Modifier.height(32.dp).clickable { showStyleDropdown = true }.padding(horizontal = 6.dp)
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Text(
-                                text = selectedParagraphStyle.label,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = LernspaceTextPrimary
-                            )
-                            Icon(Icons.Filled.ArrowDropDown, null, modifier = Modifier.size(16.dp), tint = LernspaceTextSecondary)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text(selectedStyle.label, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = LernspaceTextPrimary)
+                            Icon(Icons.Filled.ArrowDropDown, null, Modifier.size(16.dp), tint = LernspaceTextSecondary)
                         }
                     }
-
-                    DropdownMenu(
-                        expanded = showStyleDropdown,
-                        onDismissRequest = { showStyleDropdown = false }
-                    ) {
+                    DropdownMenu(expanded = showStyleDropdown, onDismissRequest = { showStyleDropdown = false }) {
                         DocParagraphStyle.entries.forEach { style ->
                             DropdownMenuItem(
                                 text = {
                                     Text(
-                                        text = style.label,
-                                        fontWeight = if (style.isBold) FontWeight.Bold else FontWeight.Normal,
-                                        fontSize = if (style == DocParagraphStyle.TITLE) 15.sp else 13.sp
+                                        style.label,
+                                        fontWeight = if (style == DocParagraphStyle.TITLE || style == DocParagraphStyle.HEADING_1) FontWeight.Bold else FontWeight.Normal,
+                                        fontSize = 13.sp
                                     )
                                 },
                                 onClick = {
-                                    selectedParagraphStyle = style
+                                    selectedStyle = style
                                     showStyleDropdown = false
-                                    applyParagraphStyle(style)
+                                    js("formatBlock('<${style.htmlTag}>');")
                                 }
                             )
                         }
                     }
                 }
 
-                ToolbarDivider()
+                DocToolbarDiv()
 
-                // ── Group C: Font Family Dropdown ──
+                // Font Family
                 Box {
                     Surface(
                         shape = RoundedCornerShape(6.dp),
                         color = Color.Transparent,
-                        modifier = Modifier
-                            .height(32.dp)
-                            .clickable { showFontDropdown = true }
-                            .padding(horizontal = 6.dp)
+                        modifier = Modifier.height(32.dp).clickable { showFontDropdown = true }.padding(horizontal = 6.dp)
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Text(
-                                text = selectedFontFamily.label.substringBefore(" /"),
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = LernspaceTextPrimary
-                            )
-                            Icon(Icons.Filled.ArrowDropDown, null, modifier = Modifier.size(16.dp), tint = LernspaceTextSecondary)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text(selectedFont.label.substringBefore(" /"), fontSize = 12.sp, fontWeight = FontWeight.Medium, color = LernspaceTextPrimary)
+                            Icon(Icons.Filled.ArrowDropDown, null, Modifier.size(16.dp), tint = LernspaceTextSecondary)
                         }
                     }
-
-                    DropdownMenu(
-                        expanded = showFontDropdown,
-                        onDismissRequest = { showFontDropdown = false }
-                    ) {
+                    DropdownMenu(expanded = showFontDropdown, onDismissRequest = { showFontDropdown = false }) {
                         DocFontFamily.entries.forEach { font ->
                             DropdownMenuItem(
                                 text = { Text(font.label, fontSize = 13.sp) },
                                 onClick = {
-                                    selectedFontFamily = font
+                                    selectedFont = font
                                     showFontDropdown = false
-                                    applyFontFamily(font.typefaceName)
+                                    val safeCss = font.cssValue.replace("'", "\\'")
+                                    js("setFontFamily('$safeCss');")
                                 }
                             )
                         }
                     }
                 }
 
-                ToolbarDivider()
+                DocToolbarDiv()
 
-                // ── Group D: Font Size Stepper [-] 15 [+] ──
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    ToolbarIconButton(
-                        icon = Icons.Filled.Remove,
-                        tooltip = "Perkecil ukuran font",
-                        onClick = {
-                            if (fontSizeSp > 10) {
-                                fontSizeSp -= 1
-                                applyFontSize(fontSizeSp)
-                            }
-                        }
-                    )
+                // Font Size Stepper
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    DocToolbarIcon(Icons.Filled.Remove, "Kecilkan") {
+                        if (fontSizeSp > 10) { fontSizeSp--; js("setFontSize($fontSizeSp);") }
+                    }
                     Surface(
                         shape = RoundedCornerShape(4.dp),
                         color = if (isDarkTheme) Color(0xFF2A2D3A) else Color.White,
@@ -688,151 +824,61 @@ fun DocumentEditorViewport(
                         modifier = Modifier.size(width = 32.dp, height = 26.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                text = "$fontSizeSp",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = LernspaceTextPrimary
-                            )
+                            Text("$fontSizeSp", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = LernspaceTextPrimary)
                         }
                     }
-                    ToolbarIconButton(
-                        icon = Icons.Filled.Add,
-                        tooltip = "Perbesar ukuran font",
-                        onClick = {
-                            if (fontSizeSp < 42) {
-                                fontSizeSp += 1
-                                applyFontSize(fontSizeSp)
-                            }
-                        }
-                    )
+                    DocToolbarIcon(Icons.Filled.Add, "Besarkan") {
+                        if (fontSizeSp < 48) { fontSizeSp++; js("setFontSize($fontSizeSp);") }
+                    }
                 }
 
-                ToolbarDivider()
+                DocToolbarDiv()
 
-                // ── Group E: WYSIWYG Inline Styles (Bold, Italic, Underline, Strikethrough) ──
-                ToolbarTextButton(
-                    label = "B",
-                    fontWeight = FontWeight.Bold,
-                    isActive = isSelectionBold,
-                    tooltip = "Tebal (Bold)",
-                    onClick = { toggleBold() }
-                )
-                ToolbarTextButton(
-                    label = "I",
-                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
-                    isActive = isSelectionItalic,
-                    tooltip = "Miring (Italic)",
-                    onClick = { toggleItalic() }
-                )
-                ToolbarTextButton(
-                    label = "U",
-                    isActive = isSelectionUnderline,
-                    tooltip = "Garis Bawah (Underline)",
-                    onClick = { toggleUnderline() }
-                )
-                ToolbarTextButton(
-                    label = "S",
-                    isActive = isSelectionStrike,
-                    tooltip = "Coret (Strikethrough)",
-                    onClick = { toggleStrikethrough() }
-                )
+                // Bold / Italic / Underline / Strikethrough
+                DocToolbarTextBtn("B", FontWeight.Bold, tooltip = "Tebal") { js("toggleBold();") }
+                DocToolbarTextBtn("I", tooltip = "Miring") { js("toggleItalic();") }
+                DocToolbarTextBtn("U", tooltip = "Garis Bawah") { js("toggleUnderline();") }
+                DocToolbarTextBtn("S", tooltip = "Coret") { js("toggleStrikethrough();") }
 
-                // Text Color Palette Picker
+                // Text Color
                 Box {
-                    IconButton(
-                        onClick = { showColorDropdown = true },
-                        modifier = Modifier.size(30.dp)
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center
-                        ) {
+                    IconButton(onClick = { showColorDropdown = true }, modifier = Modifier.size(30.dp)) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                             Text("A", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = LernspaceTextPrimary)
-                            Box(
-                                modifier = Modifier
-                                    .size(width = 14.dp, height = 3.dp)
-                                    .background(Color(0xFF2563EB))
-                            )
+                            Box(Modifier.size(width = 14.dp, height = 3.dp).background(Color(0xFF2563EB)))
                         }
                     }
-
-                    DropdownMenu(
-                        expanded = showColorDropdown,
-                        onDismissRequest = { showColorDropdown = false }
-                    ) {
-                        val colors = listOf(
-                            "Hitam" to "#1E293B",
-                            "Biru" to "#2563EB",
-                            "Merah" to "#DC2626",
-                            "Hijau" to "#059669",
-                            "Ungu" to "#7C3AED",
-                            "Oranye" to "#EA580C"
-                        )
-                        colors.forEach { (name, hex) ->
+                    DropdownMenu(expanded = showColorDropdown, onDismissRequest = { showColorDropdown = false }) {
+                        listOf("Hitam" to "#1E293B", "Biru" to "#2563EB", "Merah" to "#DC2626",
+                            "Hijau" to "#059669", "Ungu" to "#7C3AED", "Oranye" to "#EA580C").forEach { (name, hex) ->
                             DropdownMenuItem(
                                 text = {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(14.dp)
-                                                .clip(CircleShape)
-                                                .background(Color(android.graphics.Color.parseColor(hex)))
-                                        )
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Box(Modifier.size(14.dp).clip(CircleShape).background(Color(android.graphics.Color.parseColor(hex))))
                                         Text(name, fontSize = 12.sp)
                                     }
                                 },
-                                onClick = {
-                                    applyTextColor(hex)
-                                    showColorDropdown = false
-                                }
+                                onClick = { js("setTextColor('$hex');"); showColorDropdown = false }
                             )
                         }
                     }
                 }
 
-                // Highlighter Marker Picker
+                // Highlighter
                 Box {
-                    ToolbarIconButton(
-                        icon = Icons.Filled.BorderColor,
-                        tooltip = "Warna Sorotan (Highlighter)",
-                        onClick = { showHighlightDropdown = true }
-                    )
-
-                    DropdownMenu(
-                        expanded = showHighlightDropdown,
-                        onDismissRequest = { showHighlightDropdown = false }
-                    ) {
-                        val highlights = listOf(
-                            "Kuning" to "#FEF08A",
-                            "Hijau Muda" to "#BBF7D0",
-                            "Biru Muda" to "#BFDBFE",
-                            "Pink Muda" to "#FBCFE8",
-                            "Hapus Sorotan" to ""
-                        )
-                        highlights.forEach { (name, hex) ->
+                    DocToolbarIcon(Icons.Filled.BorderColor, "Sorotan") { showHighlightDropdown = true }
+                    DropdownMenu(expanded = showHighlightDropdown, onDismissRequest = { showHighlightDropdown = false }) {
+                        listOf("Kuning" to "#FEF08A", "Hijau Muda" to "#BBF7D0",
+                            "Biru Muda" to "#BFDBFE", "Pink Muda" to "#FBCFE8", "Hapus Sorotan" to "").forEach { (name, hex) ->
                             DropdownMenuItem(
                                 text = {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        if (hex.isNotEmpty()) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(14.dp)
-                                                    .clip(RoundedCornerShape(2.dp))
-                                                    .background(Color(android.graphics.Color.parseColor(hex)))
-                                            )
-                                        }
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        if (hex.isNotEmpty()) Box(Modifier.size(14.dp).clip(RoundedCornerShape(2.dp)).background(Color(android.graphics.Color.parseColor(hex))))
                                         Text(name, fontSize = 12.sp)
                                     }
                                 },
                                 onClick = {
-                                    applyHighlightColor(hex.ifEmpty { null })
+                                    if (hex.isNotEmpty()) js("setHighlight('$hex');") else js("setHighlight(false);")
                                     showHighlightDropdown = false
                                 }
                             )
@@ -840,106 +886,53 @@ fun DocumentEditorViewport(
                     }
                 }
 
-                ToolbarDivider()
+                DocToolbarDiv()
 
-                // ── Group F: Insert Tools (Link, Visual Math Keyboard, Image, Table, Divider) ──
-                ToolbarIconButton(
-                    icon = Icons.Filled.Link,
-                    tooltip = "Sisipkan Tautan (Link)",
-                    onClick = {
-                        val et = editTextRef
-                        val sStart = et?.selectionStart ?: 0
-                        val sEnd = et?.selectionEnd ?: 0
-                        linkDialogInitialText = if (sStart != sEnd && et?.text != null) {
-                            val min = minOf(sStart, sEnd)
-                            val max = maxOf(sStart, sEnd)
-                            et.text.subSequence(min, max).toString()
-                        } else ""
-                        showLinkDialog = true
-                    }
-                )
-                ToolbarIconButton(
-                    icon = Icons.Filled.Functions,
-                    tooltip = "Keyboard Rumus Matematika (Visual)",
-                    onClick = { showMathDialog = true }
-                )
-                ToolbarIconButton(
-                    icon = Icons.Filled.Image,
-                    tooltip = "Sisipkan Gambar",
-                    onClick = { imagePickerLauncher.launch("image/*") }
-                )
-                ToolbarIconButton(
-                    icon = Icons.Filled.HorizontalRule,
-                    tooltip = "Garis Pembatas",
-                    onClick = { prefixCurrentLine("\n────────────────────────────────────────\n") }
-                )
-                ToolbarIconButton(
-                    icon = Icons.Filled.TableChart,
-                    tooltip = "Sisipkan Tabel",
-                    onClick = {
-                        val table = "\n┌──────────────┬──────────────┬──────────────┐\n│ Kolom 1      │ Kolom 2      │ Kolom 3      │\n├──────────────┼──────────────┼──────────────┤\n│ Data 1       │ Data 2       │ Data 3       │\n│ Data 4       │ Data 5       │ Data 6       │\n└──────────────┴──────────────┴──────────────┘\n"
-                        prefixCurrentLine(table)
-                    }
-                )
+                // Alignment
+                DocToolbarIcon(Icons.Filled.FormatAlignLeft, "Rata Kiri") { js("alignLeft();") }
+                DocToolbarIcon(Icons.Filled.FormatAlignCenter, "Rata Tengah") { js("alignCenter();") }
+                DocToolbarIcon(Icons.Filled.FormatAlignRight, "Rata Kanan") { js("alignRight();") }
+                DocToolbarIcon(Icons.Filled.FormatAlignJustify, "Rata Penuh") { js("alignJustify();") }
 
-                ToolbarDivider()
+                DocToolbarDiv()
 
-                // ── Group G: Lists & Callouts (Bullets, Numbers, Checklist, Quotes) ──
-                ToolbarIconButton(
-                    icon = Icons.AutoMirrored.Filled.FormatListBulleted,
-                    tooltip = "Daftar Poin (Bulleted List)",
-                    onClick = { prefixCurrentLine("• ") }
-                )
-                ToolbarIconButton(
-                    icon = Icons.Filled.FormatListNumbered,
-                    tooltip = "Daftar Angka (Numbered List)",
-                    onClick = { prefixCurrentLine("1. ") }
-                )
-                ToolbarIconButton(
-                    icon = Icons.Filled.Checklist,
-                    tooltip = "Daftar Checklist / To-Do",
-                    onClick = { prefixCurrentLine("☐ ") }
-                )
-                ToolbarIconButton(
-                    icon = Icons.Filled.FormatQuote,
-                    tooltip = "Kutipan / Callout Box",
-                    onClick = { prefixCurrentLine("▌ ") }
-                )
+                // Lists
+                DocToolbarIcon(Icons.AutoMirrored.Filled.FormatListBulleted, "Daftar Poin") { js("insertBulletList();") }
+                DocToolbarIcon(Icons.Filled.FormatListNumbered, "Daftar Angka") { js("insertNumberedList();") }
+                DocToolbarIcon(Icons.Filled.Checklist, "Checklist") { js("insertChecklist();") }
+                DocToolbarIcon(Icons.Filled.FormatQuote, "Kutipan") { js("insertBlockquote();") }
 
-                ToolbarDivider()
+                DocToolbarDiv()
 
-                // ── Group H: Mimo AI Direct Actions ──
+                // Insert: Link, Math, Image, Table, HR
+                DocToolbarIcon(Icons.Filled.Link, "Sisipkan Tautan") { showLinkDialog = true }
+                DocToolbarIcon(Icons.Filled.Functions, "Rumus Matematika") { showMathDialog = true }
+                DocToolbarIcon(Icons.Filled.Image, "Sisipkan Gambar") { imagePickerLauncher.launch("image/*") }
+                DocToolbarIcon(Icons.Filled.TableChart, "Sisipkan Tabel") { showTableDialog = true }
+                DocToolbarIcon(Icons.Filled.HorizontalRule, "Garis Pembatas") { js("insertHorizontalRule();") }
+                DocToolbarIcon(Icons.Filled.FormatClear, "Hapus Format") { js("clearFormatting();") }
+
+                DocToolbarDiv()
+
+                // Mimo AI
                 Surface(
                     shape = RoundedCornerShape(14.dp),
                     color = Color(0xFF8B5CF6).copy(alpha = 0.12f),
                     border = BorderStroke(1.dp, Color(0xFF8B5CF6).copy(alpha = 0.35f)),
-                    modifier = Modifier
-                        .height(30.dp)
-                        .clickable(onClick = onTriggerCheatSheet)
+                    modifier = Modifier.height(30.dp).clickable(onClick = onTriggerCheatSheet)
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
+                    Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text("⚡", fontSize = 11.sp)
                         Text("Cheat Sheet", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF8B5CF6))
                     }
                 }
-
                 Surface(
                     shape = RoundedCornerShape(14.dp),
                     color = AccentBlue.copy(alpha = 0.10f),
                     border = BorderStroke(1.dp, AccentBlue.copy(alpha = 0.3f)),
-                    modifier = Modifier
-                        .height(30.dp)
-                        .clickable(onClick = onTriggerSummary)
+                    modifier = Modifier.height(30.dp).clickable(onClick = onTriggerSummary)
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
+                    Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text("📝", fontSize = 11.sp)
                         Text("Rangkum", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = AccentBlue)
                     }
@@ -947,13 +940,13 @@ fun DocumentEditorViewport(
             }
         }
 
-        // ── 2. DOCUMENT PAGE VIEWPORT (CENTERED A4-STYLE SHEET) ──────────────
+        // ── DOCUMENT PAGE (CENTERED A4 WHITE SHEET) ────────────────────────
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .weight(1f)
-                .verticalScroll(rememberScrollState())
-                .padding(vertical = 24.dp, horizontal = 16.dp),
+                .background(if (isDarkTheme) Color(0xFF13141C) else Color(0xFFF1F5F9))
+                .padding(vertical = 20.dp, horizontal = 16.dp),
             contentAlignment = Alignment.TopCenter
         ) {
             Surface(
@@ -961,23 +954,16 @@ fun DocumentEditorViewport(
                     .widthIn(max = 840.dp)
                     .fillMaxWidth()
                     .defaultMinSize(minHeight = 1100.dp)
-                    .shadow(elevation = 3.dp, shape = RoundedCornerShape(4.dp))
-                    .clickable {
-                        // Tapping sheet focuses editor at end
-                        editTextRef?.let { et ->
-                            et.requestFocus()
-                            et.setSelection(et.text?.length ?: 0)
-                        }
-                    },
+                    .shadow(elevation = 3.dp, shape = RoundedCornerShape(4.dp)),
                 shape = RoundedCornerShape(4.dp),
                 color = if (isDarkTheme) Color(0xFF1E202B) else Color.White,
                 border = BorderStroke(1.dp, LernspaceBorder)
             ) {
                 Column(
-                    modifier = Modifier.padding(horizontal = 56.dp, vertical = 48.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                    modifier = Modifier.padding(horizontal = 48.dp, vertical = 44.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    // Document Header Meta
+                    // Header meta row
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -989,182 +975,228 @@ fun DocumentEditorViewport(
                             border = BorderStroke(1.dp, AccentBlue.copy(alpha = 0.25f))
                         ) {
                             Text(
-                                text = "📄 $subject · Dokumen Teks",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = AccentBlue,
+                                "📄 $subject · Dokumen Teks",
+                                fontSize = 11.sp, fontWeight = FontWeight.Bold, color = AccentBlue,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                             )
                         }
-
-                        // Word count & sync chip
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Text(
-                                text = "$wordCount kata • $charCount karakter",
-                                fontSize = 11.sp,
-                                color = LernspaceTextSecondary
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .size(6.dp)
-                                    .clip(CircleShape)
-                                    .background(Color(0xFF10B981))
-                            )
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("$wordCount kata • $charCount karakter", fontSize = 11.sp, color = LernspaceTextSecondary)
+                            Box(Modifier.size(6.dp).clip(CircleShape).background(Color(0xFF10B981)))
                         }
                     }
 
-                    // Document Editable Title
+                    // Editable Title
                     BasicTextField(
                         value = title,
                         onValueChange = onTitleChange,
-                        textStyle = TextStyle(
-                            fontFamily = selectedFontFamily.composeFont,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 28.sp,
-                            color = LernspaceTextPrimary
-                        ),
+                        textStyle = TextStyle(fontWeight = FontWeight.Bold, fontSize = 26.sp, color = LernspaceTextPrimary),
                         cursorBrush = SolidColor(Color(0xFF2563EB)),
-                        decorationBox = { innerTextField ->
+                        decorationBox = { inner ->
                             if (title.isBlank()) {
-                                Text(
-                                    text = "Judul Dokumen Tanpa Nama...",
-                                    fontSize = 28.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = LernspaceTextSecondary.copy(alpha = 0.5f)
-                                )
+                                Text("Judul Dokumen...", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = LernspaceTextSecondary.copy(alpha = 0.4f))
                             }
-                            innerTextField()
+                            inner()
                         },
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    HorizontalDivider(color = LernspaceBorder.copy(alpha = 0.6f), thickness = 1.dp)
+                    HorizontalDivider(color = LernspaceBorder.copy(alpha = 0.5f))
 
-                    // ── TRUE WYSIWYG RICH TEXT EDITOR ────────────────────────
+                    // ── WEBVIEW RICH TEXT EDITOR ──────────────────────────
                     AndroidView(
                         factory = { ctx ->
-                            DocumentRichEditText(ctx).apply {
-                                layoutParams = ViewGroup.LayoutParams(
-                                    ViewGroup.LayoutParams.MATCH_PARENT,
-                                    ViewGroup.LayoutParams.WRAP_CONTENT
-                                )
-                                background = null
-                                setPadding(0, 0, 0, 0)
-                                textSize = 15f
-                                setTextColor(if (isDarkTheme) 0xFFF1F5F9.toInt() else 0xFF1E293B.toInt())
-                                setHintTextColor(if (isDarkTheme) 0xFF64748B.toInt() else 0xFF94A3B8.toInt())
-                                hint = "Mulai mengetik dokumen di sini..."
-                                setLineSpacing(8f, 1.35f)
-                                gravity = Gravity.TOP or Gravity.START
-                                isFocusable = true
-                                isFocusableInTouchMode = true
-                                isNestedScrollingEnabled = false
-
-                                // Initial content load
-                                val initialSpanned = RichDocumentConverter.fromHtml(content)
-                                setText(initialSpanned)
-                                setSelection(initialSpanned.length)
-                                textSnapshot = initialSpanned.toString()
-                                lastExportedHtml = content
-                                undoRedoManager.pushState(content)
-
-                                // Listen to selection changes to update toolbar active indicators
-                                onSelectionChangedListener = { start, end ->
-                                    val ed = text
-                                    if (ed != null && start >= 0 && end >= 0) {
-                                        val sMin = minOf(start, end)
-                                        val sMax = maxOf(start, end)
-                                        if (sMin < sMax) {
-                                            val styleSpans = ed.getSpans(sMin, sMax, StyleSpan::class.java)
-                                            isSelectionBold = styleSpans.any { it.style == Typeface.BOLD || it.style == Typeface.BOLD_ITALIC }
-                                            isSelectionItalic = styleSpans.any { it.style == Typeface.ITALIC || it.style == Typeface.BOLD_ITALIC }
-                                            isSelectionUnderline = ed.getSpans(sMin, sMax, UnderlineSpan::class.java).isNotEmpty()
-                                            isSelectionStrike = ed.getSpans(sMin, sMax, StrikethroughSpan::class.java).isNotEmpty()
-                                        }
+                            val bridge = DocumentJsBridge(
+                                onContentChanged = { html ->
+                                    lastLoadedContent = html
+                                    onContentChange(html)
+                                },
+                                onWordCountChanged = { w, c ->
+                                    wordCount = w
+                                    charCount = c
+                                }
+                            )
+                            buildDocumentWebView(ctx, isDarkTheme, content, bridge).also { wv ->
+                                wv.webViewClient = object : WebViewClient() {
+                                    override fun onPageFinished(view: WebView?, url: String?) {
+                                        super.onPageFinished(view, url)
+                                        isWebViewReady = true
+                                        webViewRef = view
                                     }
                                 }
-
-                                // Listen to text modifications
-                                addTextChangedListener(object : TextWatcher {
-                                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-                                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-                                    override fun afterTextChanged(s: Editable?) {
-                                        if (!isInternalUpdate && s != null) {
-                                            val html = RichDocumentConverter.toHtml(s)
-                                            lastExportedHtml = html
-                                            undoRedoManager.pushState(html)
-                                            onContentChange(html)
-                                            textSnapshot = s.toString()
-                                        }
-                                    }
-                                })
-
-                                editTextRef = this
+                                val html = generateEditorHtml(isDarkTheme, content)
+                                wv.loadDataWithBaseURL("about:blank", html, "text/html", "UTF-8", null)
+                                webViewRef = wv
                             }
                         },
-                        update = { editText ->
-                            // Update only if content changed externally (e.g. Mimo AI insertion)
-                            if (content != lastExportedHtml) {
-                                isInternalUpdate = true
-                                val spanned = RichDocumentConverter.fromHtml(content)
-                                editText.setText(spanned)
-                                editText.setSelection(spanned.length)
-                                lastExportedHtml = content
-                                textSnapshot = spanned.toString()
-                                undoRedoManager.pushState(content)
-                                isInternalUpdate = false
+                        update = { wv ->
+                            // Only reload content if changed externally (e.g. AI injection)
+                            if (content != lastLoadedContent && isWebViewReady) {
+                                val escaped = content
+                                    .replace("\\", "\\\\")
+                                    .replace("'", "\\'")
+                                    .replace("\n", "\\n")
+                                    .replace("\r", "")
+                                wv.evaluateJavascript("setContent('$escaped');", null)
+                                lastLoadedContent = content
                             }
-                            editText.setTextColor(if (isDarkTheme) 0xFFF1F5F9.toInt() else 0xFF1E293B.toInt())
                         },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .wrapContentHeight()
+                            .defaultMinSize(minHeight = 600.dp)
                     )
                 }
             }
         }
     }
 
-    // ── MODAL DIALOGS ────────────────────────────────────────────────────────
+    // ── TABLE INSERT DIALOG ────────────────────────────────────────────────
+    if (showTableDialog) {
+        TableInsertDialog(
+            onDismiss = { showTableDialog = false },
+            onInsert = { rows, cols ->
+                js("insertTable($rows, $cols);")
+                showTableDialog = false
+            }
+        )
+    }
+
+    // ── LINK DIALOG ────────────────────────────────────────────────────────
     if (showLinkDialog) {
         InsertLinkDialog(
-            initialText = linkDialogInitialText,
+            initialText = "",
             onDismiss = { showLinkDialog = false },
             onApplyLink = { text, url ->
-                applyLink(text, url)
+                val safeText = text.replace("'", "\\'")
+                val safeUrl = url.replace("'", "\\'")
+                js("insertLink('$safeText', '$safeUrl');")
                 showLinkDialog = false
             }
         )
     }
 
+    // ── MATH DIALOG ────────────────────────────────────────────────────────
     if (showMathDialog) {
         VisualMathEquationDialog(
             initialEquation = "",
             onDismiss = { showMathDialog = false },
-            onInsertEquation = { displayEquation ->
-                insertMathEquation(displayEquation)
+            onInsertEquation = { latex ->
+                val safeLaTeX = latex
+                    .replace("\\", "\\\\")
+                    .replace("'", "\\'")
+                    .replace("\n", "")
+                js("insertMath('$safeLaTeX');")
                 showMathDialog = false
             }
         )
     }
 }
 
-// ── REUSABLE TOOLBAR SUB-COMPONENTS ──────────────────────────────────────────
+// ── TABLE INSERT DIALOG ───────────────────────────────────────────────────────
 @Composable
-private fun ToolbarIconButton(
+fun TableInsertDialog(
+    onDismiss: () -> Unit,
+    onInsert: (rows: Int, cols: Int) -> Unit
+) {
+    var rows by remember { mutableIntStateOf(3) }
+    var cols by remember { mutableIntStateOf(3) }
+
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = LernspaceSurfaceCard,
+            border = BorderStroke(1.dp, LernspaceBorder),
+            shadowElevation = 8.dp,
+            modifier = Modifier.widthIn(min = 300.dp, max = 380.dp).wrapContentHeight()
+        ) {
+            Column(
+                modifier = Modifier.padding(22.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Filled.TableChart, null, tint = AccentBlue)
+                    Text("Sisipkan Tabel", style = MaterialTheme.typography.titleMedium, color = LernspaceDark)
+                }
+
+                // Grid visual preview
+                val previewRows = rows.coerceAtMost(5)
+                val previewCols = cols.coerceAtMost(5)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFFF8FAFC), RoundedCornerShape(8.dp))
+                        .padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    repeat(previewRows) { r ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                            repeat(previewCols) { _ ->
+                                Box(
+                                    Modifier
+                                        .size(width = 36.dp, height = 20.dp)
+                                        .background(
+                                            if (r == 0) AccentBlue.copy(alpha = 0.18f) else Color(0xFFE2E8F0),
+                                            RoundedCornerShape(3.dp)
+                                        )
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Rows stepper
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("Baris", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = LernspaceDark)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        IconButton(onClick = { if (rows > 1) rows-- }, modifier = Modifier.size(32.dp)) {
+                            Icon(Icons.Filled.Remove, null, modifier = Modifier.size(16.dp))
+                        }
+                        Text("$rows", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                        IconButton(onClick = { if (rows < 20) rows++ }, modifier = Modifier.size(32.dp)) {
+                            Icon(Icons.Filled.Add, null, modifier = Modifier.size(16.dp))
+                        }
+                    }
+                }
+
+                // Cols stepper
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("Kolom", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = LernspaceDark)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        IconButton(onClick = { if (cols > 1) cols-- }, modifier = Modifier.size(32.dp)) {
+                            Icon(Icons.Filled.Remove, null, modifier = Modifier.size(16.dp))
+                        }
+                        Text("$cols", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                        IconButton(onClick = { if (cols < 10) cols++ }, modifier = Modifier.size(32.dp)) {
+                            Icon(Icons.Filled.Add, null, modifier = Modifier.size(16.dp))
+                        }
+                    }
+                }
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = onDismiss) { Text("Batal", color = LernspaceTextSecondary) }
+                    Spacer(Modifier.width(8.dp))
+                    Button(
+                        onClick = { onInsert(rows, cols) },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)
+                    ) {
+                        Text("Sisipkan Tabel ${rows}×${cols}", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── REUSABLE TOOLBAR COMPONENTS ───────────────────────────────────────────────
+@Composable
+private fun DocToolbarIcon(
     icon: ImageVector,
     tooltip: String,
     enabled: Boolean = true,
     onClick: () -> Unit
 ) {
-    IconButton(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = Modifier.size(30.dp)
-    ) {
+    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(30.dp)) {
         Icon(
             imageVector = icon,
             contentDescription = tooltip,
@@ -1175,41 +1207,29 @@ private fun ToolbarIconButton(
 }
 
 @Composable
-private fun ToolbarTextButton(
+private fun DocToolbarTextBtn(
     label: String,
     fontWeight: FontWeight = FontWeight.Normal,
-    fontStyle: androidx.compose.ui.text.font.FontStyle = androidx.compose.ui.text.font.FontStyle.Normal,
-    isActive: Boolean = false,
     tooltip: String,
     onClick: () -> Unit
 ) {
     Surface(
         shape = RoundedCornerShape(4.dp),
-        color = if (isActive) AccentBlue.copy(alpha = 0.15f) else Color.Transparent,
-        border = if (isActive) BorderStroke(1.dp, AccentBlue.copy(alpha = 0.4f)) else null,
-        modifier = Modifier
-            .size(30.dp)
-            .clickable(onClick = onClick)
+        color = Color.Transparent,
+        modifier = Modifier.size(30.dp).clickable(onClick = onClick)
     ) {
         Box(contentAlignment = Alignment.Center) {
-            Text(
-                text = label,
-                fontSize = 13.sp,
-                fontWeight = fontWeight,
-                fontStyle = fontStyle,
-                color = if (isActive) AccentBlue else LernspaceTextPrimary
-            )
+            Text(label, fontSize = 13.sp, fontWeight = fontWeight, color = LernspaceTextPrimary)
         }
     }
 }
 
 @Composable
-private fun ToolbarDivider() {
+private fun DocToolbarDiv() {
     Box(
         modifier = Modifier
             .height(18.dp)
             .width(1.dp)
             .background(LernspaceBorder.copy(alpha = 0.6f))
-            .padding(horizontal = 2.dp)
     )
 }
