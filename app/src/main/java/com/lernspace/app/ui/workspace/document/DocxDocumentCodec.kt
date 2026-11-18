@@ -186,6 +186,8 @@ object DocxDocumentCodec {
 
         val out = StringBuilder()
         var activeListTag: String? = null // "ul" or "ol"
+        var importedSetup = DocPageSetup()
+        var hasImportedPageSetup = false
 
         fun closeListIfOpen() {
             if (activeListTag != null) {
@@ -216,12 +218,49 @@ object DocxDocumentCodec {
                         closeListIfOpen()
                         out.append(parseTable(parser, rels, orderedNumIds, ::resolveImageDataUri))
                     }
+                    "pgSz" -> {
+                        val wTw = attr(parser, "w").toIntOrNull()
+                        val hTw = attr(parser, "h").toIntOrNull()
+                        val orientAttr = attr(parser, "orient").lowercase(Locale.ROOT)
+                        if (wTw != null && hTw != null && wTw > 0 && hTw > 0) {
+                            val isLand = orientAttr == "landscape" || wTw > hTw
+                            val longMm = (maxOf(wTw, hTw) * 25.4 / 1440.0)
+                            val detectedSize = when {
+                                longMm > 343.0 -> DocPaperSize.LEGAL
+                                longMm > 312.0 -> DocPaperSize.F4
+                                longMm < 288.0 -> DocPaperSize.LETTER
+                                else -> DocPaperSize.A4
+                            }
+                            importedSetup = importedSetup.copy(
+                                paperSize = detectedSize,
+                                orientation = if (isLand) DocPageOrientation.LANDSCAPE else DocPageOrientation.PORTRAIT
+                            )
+                            hasImportedPageSetup = true
+                        }
+                    }
+                    "pgMar" -> {
+                        val t = attr(parser, "top").toIntOrNull()
+                        val b = attr(parser, "bottom").toIntOrNull()
+                        val l = attr(parser, "left").toIntOrNull()
+                        val r = attr(parser, "right").toIntOrNull()
+                        if (t != null && b != null && l != null && r != null) {
+                            importedSetup = importedSetup.copy(
+                                marginPreset = DocMarginPreset.CUSTOM,
+                                marginTopCm = (t * 2.54f / 1440f).coerceIn(0.5f, 6.0f),
+                                marginBottomCm = (b * 2.54f / 1440f).coerceIn(0.5f, 6.0f),
+                                marginLeftCm = (l * 2.54f / 1440f).coerceIn(0.5f, 6.0f),
+                                marginRightCm = (r * 2.54f / 1440f).coerceIn(0.5f, 6.0f)
+                            )
+                            hasImportedPageSetup = true
+                        }
+                    }
                 }
             }
             event = parser.next()
         }
         closeListIfOpen()
-        return out.toString().ifBlank { "<p><br></p>" }
+        val bodyHtml = out.toString().ifBlank { "<p><br></p>" }
+        return if (hasImportedPageSetup) DocPageSetup.packWithContent(importedSetup, bodyHtml) else bodyHtml
     }
 
     private data class ParsedParagraph(
@@ -394,7 +433,14 @@ object DocxDocumentCodec {
                         content.append(escapeHtml(txt))
                     }
                     "tab" -> content.append("&nbsp;&nbsp;&nbsp;&nbsp;")
-                    "br", "cr" -> content.append("<br>")
+                    "br", "cr" -> {
+                        val brType = attr(parser, "type").lowercase(Locale.ROOT)
+                        if (brType == "page") {
+                            content.append("<div class=\"doc-page-break\" contenteditable=\"false\"></div>")
+                        } else {
+                            content.append("<br>")
+                        }
+                    }
                     "extent" -> {
                         val cx = attr(parser, "cx").toLongOrNull()
                         if (cx != null && cx > 0) {
@@ -767,7 +813,8 @@ object DocxDocumentCodec {
     // =========================================================================
     //  EXPORT (HTML -> SPEC-COMPLIANT .DOCX / .HTML / .TXT)
     // =========================================================================
-    fun exportToHtmlFile(title: String, bodyHtml: String): String {
+    fun exportToHtmlFile(title: String, rawBodyHtml: String): String {
+        val (setup, bodyHtml) = DocPageSetup.extractFromContent(rawBodyHtml)
         val safeTitle = escapeHtml(title.ifBlank { "Dokumen" })
         return """<!DOCTYPE html>
 <html lang="id">
@@ -775,12 +822,14 @@ object DocxDocumentCodec {
 <meta charset="UTF-8">
 <title>$safeTitle</title>
 <style>
-  body { font-family: Inter, Arial, sans-serif; max-width: 820px; margin: 40px auto; padding: 0 24px; color: #1E293B; line-height: 1.7; font-size: 15px; }
+  @page { size: ${setup.effectiveWidthMm}mm ${setup.effectiveHeightMm}mm; margin: ${setup.marginTopCm}cm ${setup.marginRightCm}cm ${setup.marginBottomCm}cm ${setup.marginLeftCm}cm; }
+  body { font-family: Inter, Arial, sans-serif; max-width: ${setup.widthPx}px; margin: 40px auto; padding: 0 24px; color: #1E293B; line-height: 1.7; font-size: 15px; }
   table { border-collapse: collapse; width: 100%; margin: 12px 0; }
   td, th { border: 1px solid #CBD5E1; padding: 8px 12px; text-align: left; }
   th { background: #F8FAFC; font-weight: 600; }
   blockquote { border-left: 3px solid #2563EB; padding: 8px 16px; background: #EFF6FF; color: #1D4ED8; margin: 10px 0; }
   img { max-width: 100%; height: auto; }
+  .doc-page-break { page-break-after: always; break-after: page; height: 0; border: none; }
 </style>
 </head>
 <body>
@@ -789,7 +838,10 @@ $bodyHtml
 </html>"""
     }
 
-    fun exportToPlainText(bodyHtml: String): String = stripHtmlToPlainText(bodyHtml)
+    fun exportToPlainText(rawBodyHtml: String): String {
+        val (_, bodyHtml) = DocPageSetup.extractFromContent(rawBodyHtml)
+        return stripHtmlToPlainText(bodyHtml)
+    }
 
     private data class ExportImage(val relId: String, val fileName: String, val mime: String, val bytes: ByteArray, val widthEmu: Long, val heightEmu: Long)
     private data class ExportLink(val relId: String, val url: String)
@@ -813,11 +865,16 @@ $bodyHtml
         val children: MutableList<HtmlNode> = mutableListOf()
     )
 
-    fun exportToDocx(bodyHtml: String, outputStream: OutputStream) {
-        val root = parseHtmlFragment(bodyHtml)
+    fun exportToDocx(rawBodyHtml: String, outputStream: OutputStream) {
+        val (pageSetup, cleanBodyHtml) = DocPageSetup.extractFromContent(rawBodyHtml)
+        val root = parseHtmlFragment(cleanBodyHtml)
         val images = mutableListOf<ExportImage>()
         val links = mutableListOf<ExportLink>()
+        val hasHeader = !pageSetup.isPageless && pageSetup.headerText.isNotBlank()
+        val hasFooter = !pageSetup.isPageless && (pageSetup.footerText.isNotBlank() || pageSetup.showPageNumbers)
         var nextRelNum = 3 // rId1=styles, rId2=numbering
+        val headerRelId = if (hasHeader) "rId${nextRelNum++}" else null
+        val footerRelId = if (hasFooter) "rId${nextRelNum++}" else null
         var nextDocPrId = 1
 
         fun registerLink(url: String): String {
@@ -973,6 +1030,34 @@ $bodyHtml
                 "justify" -> pPr.append("<w:jc w:val=\"both\"/>")
             }
 
+            // Line spacing (CSS line-height -> OOXML w:spacing w:line in 240ths)
+            Regex("line-height\\s*:\\s*(\\d+(?:\\.\\d+)?)", RegexOption.IGNORE_CASE).find(styleAttr)?.let { m ->
+                val mult = m.groupValues[1].toDoubleOrNull()
+                if (mult != null && mult in 0.8..3.5) {
+                    val lineVal = (mult * 240.0).toInt()
+                    pPr.append("<w:spacing w:line=\"$lineVal\" w:lineRule=\"auto\"/>")
+                }
+            }
+
+            // Indentation (margin-left px & text-indent cm/px -> OOXML twips)
+            if (!isQuote) {
+                val leftPx = Regex("margin-left\\s*:\\s*(\\d+(?:\\.\\d+)?)px", RegexOption.IGNORE_CASE)
+                    .find(styleAttr)?.groupValues?.get(1)?.toDoubleOrNull()
+                val firstIndentCm = Regex("text-indent\\s*:\\s*(\\d+(?:\\.\\d+)?)cm", RegexOption.IGNORE_CASE)
+                    .find(styleAttr)?.groupValues?.get(1)?.toDoubleOrNull()
+                val firstIndentPx = Regex("text-indent\\s*:\\s*(\\d+(?:\\.\\d+)?)px", RegexOption.IGNORE_CASE)
+                    .find(styleAttr)?.groupValues?.get(1)?.toDoubleOrNull()
+                val leftTwips = leftPx?.let { (it * 15.0).toInt().coerceIn(0, 6000) }
+                val firstTwips = firstIndentCm?.let { (it * 566.93).toInt().coerceIn(0, 3000) }
+                    ?: firstIndentPx?.let { (it * 15.0).toInt().coerceIn(0, 3000) }
+                if (leftTwips != null || firstTwips != null) {
+                    pPr.append("<w:ind")
+                    if (leftTwips != null && leftTwips > 0) pPr.append(" w:left=\"$leftTwips\"")
+                    if (firstTwips != null && firstTwips > 0) pPr.append(" w:firstLine=\"$firstTwips\"")
+                    pPr.append("/>")
+                }
+            }
+
             val runs = StringBuilder()
             for (child in node.children) {
                 collectInlineRuns(child, baseStyle, runs)
@@ -1040,12 +1125,15 @@ $bodyHtml
                         }
                     }
                     "p", "div" -> {
-                        val hasNestedBlocks = node.children.any { it.tag?.lowercase(Locale.ROOT) in setOf("p", "div", "table", "ul", "ol", "h1", "h2", "h3", "h4") }
-                        if (hasNestedBlocks) emitBlocks(node.children)
-                        else emitParagraph(node)
+                        if (node.attrs["class"]?.contains("doc-page-break") == true) {
+                            bodyXml.append("<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>")
+                        } else {
+                            val hasNestedBlocks = node.children.any { it.tag?.lowercase(Locale.ROOT) in setOf("p", "div", "table", "ul", "ol", "h1", "h2", "h3", "h4") }
+                            if (hasNestedBlocks) emitBlocks(node.children)
+                            else emitParagraph(node)
+                        }
                     }
                     else -> {
-                        // Top-level inline element wrapped in a paragraph
                         val wrapper = HtmlNode("p", children = mutableListOf(node))
                         emitParagraph(wrapper)
                     }
@@ -1065,6 +1153,9 @@ $bodyHtml
             }
 
             // 1. [Content_Types].xml
+            val extraOverrides = StringBuilder()
+            if (hasHeader) extraOverrides.append("""  <Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>""" + "\n")
+            if (hasFooter) extraOverrides.append("""  <Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>""" + "\n")
             putXml(
                 "[Content_Types].xml",
                 """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -1077,7 +1168,7 @@ $bodyHtml
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
   <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
   <Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>
-</Types>"""
+$extraOverrides</Types>"""
             )
 
             // 2. _rels/.rels
@@ -1094,6 +1185,12 @@ $bodyHtml
             relsSb.append("""<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">""")
             relsSb.append("""<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>""")
             relsSb.append("""<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>""")
+            if (headerRelId != null) {
+                relsSb.append("""<Relationship Id="$headerRelId" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>""")
+            }
+            if (footerRelId != null) {
+                relsSb.append("""<Relationship Id="$footerRelId" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>""")
+            }
             for (img in images) {
                 relsSb.append("""<Relationship Id="${img.relId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${img.fileName}"/>""")
             }
@@ -1129,6 +1226,36 @@ $bodyHtml
 </w:numbering>"""
             )
 
+            // 5b. word/header1.xml & word/footer1.xml
+            if (hasHeader) {
+                putXml(
+                    "word/header1.xml",
+                    """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:p><w:pPr><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:sz w:val="18"/><w:color w:val="64748B"/></w:rPr><w:t>${escapeXml(pageSetup.headerText)}</w:t></w:r></w:p>
+</w:hdr>"""
+                )
+            }
+            if (hasFooter) {
+                val ftrRuns = StringBuilder()
+                if (pageSetup.footerText.isNotBlank()) {
+                    ftrRuns.append("""<w:r><w:rPr><w:sz w:val="18"/><w:color w:val="64748B"/></w:rPr><w:t xml:space="preserve">${escapeXml(pageSetup.footerText)}</w:t></w:r>""")
+                    if (pageSetup.showPageNumbers) {
+                        ftrRuns.append("""<w:r><w:rPr><w:sz w:val="18"/><w:color w:val="64748B"/></w:rPr><w:t xml:space="preserve">  ·  Hal. </w:t></w:r>""")
+                    }
+                }
+                if (pageSetup.showPageNumbers) {
+                    ftrRuns.append("""<w:fldSimple w:instr="PAGE"><w:r><w:rPr><w:sz w:val="18"/><w:color w:val="64748B"/></w:rPr><w:t>1</w:t></w:r></w:fldSimple>""")
+                }
+                putXml(
+                    "word/footer1.xml",
+                    """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:p><w:pPr><w:jc w:val="center"/></w:pPr>$ftrRuns</w:p>
+</w:ftr>"""
+                )
+            }
+
             // 6. word/media/*
             for (img in images) {
                 zos.putNextEntry(ZipEntry("word/media/${img.fileName}"))
@@ -1136,14 +1263,17 @@ $bodyHtml
                 zos.closeEntry()
             }
 
-            // 7. word/document.xml
+            // 7. word/document.xml (with exact paper size, orientation, margins, header/footer refs)
+            val orientXml = if (pageSetup.orientation == DocPageOrientation.LANDSCAPE) """ w:orient="landscape"""" else ""
+            val hdrRefXml = if (headerRelId != null) """<w:headerReference w:type="default" r:id="$headerRelId"/>""" else ""
+            val ftrRefXml = if (footerRelId != null) """<w:footerReference w:type="default" r:id="$footerRelId"/>""" else ""
             putXml(
                 "word/document.xml",
                 """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
   <w:body>
     $bodyXml
-    <w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>
+    <w:sectPr>$hdrRefXml$ftrRefXml<w:pgSz w:w="${pageSetup.widthTwips}" w:h="${pageSetup.heightTwips}"$orientXml/><w:pgMar w:top="${pageSetup.marginTopTwips}" w:right="${pageSetup.marginRightTwips}" w:bottom="${pageSetup.marginBottomTwips}" w:left="${pageSetup.marginLeftTwips}"/></w:sectPr>
   </w:body>
 </w:document>"""
             )

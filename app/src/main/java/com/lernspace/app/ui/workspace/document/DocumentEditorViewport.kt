@@ -8,6 +8,8 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.print.PrintAttributes
+import android.print.PrintManager
 import android.util.Base64
 import android.util.Log
 import android.webkit.JavascriptInterface
@@ -29,7 +31,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.FormatAlignLeft
 import androidx.compose.material.icons.automirrored.filled.FormatAlignRight
+import androidx.compose.material.icons.automirrored.filled.FormatIndentDecrease
+import androidx.compose.material.icons.automirrored.filled.FormatIndentIncrease
 import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
+import androidx.compose.material.icons.automirrored.filled.Notes
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.*
@@ -82,7 +87,7 @@ enum class DocFontFamily(val label: String, val css: String) {
 
 // ── THREAD-SAFE SYNC HOLDER (NOT COMPOSE STATE — PREVENTS RECOMPOSITION LOOP) ─
 private class DocumentSyncState {
-    var lastEmittedHtml: String? = null
+    var lastEmittedPacked: String? = null
     var lastAppliedDark: Boolean? = null
     var isReady: Boolean = false
 }
@@ -170,13 +175,51 @@ private fun sanitizeFileName(raw: String): String {
     return clean.ifBlank { "Dokumen_LearnSpace" }
 }
 
-// ── GENERATE CLEAN HEADERLESS GOOGLE DOCS-STYLE EDITOR HTML ───────────────────
+// ── NATIVE WEBVIEW PRINT / EXPORT PDF (MATCHES EXACT PAPER SIZE & MARGINS) ────
+private fun printWebViewDocumentToPdf(
+    context: Context,
+    webView: WebView?,
+    title: String,
+    pageSetup: DocPageSetup
+) {
+    if (webView == null) {
+        Toast.makeText(context, "Editor belum siap untuk dicetak", Toast.LENGTH_SHORT).show()
+        return
+    }
+    try {
+        // Hide any active overlays before printing
+        webView.evaluateJavascript("prepareForPrint();", null)
+        val printManager = context.getSystemService(Context.PRINT_SERVICE) as? PrintManager
+        if (printManager == null) {
+            Toast.makeText(context, "Layanan cetak tidak tersedia di perangkat ini", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val jobName = sanitizeFileName(title)
+        val adapter = webView.createPrintDocumentAdapter(jobName)
+        val mediaSize = pageSetup.paperSize.toPrintMediaSize(
+            isLandscape = pageSetup.orientation == DocPageOrientation.LANDSCAPE
+        )
+        val attrs = PrintAttributes.Builder()
+            .setMediaSize(mediaSize)
+            .setMinMargins(PrintAttributes.Margins.NO_MARGINS)
+            .setColorMode(PrintAttributes.COLOR_MODE_COLOR)
+            .build()
+        printManager.print(jobName, adapter, attrs)
+    } catch (e: Exception) {
+        Log.e("DocEditor", "Print PDF failed", e)
+        Toast.makeText(context, "Gagal membuka cetak PDF: ${e.message}", Toast.LENGTH_LONG).show()
+    }
+}
+
+// ── GENERATE CLEAN HEADERLESS GOOGLE DOCS-STYLE EDITOR HTML WITH PAGE SETUP ───
 fun generateEditorHtml(
     isDark: Boolean,
-    bodyContent: String
+    bodyContent: String,
+    pageSetup: DocPageSetup
 ): String {
     val safeContent = normalizeInitialBody(bodyContent)
     val darkClass = if (isDark) "dark" else ""
+    val initialConfigJson = pageSetup.toJsConfigJson()
 
     return """<!DOCTYPE html>
 <html class="$darkClass">
@@ -185,13 +228,14 @@ fun generateEditorHtml(
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&family=Inter:wght@400;600;700&family=Lora:ital,wght@0,400;0,700;1,400&family=Merriweather:ital,wght@0,400;0,700;1,400&family=Montserrat:wght@400;600;700&family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Poppins:wght@400;600;700&family=Roboto+Mono:wght@400;600&display=swap">
+<style id="dynamic-page-style"></style>
 <style>
   :root {
-    --bg: #F1F5F9;
+    --bg: #EEF2F6;
     --paper: #FFFFFF;
     --text: #1E293B;
     --muted: #94A3B8;
-    --border: #E2E8F0;
+    --border: #DCE3EC;
     --link: #2563EB;
     --tbl-border: #CBD5E1;
     --tbl-head: #F8FAFC;
@@ -203,6 +247,7 @@ fun generateEditorHtml(
     --toolbar-shadow: 0 6px 24px rgba(15,23,42,0.16);
     --toolbar-hover: #F1F5F9;
     --sel: rgba(37,99,235,0.18);
+    --guide-gap: #EEF2F6;
   }
   html.dark {
     --bg: #13141C;
@@ -221,6 +266,7 @@ fun generateEditorHtml(
     --toolbar-shadow: 0 8px 28px rgba(0,0,0,0.55);
     --toolbar-hover: #334155;
     --sel: rgba(96,165,250,0.28);
+    --guide-gap: #13141C;
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
@@ -232,33 +278,115 @@ fun generateEditorHtml(
   body {
     padding: 18px 14px 200px 14px;
   }
+  body.pageless-mode {
+    padding: 0 0 180px 0;
+    background: var(--paper);
+  }
 
-  /* ── CLEAN HEADERLESS A4 PAPER SHEET ── */
+  /* ── PAPER SHEET (DYNAMIC SIZE & MARGINS VIA JS) ── */
+  #paper-shell {
+    position: relative;
+    margin: 0 auto;
+    max-width: 100%;
+  }
   #paper {
-    max-width: 840px;
+    position: relative;
     margin: 0 auto;
     background: var(--paper);
     border: 1px solid var(--border);
-    border-radius: 4px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.06);
-    padding: 44px 48px 76px 48px;
-    position: relative;
-    min-height: 1050px;
+    border-radius: 3px;
+    box-shadow: 0 2px 12px rgba(15,23,42,0.08);
+    width: 794px;
+    max-width: 100%;
+    min-height: 1123px;
+    padding: 96px 96px 96px 96px;
+    transition: width 0.18s ease, padding 0.18s ease;
   }
-  @media (max-width: 600px) {
-    #paper { padding: 26px 22px 64px 22px; }
+  body.pageless-mode #paper {
+    width: 100% !important;
+    max-width: 960px !important;
+    min-height: 100vh !important;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 28px 36px 96px 36px !important;
+  }
+
+  /* ── SUBTLE RUNNING HEADER & FOOTER INSIDE PAPER MARGINS ── */
+  #running-header {
+    display: none;
+    position: absolute;
+    top: 18px;
+    left: 36px;
+    right: 36px;
+    font-size: 11px;
+    color: var(--muted);
+    text-align: right;
+    pointer-events: none;
+    user-select: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #running-footer {
+    display: none;
+    position: absolute;
+    bottom: 16px;
+    left: 36px;
+    right: 36px;
+    font-size: 11px;
+    color: var(--muted);
+    text-align: center;
+    pointer-events: none;
+    user-select: none;
+  }
+  body.pageless-mode #running-header,
+  body.pageless-mode #running-footer { display: none !important; }
+
+  /* ── VISUAL PAGE BREAK GUIDES (OVERLAY — NEVER BREAKS CURSOR/EDITING) ── */
+  #page-guides {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    pointer-events: none;
+    overflow: hidden;
+    z-index: 2;
+  }
+  body.pageless-mode #page-guides { display: none; }
+  .page-guide-bar {
+    position: absolute;
+    left: -1px;
+    right: -1px;
+    height: 18px;
+    background: var(--guide-gap);
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding: 0 14px;
+  }
+  .page-guide-tag {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--muted);
+    letter-spacing: 0.2px;
   }
 
   /* ── MAIN EDITOR ── */
   #editor {
+    position: relative;
+    z-index: 5;
     outline: none;
     caret-color: #2563EB;
     color: var(--text);
     font-size: 15px;
-    line-height: 1.78;
+    line-height: 1.65;
     word-wrap: break-word;
     overflow-wrap: break-word;
-    min-height: 920px;
+    min-height: 860px;
   }
   #editor::after { content: ""; display: table; clear: both; }
   #editor:empty::before {
@@ -268,7 +396,7 @@ fun generateEditorHtml(
     pointer-events: none;
   }
 
-  #editor p, #editor div { margin: 0 0 6px 0; min-height: 1.78em; }
+  #editor p, #editor div { margin: 0 0 6px 0; min-height: 1.5em; }
   #editor h1 { font-size: 26px; font-weight: 700; margin: 16px 0 8px 0; clear: both; }
   #editor h2 { font-size: 21px; font-weight: 700; margin: 14px 0 6px 0; clear: both; }
   #editor h3 { font-size: 18px; font-weight: 600; margin: 12px 0 5px 0; clear: both; }
@@ -277,10 +405,47 @@ fun generateEditorHtml(
   #editor a { color: var(--link); text-decoration: underline; }
   #editor hr { border: none; border-top: 1.5px solid var(--border); margin: 16px 0; clear: both; }
 
+  /* ── MANUAL PAGE BREAK BLOCK ── */
+  #editor .doc-page-break {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin: 22px 0;
+    padding: 6px 0;
+    user-select: none;
+    clear: both;
+    position: relative;
+  }
+  #editor .doc-page-break::before,
+  #editor .doc-page-break::after {
+    content: '';
+    flex: 1;
+    border-top: 1.5px dashed #94A3B8;
+  }
+  #editor .doc-page-break .pb-label {
+    font-size: 10.5px;
+    font-weight: 600;
+    color: #64748B;
+    background: var(--bg);
+    padding: 2px 10px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+  }
+  #editor .doc-page-break .pb-del {
+    background: transparent;
+    border: none;
+    color: #EF4444;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    padding: 2px 5px;
+  }
+
   /* ── LISTS & CHECKLIST ── */
   #editor ul { list-style-type: disc; margin: 6px 0 10px 0; padding-left: 28px; }
   #editor ol { list-style-type: decimal; margin: 6px 0 10px 0; padding-left: 28px; }
-  #editor li { margin: 3px 0; line-height: 1.7; }
+  #editor li { margin: 3px 0; line-height: 1.65; }
   #editor ul.checklist { list-style: none; padding-left: 4px; }
   #editor ul.checklist li { display: flex; align-items: flex-start; gap: 8px; margin: 5px 0; }
   #editor ul.checklist li input[type="checkbox"] {
@@ -343,25 +508,16 @@ fun generateEditorHtml(
     -webkit-user-drag: none;
   }
   #editor img[data-wrap="break"], #editor img:not([data-wrap]) {
-    display: block;
-    float: none;
-    margin: 12px auto;
+    display: block; float: none; margin: 12px auto;
   }
   #editor img[data-wrap="inline"] {
-    display: inline-block;
-    float: none;
-    vertical-align: bottom;
-    margin: 2px 6px;
+    display: inline-block; float: none; vertical-align: bottom; margin: 2px 6px;
   }
   #editor img[data-wrap="left"] {
-    display: block;
-    float: left;
-    margin: 4px 18px 10px 0;
+    display: block; float: left; margin: 4px 18px 10px 0;
   }
   #editor img[data-wrap="right"] {
-    display: block;
-    float: right;
-    margin: 4px 0 10px 18px;
+    display: block; float: right; margin: 4px 0 10px 18px;
   }
 
   /* ── MATH INLINE ── */
@@ -375,7 +531,7 @@ fun generateEditorHtml(
     display: inline-block;
   }
 
-  /* ── OPTIONAL FLOATING WORD COUNT PILL (BOTTOM-LEFT, HIDDEN BY DEFAULT) ── */
+  /* ── OPTIONAL FLOATING WORD COUNT PILL (BOTTOM-LEFT, OFF BY DEFAULT) ── */
   #wc-pill {
     display: none;
     position: fixed;
@@ -406,7 +562,7 @@ fun generateEditorHtml(
     border: 1px solid var(--border);
     border-radius: 12px;
     padding: 12px 16px;
-    min-width: 210px;
+    min-width: 215px;
     box-shadow: var(--toolbar-shadow);
     z-index: 8900;
     font-size: 12px;
@@ -414,10 +570,7 @@ fun generateEditorHtml(
   }
   #wc-popover.visible { display: block; }
   .wc-stat-row {
-    display: flex;
-    justify-content: space-between;
-    padding: 4px 0;
-    border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border);
   }
   .wc-stat-row:last-child { border-bottom: none; }
   .wc-stat-label { color: var(--muted); }
@@ -425,35 +578,17 @@ fun generateEditorHtml(
 
   /* ── GOOGLE DOCS IMAGE RESIZE OVERLAY ── */
   #img-resizer {
-    display: none;
-    position: fixed;
-    border: 2px solid #2563EB;
-    border-radius: 4px;
-    pointer-events: none;
-    z-index: 9000;
-    box-shadow: 0 0 0 1px rgba(255,255,255,0.6);
+    display: none; position: fixed; border: 2px solid #2563EB; border-radius: 4px;
+    pointer-events: none; z-index: 9000; box-shadow: 0 0 0 1px rgba(255,255,255,0.6);
   }
   #img-resizer.visible { display: block; }
-
   .rz-handle {
-    position: absolute;
-    width: 34px;
-    height: 34px;
-    pointer-events: auto;
-    touch-action: none;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 9005;
+    position: absolute; width: 34px; height: 34px; pointer-events: auto; touch-action: none;
+    display: flex; align-items: center; justify-content: center; z-index: 9005;
   }
   .rz-handle::after {
-    content: '';
-    width: 12px;
-    height: 12px;
-    background: #FFFFFF;
-    border: 2.5px solid #2563EB;
-    border-radius: 50%;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.28);
+    content: ''; width: 12px; height: 12px; background: #FFFFFF;
+    border: 2.5px solid #2563EB; border-radius: 50%; box-shadow: 0 1px 4px rgba(0,0,0,0.28);
   }
   .rz-handle[data-dir="nw"] { top: -17px; left: -17px; cursor: nwse-resize; }
   .rz-handle[data-dir="ne"] { top: -17px; right: -17px; cursor: nesw-resize; }
@@ -461,71 +596,52 @@ fun generateEditorHtml(
   .rz-handle[data-dir="se"] { bottom: -17px; right: -17px; cursor: nwse-resize; }
   .rz-handle[data-dir="w"]  { top: 50%; left: -17px; transform: translateY(-50%); cursor: ew-resize; }
   .rz-handle[data-dir="e"]  { top: 50%; right: -17px; transform: translateY(-50%); cursor: ew-resize; }
-  .rz-handle[data-dir="w"]::after, .rz-handle[data-dir="e"]::after {
-    width: 7px; height: 18px; border-radius: 4px;
-  }
-
+  .rz-handle[data-dir="w"]::after, .rz-handle[data-dir="e"]::after { width: 7px; height: 18px; border-radius: 4px; }
   #img-size-badge {
-    display: none;
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    background: rgba(15, 23, 42, 0.85);
-    color: #FFFFFF;
-    font-size: 11px;
-    font-weight: 600;
-    padding: 3px 8px;
-    border-radius: 6px;
-    pointer-events: none;
-    white-space: nowrap;
+    display: none; position: absolute; top: 8px; right: 8px;
+    background: rgba(15, 23, 42, 0.85); color: #FFFFFF; font-size: 11px; font-weight: 600;
+    padding: 3px 8px; border-radius: 6px; pointer-events: none; white-space: nowrap;
   }
 
   /* ── FLOATING CONTEXT TOOLBARS ── */
   .floating-toolbar {
-    display: none;
-    position: fixed;
-    background: var(--toolbar-bg);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    box-shadow: var(--toolbar-shadow);
-    padding: 5px 6px;
-    gap: 3px;
-    flex-direction: row;
-    align-items: center;
-    z-index: 9500;
-    flex-wrap: wrap;
-    max-width: calc(100vw - 16px);
-    user-select: none;
+    display: none; position: fixed; background: var(--toolbar-bg);
+    border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--toolbar-shadow);
+    padding: 5px 6px; gap: 3px; flex-direction: row; align-items: center;
+    z-index: 9500; flex-wrap: wrap; max-width: calc(100vw - 16px); user-select: none;
   }
   .floating-toolbar.visible { display: flex; }
-
   .ft-btn {
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: 6px;
-    padding: 5px 8px;
-    font-size: 11.5px;
-    font-weight: 600;
-    color: var(--text);
-    cursor: pointer;
-    white-space: nowrap;
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    line-height: 1.2;
+    background: transparent; border: 1px solid transparent; border-radius: 6px;
+    padding: 5px 8px; font-size: 11.5px; font-weight: 600; color: var(--text);
+    cursor: pointer; white-space: nowrap; display: inline-flex; align-items: center; gap: 5px; line-height: 1.2;
   }
   .ft-btn:active { background: var(--toolbar-hover); }
-  .ft-btn.active {
-    background: rgba(37, 99, 235, 0.13);
-    border-color: rgba(37, 99, 235, 0.38);
-    color: #2563EB;
-  }
+  .ft-btn.active { background: rgba(37, 99, 235, 0.13); border-color: rgba(37, 99, 235, 0.38); color: #2563EB; }
   .ft-btn.danger { color: #DC2626; }
-  .ft-btn.danger:active { background: rgba(220, 38, 38, 0.10); }
   .ft-sep { width: 1px; height: 20px; background: var(--border); margin: 0 3px; }
   .ft-icon { width: 16px; height: 16px; display: inline-block; flex-shrink: 0; }
 
   ::selection { background: var(--sel); }
+
+  /* ── CLEAN NATIVE PDF / PRINT STYLES ── */
+  @media print {
+    html, body { background: #FFFFFF !important; padding: 0 !important; margin: 0 !important; }
+    #paper {
+      width: 100% !important; max-width: none !important; min-height: 0 !important;
+      border: none !important; box-shadow: none !important; border-radius: 0 !important;
+      background: #FFFFFF !important; padding: 0 !important; margin: 0 !important;
+    }
+    #editor { color: #0F172A !important; min-height: 0 !important; }
+    #wc-pill, #wc-popover, #img-resizer, #img-toolbar, #tbl-toolbar, #page-guides { display: none !important; }
+    #editor .doc-page-break {
+      margin: 0 !important; padding: 0 !important; height: 0 !important;
+      break-after: page; page-break-after: always; visibility: hidden;
+    }
+    #editor .doc-page-break::before, #editor .doc-page-break::after,
+    #editor .doc-page-break .pb-label, #editor .doc-page-break .pb-del { display: none !important; }
+    #running-header, #running-footer { position: static !important; margin-bottom: 10px; }
+  }
 </style>
 </head>
 <body>
@@ -535,6 +651,7 @@ fun generateEditorHtml(
   <span id="wc-pill-text">0 kata</span>
 </div>
 <div id="wc-popover">
+  <div class="wc-stat-row"><span class="wc-stat-label">Halaman</span><span class="wc-stat-val" id="st-pages">1</span></div>
   <div class="wc-stat-row"><span class="wc-stat-label">Kata</span><span class="wc-stat-val" id="st-words">0</span></div>
   <div class="wc-stat-row"><span class="wc-stat-label">Karakter</span><span class="wc-stat-val" id="st-chars">0</span></div>
   <div class="wc-stat-row"><span class="wc-stat-label">Tanpa spasi</span><span class="wc-stat-val" id="st-nospace">0</span></div>
@@ -597,13 +714,24 @@ fun generateEditorHtml(
   <button class="ft-btn danger" onclick="deleteTable()">Hapus Tabel</button>
 </div>
 
-<!-- Pure Clean Document Paper -->
-<div id="paper">
-  <div id="editor" contenteditable="true" spellcheck="true">$safeContent</div>
+<!-- Pure Clean Document Paper with Page Guides -->
+<div id="paper-shell">
+  <div id="paper">
+    <div id="running-header"></div>
+    <div id="page-guides"></div>
+    <div id="editor" contenteditable="true" spellcheck="true">$safeContent</div>
+    <div id="running-footer"></div>
+  </div>
 </div>
 
 <script>
+var paper = document.getElementById('paper');
 var editor = document.getElementById('editor');
+var pageGuides = document.getElementById('page-guides');
+var runningHeader = document.getElementById('running-header');
+var runningFooter = document.getElementById('running-footer');
+var dynamicPageStyle = document.getElementById('dynamic-page-style');
+
 var imgResizer = document.getElementById('img-resizer');
 var imgSizeBadge = document.getElementById('img-size-badge');
 var imgToolbar = document.getElementById('img-toolbar');
@@ -619,8 +747,233 @@ var currentRow = null;
 var currentTable = null;
 var lastFmtKey = '';
 var wordCountEnabled = false;
+var pageConfig = $initialConfigJson;
+var estimatedPageCount = 1;
 
 try { document.execCommand('defaultParagraphSeparator', false, 'p'); } catch(_) {}
+
+// ── PAGE SETUP ENGINE (SIZE, ORIENTATION, MARGINS, PAGELESS, PAGE GUIDES) ──
+function applyPageSetup(cfg) {
+  if (!cfg) return;
+  pageConfig = cfg;
+  document.body.classList.toggle('pageless-mode', !!cfg.pageless);
+
+  // Update @page print CSS dynamically
+  dynamicPageStyle.textContent =
+    '@page { size: ' + cfg.widthMm + 'mm ' + cfg.heightMm + 'mm; ' +
+    'margin: ' + cfg.mTopCm + 'cm ' + cfg.mRightCm + 'cm ' + cfg.mBottomCm + 'cm ' + cfg.mLeftCm + 'cm; }';
+
+  if (!cfg.pageless) {
+    // Scale margins proportionally if screen is narrower than paper width
+    var availW = Math.max(300, window.innerWidth - 28);
+    var scale = Math.min(1, availW / cfg.widthPx);
+    var padT = Math.max(16, Math.round(cfg.mTopPx * scale));
+    var padR = Math.max(16, Math.round(cfg.mRightPx * scale));
+    var padB = Math.max(16, Math.round(cfg.mBottomPx * scale));
+    var padL = Math.max(16, Math.round(cfg.mLeftPx * scale));
+
+    paper.style.width = cfg.widthPx + 'px';
+    paper.style.minHeight = Math.round(cfg.heightPx * scale) + 'px';
+    paper.style.padding = padT + 'px ' + padR + 'px ' + padB + 'px ' + padL + 'px';
+    editor.style.minHeight = Math.max(400, Math.round(cfg.heightPx * scale) - padT - padB) + 'px';
+
+    // Header & Footer
+    if (cfg.headerText) {
+      runningHeader.textContent = cfg.headerText;
+      runningHeader.style.display = 'block';
+      runningHeader.style.left = padL + 'px';
+      runningHeader.style.right = padR + 'px';
+    } else {
+      runningHeader.style.display = 'none';
+    }
+
+    var ftrParts = [];
+    if (cfg.footerText) ftrParts.push(cfg.footerText);
+    if (cfg.showPageNumbers) ftrParts.push('Halaman 1');
+    if (ftrParts.length > 0) {
+      runningFooter.textContent = ftrParts.join('  ·  ');
+      runningFooter.style.display = 'block';
+      runningFooter.style.left = padL + 'px';
+      runningFooter.style.right = padR + 'px';
+    } else {
+      runningFooter.style.display = 'none';
+    }
+  } else {
+    runningHeader.style.display = 'none';
+    runningFooter.style.display = 'none';
+  }
+
+  requestAnimationFrame(rebuildPageGuides);
+}
+
+function rebuildPageGuides() {
+  pageGuides.innerHTML = '';
+  if (!pageConfig || pageConfig.pageless) {
+    estimatedPageCount = 1;
+    updateWordCount();
+    return;
+  }
+  var availW = Math.max(300, window.innerWidth - 28);
+  var scale = Math.min(1, availW / pageConfig.widthPx);
+  var pageH = Math.max(400, Math.round(pageConfig.heightPx * scale));
+  var totalH = paper.scrollHeight;
+  var manualBreaks = editor.querySelectorAll('.doc-page-break').length;
+  var autoPages = Math.max(1, Math.ceil((totalH - 20) / pageH));
+  estimatedPageCount = Math.max(autoPages, manualBreaks + 1);
+
+  for (var p = 1; p < autoPages; p++) {
+    var bar = document.createElement('div');
+    bar.className = 'page-guide-bar';
+    bar.style.top = (p * pageH - 9) + 'px';
+    var tag = document.createElement('span');
+    tag.className = 'page-guide-tag';
+    tag.textContent = pageConfig.showPageNumbers
+      ? ('Halaman ' + (p + 1) + '  ·  ' + pageConfig.sizeLabel)
+      : pageConfig.sizeLabel;
+    bar.appendChild(tag);
+    pageGuides.appendChild(bar);
+  }
+
+  // Update footer summary
+  if (runningFooter.style.display !== 'none') {
+    var ftrParts = [];
+    if (pageConfig.footerText) ftrParts.push(pageConfig.footerText);
+    if (pageConfig.showPageNumbers) {
+      ftrParts.push(estimatedPageCount > 1 ? ('Total ' + estimatedPageCount + ' halaman') : 'Halaman 1');
+    }
+    runningFooter.textContent = ftrParts.join('  ·  ');
+  }
+  updateWordCount();
+}
+
+window.addEventListener('resize', function() {
+  applyPageSetup(pageConfig);
+});
+
+if (typeof ResizeObserver !== 'undefined') {
+  var ro = new ResizeObserver(function() { rebuildPageGuides(); });
+  ro.observe(editor);
+}
+
+// ── MANUAL PAGE BREAK ──
+function insertPageBreak() {
+  restoreSelection();
+  var brk = document.createElement('div');
+  brk.className = 'doc-page-break';
+  brk.setAttribute('contenteditable', 'false');
+  brk.innerHTML = '<span class="pb-label">Pemisah Halaman</span><button class="pb-del" onclick="removePageBreak(this)">✕</button>';
+  var pAfter = document.createElement('p');
+  pAfter.innerHTML = '<br>';
+
+  var sel = window.getSelection();
+  if (sel && sel.rangeCount > 0 && editor.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+    var block = findClosestBlock(sel.getRangeAt(0).startContainer);
+    if (block && block.parentNode === editor) {
+      editor.insertBefore(brk, block.nextSibling);
+      editor.insertBefore(pAfter, brk.nextSibling);
+    } else {
+      var range = sel.getRangeAt(0);
+      range.deleteContents();
+      range.insertNode(pAfter);
+      pAfter.parentNode.insertBefore(brk, pAfter);
+    }
+  } else {
+    editor.appendChild(brk);
+    editor.appendChild(pAfter);
+  }
+
+  var nr = document.createRange();
+  nr.setStart(pAfter, 0);
+  nr.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(nr);
+  rebuildPageGuides();
+  notifyChange();
+}
+
+function removePageBreak(btn) {
+  var brk = btn.closest('.doc-page-break');
+  if (brk && brk.parentNode) brk.parentNode.removeChild(brk);
+  rebuildPageGuides();
+  notifyChange();
+}
+
+function hydratePageBreaks() {
+  editor.querySelectorAll('.doc-page-break').forEach(function(brk) {
+    brk.setAttribute('contenteditable', 'false');
+    if (!brk.querySelector('.pb-label')) {
+      brk.innerHTML = '<span class="pb-label">Pemisah Halaman</span><button class="pb-del" onclick="removePageBreak(this)">✕</button>';
+    }
+  });
+}
+
+// ── LINE SPACING & INDENTATION (SKRIPSI / MAKALAH READY) ──
+function findClosestBlock(node) {
+  while (node && node !== editor) {
+    if (node.nodeType === 1 && /^(P|DIV|H1|H2|H3|H4|H5|H6|LI|BLOCKQUOTE|PRE)$/.test(node.tagName)) {
+      return node;
+    }
+    node = node.parentNode;
+  }
+  return null;
+}
+
+function getSelectedBlocks() {
+  var blocks = [];
+  var sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return blocks;
+  var range = sel.getRangeAt(0);
+  var startBlock = findClosestBlock(range.startContainer);
+  var endBlock = findClosestBlock(range.endContainer);
+  if (!startBlock && !endBlock) return blocks;
+  if (startBlock && (!endBlock || startBlock === endBlock)) {
+    return [startBlock];
+  }
+  var all = editor.querySelectorAll('p, div:not(.doc-page-break), h1, h2, h3, h4, h5, li, blockquote');
+  var inRange = false;
+  for (var i = 0; i < all.length; i++) {
+    var el = all[i];
+    if (el === startBlock) inRange = true;
+    if (inRange) blocks.push(el);
+    if (el === endBlock) break;
+  }
+  return blocks.length ? blocks : (startBlock ? [startBlock] : []);
+}
+
+function setLineSpacing(multiplier) {
+  restoreSelection();
+  var blocks = getSelectedBlocks();
+  if (blocks.length === 0) {
+    editor.style.lineHeight = String(multiplier);
+  } else {
+    blocks.forEach(function(b) { b.style.lineHeight = String(multiplier); });
+  }
+  rebuildPageGuides();
+  notifyChange();
+}
+
+function adjustIndent(deltaPx) {
+  restoreSelection();
+  var blocks = getSelectedBlocks();
+  if (blocks.length === 0) return;
+  blocks.forEach(function(b) {
+    var cur = parseInt(b.style.marginLeft || '0', 10) || 0;
+    var next = Math.max(0, Math.min(288, cur + deltaPx));
+    b.style.marginLeft = next > 0 ? (next + 'px') : '';
+  });
+  notifyChange();
+}
+
+function toggleFirstLineIndent() {
+  restoreSelection();
+  var blocks = getSelectedBlocks();
+  if (blocks.length === 0) return;
+  var hasIndent = blocks[0].style.textIndent && blocks[0].style.textIndent !== '0px' && blocks[0].style.textIndent !== '0cm';
+  blocks.forEach(function(b) {
+    b.style.textIndent = hasIndent ? '' : '1.27cm';
+  });
+  notifyChange();
+}
 
 // ── OPTIONAL WORD COUNT ENGINE ──
 function updateWordCount() {
@@ -634,6 +987,7 @@ function updateWordCount() {
   var mins = Math.max(1, Math.round(words / 200));
 
   document.getElementById('wc-pill-text').textContent = words + ' kata · ' + chars + ' karakter';
+  document.getElementById('st-pages').textContent = pageConfig.pageless ? 'Pageless' : String(estimatedPageCount);
   document.getElementById('st-words').textContent = words;
   document.getElementById('st-chars').textContent = chars;
   document.getElementById('st-nospace').textContent = noSpace;
@@ -652,6 +1006,12 @@ function toggleWcPopover(e) {
   e.stopPropagation();
   updateWordCount();
   wcPopover.classList.toggle('visible');
+}
+
+function prepareForPrint() {
+  deselectImage();
+  hideTableToolbar();
+  wcPopover.classList.remove('visible');
 }
 
 // ── CHANGE NOTIFICATION ──
@@ -887,7 +1247,7 @@ function insertImage(dataUri) {
   var img = document.createElement('img');
   img.setAttribute('data-wrap', 'break');
   img.style.width = Math.min(360, Math.round((editor.clientWidth || 500) * 0.72)) + 'px';
-  img.onload = function() { if (selectedImg === img) repositionImageOverlay(); };
+  img.onload = function() { if (selectedImg === img) repositionImageOverlay(); rebuildPageGuides(); };
   img.src = dataUri;
   bindImageEvents(img);
 
@@ -909,10 +1269,7 @@ function insertImage(dataUri) {
 }
 
 function replaceSelectedImage(dataUri) {
-  if (!selectedImg) {
-    insertImage(dataUri);
-    return;
-  }
+  if (!selectedImg) { insertImage(dataUri); return; }
   var target = selectedImg;
   target.onload = function() { if (selectedImg === target) repositionImageOverlay(); };
   target.src = dataUri;
@@ -926,7 +1283,6 @@ function bindImageEvents(img) {
     selectImage(img);
   };
 }
-
 function attachImageHandlers() {
   editor.querySelectorAll('img').forEach(bindImageEvents);
 }
@@ -982,6 +1338,7 @@ function deleteSelectedImage() {
   var img = selectedImg;
   deselectImage();
   if (img.parentNode) img.parentNode.removeChild(img);
+  rebuildPageGuides();
   notifyChange();
 }
 
@@ -1000,9 +1357,7 @@ function repositionImageOverlay() {
   var tbH = imgToolbar.offsetHeight || 42;
   var vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
   var topPos = rect.bottom + 10;
-  if (topPos + tbH > vh - 10) {
-    topPos = Math.max(8, rect.top - tbH - 10);
-  }
+  if (topPos + tbH > vh - 10) topPos = Math.max(8, rect.top - tbH - 10);
   var leftPos = rect.left + (rect.width - tbW) / 2;
   leftPos = Math.max(8, Math.min(leftPos, window.innerWidth - tbW - 8));
   imgToolbar.style.top = topPos + 'px';
@@ -1018,38 +1373,24 @@ imgResizer.querySelectorAll('.rz-handle').forEach(function(handle) {
     try { handle.setPointerCapture(e.pointerId); } catch(_) {}
 
     var dir = handle.getAttribute('data-dir');
-    var startX = e.clientX;
-    var startY = e.clientY;
+    var startX = e.clientX, startY = e.clientY;
     var rect = selectedImg.getBoundingClientRect();
-    var startW = rect.width;
-    var startH = rect.height || 1;
+    var startW = rect.width, startH = rect.height || 1;
     var aspect = startW / startH;
-    var maxW = editor.clientWidth || 720;
-    var minW = 56;
+    var maxW = editor.clientWidth || 720, minW = 56;
 
     imgSizeBadge.style.display = 'block';
 
     function onMove(ev) {
       ev.preventDefault();
-      var dx = ev.clientX - startX;
-      var dy = ev.clientY - startY;
+      var dx = ev.clientX - startX, dy = ev.clientY - startY;
       var newW = startW;
-
       if (dir === 'e') newW = startW + dx;
       else if (dir === 'w') newW = startW - dx;
-      else if (dir === 'se') {
-        var wX = startW + dx, wY = (startH + dy) * aspect;
-        newW = Math.abs(dy) > Math.abs(dx) ? wY : wX;
-      } else if (dir === 'sw') {
-        var wX = startW - dx, wY = (startH + dy) * aspect;
-        newW = Math.abs(dy) > Math.abs(dx) ? wY : wX;
-      } else if (dir === 'ne') {
-        var wX = startW + dx, wY = (startH - dy) * aspect;
-        newW = Math.abs(dy) > Math.abs(dx) ? wY : wX;
-      } else if (dir === 'nw') {
-        var wX = startW - dx, wY = (startH - dy) * aspect;
-        newW = Math.abs(dy) > Math.abs(dx) ? wY : wX;
-      }
+      else if (dir === 'se') { var wX = startW + dx, wY = (startH + dy) * aspect; newW = Math.abs(dy) > Math.abs(dx) ? wY : wX; }
+      else if (dir === 'sw') { var wX = startW - dx, wY = (startH + dy) * aspect; newW = Math.abs(dy) > Math.abs(dx) ? wY : wX; }
+      else if (dir === 'ne') { var wX = startW + dx, wY = (startH - dy) * aspect; newW = Math.abs(dy) > Math.abs(dx) ? wY : wX; }
+      else if (dir === 'nw') { var wX = startW - dx, wY = (startH - dy) * aspect; newW = Math.abs(dy) > Math.abs(dx) ? wY : wX; }
 
       newW = Math.max(minW, Math.min(maxW, Math.round(newW)));
       selectedImg.style.width = newW + 'px';
@@ -1069,6 +1410,7 @@ imgResizer.querySelectorAll('.rz-handle').forEach(function(handle) {
       handle.removeEventListener('pointercancel', onUp);
       imgSizeBadge.style.display = 'none';
       repositionImageOverlay();
+      rebuildPageGuides();
       notifyChange();
     }
 
@@ -1128,6 +1470,7 @@ function insertTable(rows, cols) {
     editor.appendChild(table);
     editor.appendChild(pAfter);
   }
+  rebuildPageGuides();
   notifyChange();
 }
 
@@ -1178,9 +1521,7 @@ function addRowBelow() {
   if (!currentTable || !currentRow) return;
   var newRow = document.createElement('tr');
   var cols = currentTable.rows[0] ? currentTable.rows[0].cells.length : 1;
-  for (var i = 0; i < cols; i++) {
-    var td = document.createElement('td'); td.innerHTML = '<br>'; newRow.appendChild(td);
-  }
+  for (var i = 0; i < cols; i++) { var td = document.createElement('td'); td.innerHTML = '<br>'; newRow.appendChild(td); }
   currentRow.parentNode.insertBefore(newRow, currentRow.nextSibling);
   notifyChange();
 }
@@ -1188,9 +1529,7 @@ function addRowAbove() {
   if (!currentTable || !currentRow) return;
   var newRow = document.createElement('tr');
   var cols = currentTable.rows[0] ? currentTable.rows[0].cells.length : 1;
-  for (var i = 0; i < cols; i++) {
-    var td = document.createElement('td'); td.innerHTML = '<br>'; newRow.appendChild(td);
-  }
+  for (var i = 0; i < cols; i++) { var td = document.createElement('td'); td.innerHTML = '<br>'; newRow.appendChild(td); }
   currentRow.parentNode.insertBefore(newRow, currentRow);
   notifyChange();
 }
@@ -1249,7 +1588,8 @@ function setContentExternal(html) {
   editor.innerHTML = html || '<p><br></p>';
   attachImageHandlers();
   attachChecklistHandlers();
-  updateWordCount();
+  hydratePageBreaks();
+  rebuildPageGuides();
 }
 function applyDarkTheme(dark) {
   document.documentElement.classList.toggle('dark', !!dark);
@@ -1266,6 +1606,8 @@ editor.addEventListener('keydown', function(e) {
 // Init
 attachImageHandlers();
 attachChecklistHandlers();
+hydratePageBreaks();
+applyPageSetup(pageConfig);
 </script>
 </body>
 </html>"""
@@ -1292,27 +1634,35 @@ fun DocumentEditorViewport(
     val syncState = remember { DocumentSyncState() }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
 
+    // Extract initial Page Setup + body cleanly
+    val initialParsed = remember { DocPageSetup.extractFromContent(content) }
+    var pageSetup by remember { mutableStateOf(initialParsed.first) }
+
     val latestOnContentChange by rememberUpdatedState(onContentChange)
     val latestOnTitleChange by rememberUpdatedState(onTitleChange)
     val latestContent by rememberUpdatedState(content)
     val latestTitle by rememberUpdatedState(title)
+    val latestPageSetup by rememberUpdatedState(pageSetup)
 
     // Toolbar UI state
     var selectedStyle by remember { mutableStateOf(DocParagraphStyle.NORMAL) }
     var selectedFont by remember { mutableStateOf(DocFontFamily.INTER) }
     var fontSizePx by remember { mutableIntStateOf(15) }
     var alignIndex by remember { mutableIntStateOf(0) }
+    var lineSpacing by remember { mutableStateOf("1.5") }
     var isBoldActive by remember { mutableStateOf(false) }
     var isItalicActive by remember { mutableStateOf(false) }
     var isUnderlineActive by remember { mutableStateOf(false) }
     var isStrikeActive by remember { mutableStateOf(false) }
-    var showWordCount by remember { mutableStateOf(false) } // Off by default — user toggles in Tools!
+    var showWordCount by remember { mutableStateOf(false) }
 
     var showStyleDropdown by remember { mutableStateOf(false) }
     var showFontDropdown by remember { mutableStateOf(false) }
     var showColorDropdown by remember { mutableStateOf(false) }
     var showHighlightDropdown by remember { mutableStateOf(false) }
+    var showSpacingDropdown by remember { mutableStateOf(false) }
     var showToolsDropdown by remember { mutableStateOf(false) }
+    var showPageSetupDialog by remember { mutableStateOf(false) }
     var showTableDialog by remember { mutableStateOf(false) }
     var showLinkDialog by remember { mutableStateOf(false) }
     var showMathDialog by remember { mutableStateOf(false) }
@@ -1331,7 +1681,16 @@ fun DocumentEditorViewport(
         webViewRef?.evaluateJavascript(script, null)
     }
 
-    // ── IMAGE PICKER (INSERT OR REPLACE) ──
+    fun applyAndPersistPageSetup(newSetup: DocPageSetup) {
+        pageSetup = newSetup
+        js("applyPageSetup(${newSetup.toJsConfigJson()});")
+        val (_, cleanBody) = DocPageSetup.extractFromContent(latestContent)
+        val packed = DocPageSetup.packWithContent(newSetup, cleanBody)
+        syncState.lastEmittedPacked = packed
+        latestOnContentChange(packed)
+    }
+
+    // ── IMAGE PICKER ──
     val imagePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         val replaceMode = isReplacingImage
         isReplacingImage = false
@@ -1366,9 +1725,12 @@ fun DocumentEditorViewport(
                     DocxDocumentCodec.importFromUri(context, uri)
                 }
                 result.onSuccess { imported ->
-                    syncState.lastEmittedHtml = imported.html
-                    js("setContentExternal(${JSONObject.quote(imported.html)});")
-                    latestOnContentChange(imported.html)
+                    val (importedSetup, importedBody) = DocPageSetup.extractFromContent(imported.html)
+                    pageSetup = importedSetup
+                    val packed = DocPageSetup.packWithContent(importedSetup, importedBody)
+                    syncState.lastEmittedPacked = packed
+                    js("applyPageSetup(${importedSetup.toJsConfigJson()}); setContentExternal(${JSONObject.quote(importedBody)});")
+                    latestOnContentChange(packed)
                     if (latestTitle.isBlank() || latestTitle.startsWith("Dokumen Teks Baru")) {
                         latestOnTitleChange(imported.title)
                     }
@@ -1380,7 +1742,7 @@ fun DocumentEditorViewport(
         }
     }
 
-    // ── EXPORT TO .DOCX (SAVE TO DEVICE / GOOGLE DRIVE) ──
+    // ── EXPORT TO .DOCX ──
     val exportDocxLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument(DocxDocumentCodec.MIME_DOCX)
     ) { uri: Uri? ->
@@ -1393,11 +1755,8 @@ fun DocumentEditorViewport(
                         } ?: error("Tidak dapat menulis file")
                     }
                 }
-                res.onSuccess {
-                    Toast.makeText(context, "Berhasil diekspor ke .docx ✓", Toast.LENGTH_SHORT).show()
-                }.onFailure { err ->
-                    Toast.makeText(context, "Gagal ekspor .docx: ${err.message}", Toast.LENGTH_LONG).show()
-                }
+                res.onSuccess { Toast.makeText(context, "Berhasil diekspor ke .docx ✓", Toast.LENGTH_SHORT).show() }
+                    .onFailure { err -> Toast.makeText(context, "Gagal ekspor .docx: ${err.message}", Toast.LENGTH_LONG).show() }
             }
         }
     }
@@ -1416,11 +1775,8 @@ fun DocumentEditorViewport(
                         } ?: error("Tidak dapat menulis file")
                     }
                 }
-                res.onSuccess {
-                    Toast.makeText(context, "Berhasil diekspor ke .html ✓", Toast.LENGTH_SHORT).show()
-                }.onFailure { err ->
-                    Toast.makeText(context, "Gagal ekspor .html: ${err.message}", Toast.LENGTH_LONG).show()
-                }
+                res.onSuccess { Toast.makeText(context, "Berhasil diekspor ke .html ✓", Toast.LENGTH_SHORT).show() }
+                    .onFailure { err -> Toast.makeText(context, "Gagal ekspor .html: ${err.message}", Toast.LENGTH_LONG).show() }
             }
         }
     }
@@ -1439,25 +1795,20 @@ fun DocumentEditorViewport(
                         } ?: error("Tidak dapat menulis file")
                     }
                 }
-                res.onSuccess {
-                    Toast.makeText(context, "Berhasil diekspor ke .txt ✓", Toast.LENGTH_SHORT).show()
-                }.onFailure { err ->
-                    Toast.makeText(context, "Gagal ekspor .txt: ${err.message}", Toast.LENGTH_LONG).show()
-                }
+                res.onSuccess { Toast.makeText(context, "Berhasil diekspor ke .txt ✓", Toast.LENGTH_SHORT).show() }
+                    .onFailure { err -> Toast.makeText(context, "Gagal ekspor .txt: ${err.message}", Toast.LENGTH_LONG).show() }
             }
         }
     }
 
-    // ── SHARE .DOCX VIA ANDROID SHARE SHEET ──
+    // ── SHARE AS .DOCX ──
     fun shareAsDocx() {
         scope.launch {
             val res = withContext(Dispatchers.IO) {
                 runCatching {
                     val dir = File(context.cacheDir, "exports").apply { if (!exists()) mkdirs() }
                     val file = File(dir, "${sanitizeFileName(latestTitle)}.docx")
-                    FileOutputStream(file).use { out ->
-                        DocxDocumentCodec.exportToDocx(latestContent, out)
-                    }
+                    FileOutputStream(file).use { out -> DocxDocumentCodec.exportToDocx(latestContent, out) }
                     file
                 }
             }
@@ -1480,10 +1831,18 @@ fun DocumentEditorViewport(
         }
     }
 
+    val pageBadgeText = remember(pageSetup) {
+        if (pageSetup.isPageless) "Pageless"
+        else {
+            val sz = pageSetup.paperSize.label.substringBefore(" /")
+            if (pageSetup.orientation == DocPageOrientation.LANDSCAPE) "$sz · L" else sz
+        }
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(if (isDarkTheme) Color(0xFF13141C) else Color(0xFFF1F5F9))
+            .background(if (isDarkTheme) Color(0xFF13141C) else Color(0xFFEEF2F6))
             .imePadding()
     ) {
         // ── TOOLBAR RIBBON ─────────────────────────────────────────────────
@@ -1516,10 +1875,7 @@ fun DocumentEditorViewport(
                             .clickable { showStyleDropdown = true }
                             .padding(horizontal = 6.dp)
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(3.dp)
-                        ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                             Text(selectedStyle.label, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = LernspaceTextPrimary)
                             Icon(Icons.Filled.ArrowDropDown, null, Modifier.size(15.dp), tint = LernspaceTextSecondary)
                         }
@@ -1527,13 +1883,7 @@ fun DocumentEditorViewport(
                     DropdownMenu(expanded = showStyleDropdown, onDismissRequest = { showStyleDropdown = false }) {
                         DocParagraphStyle.entries.forEach { style ->
                             DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        style.label,
-                                        fontWeight = if (style.isBold()) FontWeight.Bold else FontWeight.Normal,
-                                        fontSize = 13.sp
-                                    )
-                                },
+                                text = { Text(style.label, fontWeight = if (style.isBold()) FontWeight.Bold else FontWeight.Normal, fontSize = 13.sp) },
                                 onClick = {
                                     selectedStyle = style
                                     showStyleDropdown = false
@@ -1555,10 +1905,7 @@ fun DocumentEditorViewport(
                             .clickable { showFontDropdown = true }
                             .padding(horizontal = 6.dp)
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(3.dp)
-                        ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                             Text(selectedFont.label.substringBefore(" ("), fontSize = 12.sp, fontWeight = FontWeight.Medium, color = LernspaceTextPrimary)
                             Icon(Icons.Filled.ArrowDropDown, null, Modifier.size(15.dp), tint = LernspaceTextSecondary)
                         }
@@ -1586,15 +1933,9 @@ fun DocumentEditorViewport(
                 DocToolbarDiv()
 
                 // Font Size Stepper
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(1.dp)
-                ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(1.dp)) {
                     DocToolbarIcon(Icons.Filled.Remove, "Kecilkan") {
-                        if (fontSizePx > 10) {
-                            fontSizePx--
-                            js("setFontSize($fontSizePx);")
-                        }
+                        if (fontSizePx > 10) { fontSizePx--; js("setFontSize($fontSizePx);") }
                     }
                     Surface(
                         shape = RoundedCornerShape(4.dp),
@@ -1607,10 +1948,7 @@ fun DocumentEditorViewport(
                         }
                     }
                     DocToolbarIcon(Icons.Filled.Add, "Besarkan") {
-                        if (fontSizePx < 72) {
-                            fontSizePx++
-                            js("setFontSize($fontSizePx);")
-                        }
+                        if (fontSizePx < 72) { fontSizePx++; js("setFontSize($fontSizePx);") }
                     }
                 }
                 DocToolbarDiv()
@@ -1624,10 +1962,7 @@ fun DocumentEditorViewport(
                 // Text Color
                 Box {
                     IconButton(onClick = { showColorDropdown = true }, modifier = Modifier.size(30.dp)) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center
-                        ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                             Text("A", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = LernspaceTextPrimary)
                             Box(Modifier.size(width = 14.dp, height = 3.dp).background(Color(0xFF2563EB)))
                         }
@@ -1640,18 +1975,12 @@ fun DocumentEditorViewport(
                         ).forEach { (name, hex) ->
                             DropdownMenuItem(
                                 text = {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Box(Modifier.size(14.dp).clip(CircleShape).background(Color(android.graphics.Color.parseColor(hex))))
                                         Text(name, fontSize = 12.sp)
                                     }
                                 },
-                                onClick = {
-                                    js("setTextColor(${JSONObject.quote(hex)});")
-                                    showColorDropdown = false
-                                }
+                                onClick = { js("setTextColor(${JSONObject.quote(hex)});"); showColorDropdown = false }
                             )
                         }
                     }
@@ -1667,10 +1996,7 @@ fun DocumentEditorViewport(
                         ).forEach { (name, hex) ->
                             DropdownMenuItem(
                                 text = {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         if (hex.isNotEmpty()) {
                                             Box(Modifier.size(14.dp).clip(RoundedCornerShape(2.dp)).background(Color(android.graphics.Color.parseColor(hex))))
                                         }
@@ -1688,21 +2014,59 @@ fun DocumentEditorViewport(
                 }
                 DocToolbarDiv()
 
-                // Single Cycling Alignment Button
+                // Alignment Cycling + Line Spacing + Indent
                 Surface(
                     shape = RoundedCornerShape(5.dp),
                     color = Color.Transparent,
-                    modifier = Modifier
-                        .size(30.dp)
-                        .clickable {
-                            alignIndex = (alignIndex + 1) % 4
-                            js("alignText(${JSONObject.quote(alignModes[alignIndex])});")
-                        }
+                    modifier = Modifier.size(30.dp).clickable {
+                        alignIndex = (alignIndex + 1) % 4
+                        js("alignText(${JSONObject.quote(alignModes[alignIndex])});")
+                    }
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(alignIcons[alignIndex], alignLabels[alignIndex], Modifier.size(17.dp), tint = LernspaceTextPrimary)
                     }
                 }
+
+                // Line Spacing & First-line Indent Dropdown
+                Box {
+                    DocToolbarIcon(Icons.Filled.FormatLineSpacing, "Spasi Baris") { showSpacingDropdown = true }
+                    DropdownMenu(expanded = showSpacingDropdown, onDismissRequest = { showSpacingDropdown = false }) {
+                        listOf(
+                            "1.0" to "1.0 · Rapat (Single)",
+                            "1.15" to "1.15 · Standar GDocs",
+                            "1.5" to "1.5 · Standar Makalah",
+                            "2.0" to "2.0 · Spasi Ganda (Skripsi)"
+                        ).forEach { (mult, label) ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        label,
+                                        fontSize = 12.5.sp,
+                                        fontWeight = if (lineSpacing == mult) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (lineSpacing == mult) AccentBlue else LernspaceTextPrimary
+                                    )
+                                },
+                                onClick = {
+                                    lineSpacing = mult
+                                    js("setLineSpacing($mult);")
+                                    showSpacingDropdown = false
+                                }
+                            )
+                        }
+                        HorizontalDivider()
+                        DropdownMenuItem(
+                            text = { Text("Toggle Indentasi Baris Pertama (1.27 cm)", fontSize = 12.5.sp) },
+                            onClick = {
+                                js("toggleFirstLineIndent();")
+                                showSpacingDropdown = false
+                            }
+                        )
+                    }
+                }
+
+                DocToolbarIcon(Icons.AutoMirrored.Filled.FormatIndentDecrease, "Kurangi Indent") { js("adjustIndent(-36);") }
+                DocToolbarIcon(Icons.AutoMirrored.Filled.FormatIndentIncrease, "Tambah Indent") { js("adjustIndent(36);") }
                 DocToolbarDiv()
 
                 // Lists
@@ -1720,11 +2084,31 @@ fun DocumentEditorViewport(
                     imagePickerLauncher.launch("image/*")
                 }
                 DocToolbarIcon(Icons.Filled.TableChart, "Tabel") { showTableDialog = true }
+                DocToolbarIcon(Icons.Filled.InsertPageBreak, "Pemisah Halaman") { js("insertPageBreak();") }
                 DocToolbarIcon(Icons.Filled.HorizontalRule, "Garis") { js("insertHR();") }
                 DocToolbarIcon(Icons.Filled.FormatClear, "Hapus Format") { js("clearFormatting();") }
                 DocToolbarDiv()
 
-                // ── TOOLS & FILE COMPATIBILITY MENU (Word Count Toggle + DOCX Import/Export) ──
+                // Quick Paper Format Chip (1-Tap Page Setup!)
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = if (isDarkTheme) Color(0xFF2A2D3A) else Color.White,
+                    border = BorderStroke(1.dp, LernspaceBorder),
+                    modifier = Modifier
+                        .height(28.dp)
+                        .clickable { showPageSetupDialog = true }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(Icons.Filled.Description, null, Modifier.size(13.dp), tint = AccentBlue)
+                        Text(pageBadgeText, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = LernspaceTextPrimary)
+                    }
+                }
+
+                // Tools & File Compatibility Menu
                 Box {
                     Surface(
                         shape = RoundedCornerShape(6.dp),
@@ -1734,16 +2118,23 @@ fun DocumentEditorViewport(
                             .clickable { showToolsDropdown = true }
                             .padding(horizontal = 6.dp)
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(3.dp)
-                        ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                             Icon(Icons.Filled.Tune, "Alat & File", Modifier.size(15.dp), tint = if (showWordCount) AccentBlue else LernspaceTextPrimary)
                             Text("Alat", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = if (showWordCount) AccentBlue else LernspaceTextPrimary)
                             Icon(Icons.Filled.ArrowDropDown, null, Modifier.size(15.dp), tint = LernspaceTextSecondary)
                         }
                     }
                     DropdownMenu(expanded = showToolsDropdown, onDismissRequest = { showToolsDropdown = false }) {
+                        DropdownMenuItem(
+                            leadingIcon = { Icon(Icons.Filled.Description, null, Modifier.size(18.dp), tint = AccentBlue) },
+                            text = { Text("Penyiapan Halaman (A4, F4, Margin)", fontSize = 13.sp) },
+                            onClick = { showToolsDropdown = false; showPageSetupDialog = true }
+                        )
+                        DropdownMenuItem(
+                            leadingIcon = { Icon(Icons.Filled.InsertPageBreak, null, Modifier.size(18.dp), tint = LernspaceTextSecondary) },
+                            text = { Text("Sisipkan Pemisah Halaman", fontSize = 13.sp) },
+                            onClick = { showToolsDropdown = false; js("insertPageBreak();") }
+                        )
                         DropdownMenuItem(
                             leadingIcon = {
                                 Icon(
@@ -1764,49 +2155,34 @@ fun DocumentEditorViewport(
                         DropdownMenuItem(
                             leadingIcon = { Icon(Icons.Filled.FolderOpen, null, Modifier.size(18.dp), tint = AccentBlue) },
                             text = { Text("Buka / Impor (.docx, .md, .txt, .html)", fontSize = 13.sp) },
-                            onClick = {
-                                showToolsDropdown = false
-                                importDocLauncher.launch(DocxDocumentCodec.SUPPORTED_IMPORT_MIMES)
-                            }
+                            onClick = { showToolsDropdown = false; importDocLauncher.launch(DocxDocumentCodec.SUPPORTED_IMPORT_MIMES) }
                         )
                         DropdownMenuItem(
-                            leadingIcon = { Icon(Icons.Filled.Description, null, Modifier.size(18.dp), tint = Color(0xFF2563EB)) },
+                            leadingIcon = { Icon(Icons.Filled.SaveAs, null, Modifier.size(18.dp), tint = Color(0xFF2563EB)) },
                             text = { Text("Simpan sebagai Word / GDocs (.docx)", fontSize = 13.sp) },
-                            onClick = {
-                                showToolsDropdown = false
-                                exportDocxLauncher.launch("${sanitizeFileName(latestTitle)}.docx")
-                            }
+                            onClick = { showToolsDropdown = false; exportDocxLauncher.launch("${sanitizeFileName(latestTitle)}.docx") }
                         )
                         DropdownMenuItem(
                             leadingIcon = { Icon(Icons.Filled.Share, null, Modifier.size(18.dp), tint = Color(0xFF059669)) },
                             text = { Text("Bagikan sebagai .docx", fontSize = 13.sp) },
-                            onClick = {
-                                showToolsDropdown = false
-                                shareAsDocx()
-                            }
+                            onClick = { showToolsDropdown = false; shareAsDocx() }
                         )
                         DropdownMenuItem(
                             leadingIcon = { Icon(Icons.Filled.Code, null, Modifier.size(18.dp), tint = LernspaceTextSecondary) },
                             text = { Text("Ekspor ke HTML (.html)", fontSize = 13.sp) },
-                            onClick = {
-                                showToolsDropdown = false
-                                exportHtmlLauncher.launch("${sanitizeFileName(latestTitle)}.html")
-                            }
+                            onClick = { showToolsDropdown = false; exportHtmlLauncher.launch("${sanitizeFileName(latestTitle)}.html") }
                         )
                         DropdownMenuItem(
-                            leadingIcon = { Icon(Icons.Filled.TextSnippet, null, Modifier.size(18.dp), tint = LernspaceTextSecondary) },
+                            leadingIcon = { Icon(Icons.AutoMirrored.Filled.Notes, null, Modifier.size(18.dp), tint = LernspaceTextSecondary) },
                             text = { Text("Ekspor ke Teks (.txt)", fontSize = 13.sp) },
-                            onClick = {
-                                showToolsDropdown = false
-                                exportTxtLauncher.launch("${sanitizeFileName(latestTitle)}.txt")
-                            }
+                            onClick = { showToolsDropdown = false; exportTxtLauncher.launch("${sanitizeFileName(latestTitle)}.txt") }
                         )
                         DropdownMenuItem(
-                            leadingIcon = { Icon(Icons.Filled.Print, null, Modifier.size(18.dp), tint = LernspaceTextSecondary) },
-                            text = { Text("Cetak / Ekspor PDF", fontSize = 13.sp) },
+                            leadingIcon = { Icon(Icons.Filled.Print, null, Modifier.size(18.dp), tint = Color(0xFFDC2626)) },
+                            text = { Text("Cetak / Simpan PDF", fontSize = 13.sp) },
                             onClick = {
                                 showToolsDropdown = false
-                                onExportPdf()
+                                printWebViewDocumentToPdf(context, webViewRef, latestTitle, latestPageSetup)
                             }
                         )
                     }
@@ -1847,14 +2223,15 @@ fun DocumentEditorViewport(
             }
         }
 
-        // ── WEBVIEW EDITOR (CLEAN HEADERLESS PAPER, ZERO CURSOR JUMP) ──────
+        // ── WEBVIEW EDITOR (CLEAN HEADERLESS PAPER + PAGE SETUP) ───────────
         AndroidView(
             factory = { ctx ->
                 val bridge = DocumentJsBridge(
                     mainHandler = mainHandler,
-                    onContentChanged = { html ->
-                        syncState.lastEmittedHtml = html
-                        latestOnContentChange(html)
+                    onContentChanged = { bodyHtml ->
+                        val packed = DocPageSetup.packWithContent(latestPageSetup, bodyHtml)
+                        syncState.lastEmittedPacked = packed
+                        latestOnContentChange(packed)
                     },
                     onFormatStateChanged = { b, i, u, s, align ->
                         isBoldActive = b
@@ -1892,10 +2269,11 @@ fun DocumentEditorViewport(
                         }
                     }
 
-                    syncState.lastEmittedHtml = content
+                    syncState.lastEmittedPacked = content
                     syncState.lastAppliedDark = isDarkTheme
 
-                    val html = generateEditorHtml(isDarkTheme, content)
+                    val (initSetup, initBody) = DocPageSetup.extractFromContent(content)
+                    val html = generateEditorHtml(isDarkTheme, initBody, initSetup)
                     loadDataWithBaseURL("https://learnspace.local/", html, "text/html", "UTF-8", null)
                     webViewRef = this
                 }
@@ -1903,9 +2281,14 @@ fun DocumentEditorViewport(
             update = { wv ->
                 if (!syncState.isReady) return@AndroidView
 
-                if (content != syncState.lastEmittedHtml) {
-                    syncState.lastEmittedHtml = content
-                    val normalized = normalizeInitialBody(content)
+                if (content != syncState.lastEmittedPacked) {
+                    syncState.lastEmittedPacked = content
+                    val (extSetup, extBody) = DocPageSetup.extractFromContent(content)
+                    if (extSetup != pageSetup) {
+                        pageSetup = extSetup
+                        wv.evaluateJavascript("applyPageSetup(${extSetup.toJsConfigJson()});", null)
+                    }
+                    val normalized = normalizeInitialBody(extBody)
                     wv.evaluateJavascript("setContentExternal(${JSONObject.quote(normalized)});", null)
                 }
 
@@ -1917,6 +2300,18 @@ fun DocumentEditorViewport(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
+        )
+    }
+
+    // ── PAGE SETUP DIALOG ─────────────────────────────────────────────────
+    if (showPageSetupDialog) {
+        PageSetupDialog(
+            initialSetup = pageSetup,
+            onDismiss = { showPageSetupDialog = false },
+            onApply = { updated ->
+                applyAndPersistPageSetup(updated)
+                showPageSetupDialog = false
+            }
         )
     }
 
@@ -1960,10 +2355,7 @@ fun TableInsertDialog(onDismiss: () -> Unit, onInsert: (Int, Int) -> Unit) {
             modifier = Modifier.widthIn(min = 300.dp, max = 380.dp).wrapContentHeight()
         ) {
             Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(Icons.Filled.TableChart, null, tint = AccentBlue)
                     Text("Sisipkan Tabel", style = MaterialTheme.typography.titleMedium, color = LernspaceDark)
                 }
