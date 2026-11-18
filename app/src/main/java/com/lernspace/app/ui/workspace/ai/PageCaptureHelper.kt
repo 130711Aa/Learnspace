@@ -88,9 +88,14 @@ object PageCaptureHelper {
 
         // Draw Images
         for (img in state.imageElements) {
+            var tempSafeImg: Bitmap? = null
             try {
                 val raw = img.bitmap.asAndroidBitmap()
-                val safeImg = if (raw.config == Bitmap.Config.HARDWARE) raw.copy(Bitmap.Config.ARGB_8888, false) else raw
+                val safeImg = if (raw.config == Bitmap.Config.HARDWARE) {
+                    val copied = raw.copy(Bitmap.Config.ARGB_8888, false)
+                    tempSafeImg = copied
+                    copied
+                } else raw
                 val dstRect = RectF(
                     img.x * scaleX,
                     img.y * scaleY,
@@ -98,7 +103,10 @@ object PageCaptureHelper {
                     (img.y + img.height) * scaleY
                 )
                 canvas.drawBitmap(safeImg, null, dstRect, null)
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            } finally {
+                tempSafeImg?.recycle()
+            }
         }
 
         // Draw Strokes
@@ -184,9 +192,14 @@ object PageCaptureHelper {
 
         // Draw Images
         for (img in state.imageElements) {
+            var tempSafeImg: Bitmap? = null
             try {
                 val raw = img.bitmap.asAndroidBitmap()
-                val safeImg = if (raw.config == Bitmap.Config.HARDWARE) raw.copy(Bitmap.Config.ARGB_8888, false) else raw
+                val safeImg = if (raw.config == Bitmap.Config.HARDWARE) {
+                    val copied = raw.copy(Bitmap.Config.ARGB_8888, false)
+                    tempSafeImg = copied
+                    copied
+                } else raw
                 val dstRect = RectF(
                     img.x * scale,
                     img.y * scale,
@@ -194,7 +207,10 @@ object PageCaptureHelper {
                     (img.y + img.height) * scale
                 )
                 canvas.drawBitmap(safeImg, null, dstRect, null)
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            } finally {
+                tempSafeImg?.recycle()
+            }
         }
 
         // Draw Strokes

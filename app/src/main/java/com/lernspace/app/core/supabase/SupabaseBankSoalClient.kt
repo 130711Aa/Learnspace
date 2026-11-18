@@ -1,12 +1,17 @@
 package com.lernspace.app.core.supabase
 
+import android.content.Context
 import android.util.Log
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import com.lernspace.app.core.ai.GeneratedQuizQuestion
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
+import java.io.File
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
@@ -51,18 +56,35 @@ data class BankQuestion(
 object SupabaseBankSoalClient {
 
     private const val TAG = "SupabaseBankSoal"
+    private const val CACHE_FILE_NAME = "bank_soal_offline_cache.json"
+
     const val SUPABASE_URL = "https://bcmpfokmuegoomcnpxis.supabase.co"
     const val SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJjbXBmb2ttdWVnb29tY25weGlzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQ4OTczNTIsImV4cCI6MjExMDQ3MzM1Mn0.wKvG5K90z3l7JY02u5AvAnx_SENfEjuBQk69pkU7HOA"
 
+    private var appContext: Context? = null
+
+    /**
+     * Observable state indicating if the last loaded question list came from offline cache.
+     */
+    var isOperatingOffline by mutableStateOf(false)
+        private set
+
+    fun init(context: Context) {
+        appContext = context.applicationContext
+    }
+
     /**
      * Fetch questions from Supabase with their associated question_options.
-     * Optionally filtered by subjectName, topicTitle, subtopicTitle, or difficulty.
+     * Supports pagination via [limit] and [offset].
+     * If network connection fails, automatically falls back to offline cached questions.
      */
     suspend fun fetchQuestions(
         subjectName: String? = null,
         topicTitle: String? = null,
         subtopicTitle: String? = null,
-        difficulty: String? = null
+        difficulty: String? = null,
+        limit: Int = 100,
+        offset: Int = 0
     ): Result<List<BankQuestion>> = withContext(Dispatchers.IO) {
         try {
             val queryParams = mutableListOf("select=*,question_options(*)", "order=created_at.desc")
@@ -79,6 +101,10 @@ object SupabaseBankSoalClient {
             if (!difficulty.isNullOrBlank() && difficulty != "Semua") {
                 queryParams.add("difficulty=eq.${URLEncoder.encode(difficulty, "UTF-8")}")
             }
+            queryParams.add("limit=$limit")
+            if (offset > 0) {
+                queryParams.add("offset=$offset")
+            }
 
             val urlString = "$SUPABASE_URL/rest/v1/questions?${queryParams.joinToString("&")}"
             val url = URL(urlString)
@@ -87,82 +113,168 @@ object SupabaseBankSoalClient {
                 setRequestProperty("apikey", SUPABASE_ANON_KEY)
                 setRequestProperty("Authorization", "Bearer $SUPABASE_ANON_KEY")
                 setRequestProperty("Accept", "application/json")
-                connectTimeout = 15000
-                readTimeout = 20000
+                connectTimeout = 12000
+                readTimeout = 15000
             }
 
             val responseCode = conn.responseCode
             if (responseCode !in 200..299) {
                 val errorStream = conn.errorStream?.let { InputStreamReader(it).readText() } ?: "HTTP $responseCode"
-                return@withContext Result.failure(Exception("Gagal mengambil soal dari Supabase ($responseCode): $errorStream"))
+                throw Exception("Supabase HTTP $responseCode: $errorStream")
             }
 
             val responseBody = conn.inputStream.bufferedReader().use(BufferedReader::readText)
-            val jsonArray = JSONArray(responseBody)
-            val questions = mutableListOf<BankQuestion>()
+            val questions = parseQuestionsJson(responseBody)
 
-            for (i in 0 until jsonArray.length()) {
-                val qObj = jsonArray.getJSONObject(i)
-                val qId = qObj.optString("id")
-                val subjCode = qObj.optString("subject_code", "").takeIf { it.isNotBlank() }
-                val subjName = qObj.optString("subject_name", "Umum")
-                val topic = qObj.optString("topic_title", "Umum")
-                val subtopic = qObj.optString("subtopic_title", "").takeIf { it.isNotBlank() }
-                val text = qObj.optString("question_text", "")
-                val type = qObj.optString("question_type", "MULTIPLE_CHOICE")
-                val diff = qObj.optString("difficulty", "MEDIUM")
-                val expl = qObj.optString("explanation", "").takeIf { it.isNotBlank() }
-                val createdAt = qObj.optString("created_at", "")
-
-                val tagsList = mutableListOf<String>()
-                val tagsArr = qObj.optJSONArray("tags")
-                if (tagsArr != null) {
-                    for (t in 0 until tagsArr.length()) {
-                        tagsList.add(tagsArr.optString(t))
-                    }
-                }
-
-                val optionsList = mutableListOf<BankQuestionOption>()
-                val optsArr = qObj.optJSONArray("question_options")
-                if (optsArr != null) {
-                    for (o in 0 until optsArr.length()) {
-                        val optObj = optsArr.getJSONObject(o)
-                        optionsList.add(
-                            BankQuestionOption(
-                                id = optObj.optString("id", UUID.randomUUID().toString()),
-                                questionId = optObj.optString("question_id", qId),
-                                optionKey = optObj.optString("option_key", "${'A' + o}"),
-                                optionText = optObj.optString("option_text", ""),
-                                isCorrect = optObj.optBoolean("is_correct", false),
-                                orderIndex = optObj.optInt("order_index", o + 1)
-                            )
-                        )
-                    }
-                }
-                optionsList.sortBy { it.orderIndex }
-
-                questions.add(
-                    BankQuestion(
-                        id = qId,
-                        subjectCode = subjCode,
-                        subjectName = subjName,
-                        topicTitle = topic,
-                        subtopicTitle = subtopic,
-                        questionText = text,
-                        questionType = type,
-                        difficulty = diff,
-                        explanation = expl,
-                        tags = tagsList,
-                        options = optionsList,
-                        createdAt = createdAt
-                    )
-                )
+            // Cache successfully fetched questions to disk for offline access
+            if (questions.isNotEmpty()) {
+                saveQuestionsToCache(questions)
             }
+            isOperatingOffline = false
 
             Result.success(questions)
         } catch (e: Exception) {
-            Log.e(TAG, "fetchQuestions error: ${e.message}", e)
-            Result.failure(e)
+            Log.w(TAG, "fetchQuestions network failed: ${e.message}. Attempting offline cache fallback.")
+            val cached = loadQuestionsFromCache()
+            if (cached.isNotEmpty()) {
+                isOperatingOffline = true
+                var filtered = cached
+                if (!subjectName.isNullOrBlank() && subjectName != "Semua") {
+                    filtered = filtered.filter { it.subjectName.equals(subjectName, ignoreCase = true) }
+                }
+                if (!topicTitle.isNullOrBlank() && topicTitle != "Semua") {
+                    filtered = filtered.filter { it.topicTitle.equals(topicTitle, ignoreCase = true) }
+                }
+                if (!subtopicTitle.isNullOrBlank() && subtopicTitle != "Semua") {
+                    filtered = filtered.filter { it.subtopicTitle?.equals(subtopicTitle, ignoreCase = true) == true }
+                }
+                if (!difficulty.isNullOrBlank() && difficulty != "Semua") {
+                    filtered = filtered.filter { it.difficulty.equals(difficulty, ignoreCase = true) }
+                }
+                Result.success(filtered)
+            } else {
+                Result.failure(e)
+            }
+        }
+    }
+
+    private fun parseQuestionsJson(jsonString: String): List<BankQuestion> {
+        val jsonArray = JSONArray(jsonString)
+        val questions = mutableListOf<BankQuestion>()
+
+        for (i in 0 until jsonArray.length()) {
+            val qObj = jsonArray.getJSONObject(i)
+            val qId = qObj.optString("id")
+            val subjCode = qObj.optString("subject_code", "").takeIf { it.isNotBlank() }
+            val subjName = qObj.optString("subject_name", "Umum")
+            val topic = qObj.optString("topic_title", "Umum")
+            val subtopic = qObj.optString("subtopic_title", "").takeIf { it.isNotBlank() }
+            val text = qObj.optString("question_text", "")
+            val type = qObj.optString("question_type", "MULTIPLE_CHOICE")
+            val diff = qObj.optString("difficulty", "MEDIUM")
+            val expl = qObj.optString("explanation", "").takeIf { it.isNotBlank() }
+            val createdAt = qObj.optString("created_at", "")
+
+            val tagsList = mutableListOf<String>()
+            val tagsArr = qObj.optJSONArray("tags")
+            if (tagsArr != null) {
+                for (t in 0 until tagsArr.length()) {
+                    tagsList.add(tagsArr.optString(t))
+                }
+            }
+
+            val optionsList = mutableListOf<BankQuestionOption>()
+            val optsArr = qObj.optJSONArray("question_options")
+            if (optsArr != null) {
+                for (o in 0 until optsArr.length()) {
+                    val optObj = optsArr.getJSONObject(o)
+                    optionsList.add(
+                        BankQuestionOption(
+                            id = optObj.optString("id", UUID.randomUUID().toString()),
+                            questionId = optObj.optString("question_id", qId),
+                            optionKey = optObj.optString("option_key", "${'A' + o}"),
+                            optionText = optObj.optString("option_text", ""),
+                            isCorrect = optObj.optBoolean("is_correct", false),
+                            orderIndex = optObj.optInt("order_index", o + 1)
+                        )
+                    )
+                }
+            }
+            optionsList.sortBy { it.orderIndex }
+
+            questions.add(
+                BankQuestion(
+                    id = qId,
+                    subjectCode = subjCode,
+                    subjectName = subjName,
+                    topicTitle = topic,
+                    subtopicTitle = subtopic,
+                    questionText = text,
+                    questionType = type,
+                    difficulty = diff,
+                    explanation = expl,
+                    tags = tagsList,
+                    options = optionsList,
+                    createdAt = createdAt
+                )
+            )
+        }
+        return questions
+    }
+
+    private fun saveQuestionsToCache(questions: List<BankQuestion>) {
+        val ctx = appContext ?: return
+        try {
+            val rootArray = JSONArray()
+            questions.forEach { q ->
+                val qObj = JSONObject().apply {
+                    put("id", q.id)
+                    put("subject_code", q.subjectCode ?: "")
+                    put("subject_name", q.subjectName)
+                    put("topic_title", q.topicTitle)
+                    put("subtopic_title", q.subtopicTitle ?: "")
+                    put("question_text", q.questionText)
+                    put("question_type", q.questionType)
+                    put("difficulty", q.difficulty)
+                    put("explanation", q.explanation ?: "")
+                    put("created_at", q.createdAt ?: "")
+                    put("tags", JSONArray(q.tags))
+
+                    val optsArr = JSONArray()
+                    q.options.forEach { opt ->
+                        optsArr.put(
+                            JSONObject().apply {
+                                put("id", opt.id)
+                                put("question_id", opt.questionId)
+                                put("option_key", opt.optionKey)
+                                put("option_text", opt.optionText)
+                                put("is_correct", opt.isCorrect)
+                                put("order_index", opt.orderIndex)
+                            }
+                        )
+                    }
+                    put("question_options", optsArr)
+                }
+                rootArray.put(qObj)
+            }
+            val cacheFile = File(ctx.filesDir, CACHE_FILE_NAME)
+            cacheFile.writeText(rootArray.toString())
+        } catch (e: Exception) {
+            Log.e(TAG, "saveQuestionsToCache error: ${e.message}")
+        }
+    }
+
+    private fun loadQuestionsFromCache(): List<BankQuestion> {
+        val ctx = appContext ?: return emptyList()
+        return try {
+            val cacheFile = File(ctx.filesDir, CACHE_FILE_NAME)
+            if (!cacheFile.exists()) return emptyList()
+            val text = cacheFile.readText()
+            if (text.isBlank()) return emptyList()
+            parseQuestionsJson(text)
+        } catch (e: Exception) {
+            Log.e(TAG, "loadQuestionsFromCache error: ${e.message}")
+            emptyList()
         }
     }
 

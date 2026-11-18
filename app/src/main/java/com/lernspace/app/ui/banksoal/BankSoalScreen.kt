@@ -153,18 +153,29 @@ fun BankSoalScreen(
         if (!availableSubtopics.contains(selectedSubtopic)) selectedSubtopic = "Semua"
     }
 
+    // Debounce search query to prevent high-frequency list filtering on every keystroke
+    var debouncedSearchQuery by remember { mutableStateOf("") }
+    LaunchedEffect(searchQuery) {
+        if (searchQuery.isBlank()) {
+            debouncedSearchQuery = ""
+        } else {
+            delay(250L)
+            debouncedSearchQuery = searchQuery
+        }
+    }
+
     // Filtered questions based on search & taxonomy
-    val filteredQuestions = remember(allQuestions, selectedSubject, selectedTopic, selectedSubtopic, selectedDifficulty, searchQuery) {
+    val filteredQuestions = remember(allQuestions, selectedSubject, selectedTopic, selectedSubtopic, selectedDifficulty, debouncedSearchQuery) {
         allQuestions.filter { q ->
             val matchSubject = selectedSubject == "Semua" || q.subjectName == selectedSubject
             val matchTopic = selectedTopic == "Semua" || q.topicTitle == selectedTopic
             val matchSubtopic = selectedSubtopic == "Semua" || q.subtopicTitle == selectedSubtopic
             val matchDiff = selectedDifficulty == "Semua" || q.difficulty.equals(selectedDifficulty, ignoreCase = true)
-            val matchSearch = searchQuery.isBlank() ||
-                    q.questionText.contains(searchQuery, ignoreCase = true) ||
-                    q.subjectName.contains(searchQuery, ignoreCase = true) ||
-                    q.topicTitle.contains(searchQuery, ignoreCase = true) ||
-                    (q.subtopicTitle?.contains(searchQuery, ignoreCase = true) == true)
+            val matchSearch = debouncedSearchQuery.isBlank() ||
+                    q.questionText.contains(debouncedSearchQuery, ignoreCase = true) ||
+                    q.subjectName.contains(debouncedSearchQuery, ignoreCase = true) ||
+                    q.topicTitle.contains(debouncedSearchQuery, ignoreCase = true) ||
+                    (q.subtopicTitle?.contains(debouncedSearchQuery, ignoreCase = true) == true)
             matchSubject && matchTopic && matchSubtopic && matchDiff && matchSearch
         }
     }
@@ -499,6 +510,42 @@ private fun BankSoalCompactBrowseView(
                         Icon(Icons.Filled.Replay, null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("Latihan Ulang Koleksi (${attemptedQuestions.size})", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+
+        // Offline Cache Indicator Banner
+        if (SupabaseBankSoalClient.isOperatingOffline) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = AccentAmber.copy(alpha = 0.12f),
+                shape = RoundedCornerShape(8.dp),
+                border = BorderStroke(1.dp, AccentAmber.copy(alpha = 0.35f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        Icons.Filled.CloudOff,
+                        contentDescription = null,
+                        tint = AccentAmber,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = "Mode Offline: Menampilkan ${allQuestions.size} soal tersimpan di perangkat. Latihan mandiri & lembar coretan tetap aktif.",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = LernspaceDark,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(
+                        onClick = onRefresh,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Text("Hubungkan Ulang", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = AccentAmber)
                     }
                 }
             }

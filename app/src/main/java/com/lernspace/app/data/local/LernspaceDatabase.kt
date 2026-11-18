@@ -96,7 +96,7 @@ abstract class LernspaceDatabase : RoomDatabase() {
                     "lernspace_database"
                 )
                     .addMigrations(MIGRATION_2_3)
-                    .fallbackToDestructiveMigration()
+                    .fallbackToDestructiveMigrationOnDowngrade(true)
                     .build()
                 INSTANCE = instance
                 instance
