@@ -14,7 +14,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -22,10 +22,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
@@ -57,14 +55,12 @@ data class RadarAxisItem(
     val score: Float, // 0.0f .. 1.0f
     val formattedScore: String,
     val subtitle: String,
-    val color: Color = AccentBlue,
-    val icon: ImageVector? = null,
     val associatedSubjectId: String? = null
 )
 
 enum class RadarMode(val title: String, val subtitle: String) {
-    SUBJECTS("Peta Mata Kuliah", "Tingkat penguasaan per mata pelajaran"),
-    COGNITIVE("6 Dimensi Kognitif", "Peta gaya & pilar kemampuan belajar")
+    SUBJECTS("Peta Mata Kuliah", "Tingkat penguasaan tiap mata pelajaran"),
+    COGNITIVE("6 Dimensi Kognitif", "Peta pilar kemampuan belajar kognitif")
 }
 
 @Composable
@@ -89,14 +85,13 @@ fun CompetencyRadarCockpitCard(
         val effectiveSubjects = if (subjects.size >= 3) {
             subjects
         } else {
-            // Baseline academic subjects if user has fewer than 3 subjects
             val defaults = listOf(
-                SubjectUi("matematika", "Matematika", "MTK", color = Color(0xFF2563EB)),
-                SubjectUi("fisika", "Fisika", "FIS", color = Color(0xFF0284C7)),
-                SubjectUi("biologi", "Biologi", "BIO", color = Color(0xFF059669)),
-                SubjectUi("kimia", "Kimia", "KIM", color = Color(0xFFD97706)),
-                SubjectUi("informatika", "Informatika", "INF", color = Color(0xFF8B5CF6)),
-                SubjectUi("bahasa", "B. Inggris", "ENG", color = Color(0xFFEC4899))
+                SubjectUi("matematika", "Matematika", "MTK"),
+                SubjectUi("fisika", "Fisika", "FIS"),
+                SubjectUi("biologi", "Biologi", "BIO"),
+                SubjectUi("kimia", "Kimia", "KIM"),
+                SubjectUi("informatika", "Informatika", "INF"),
+                SubjectUi("bahasa", "B. Inggris", "ENG")
             )
             (subjects + defaults).distinctBy { it.name }.take(6)
         }
@@ -110,13 +105,12 @@ fun CompetencyRadarCockpitCard(
             val rawScore = if (subTopics.isNotEmpty()) {
                 (mastered * 1.0f + comfortable * 0.75f + learning * 0.40f) / subTopics.size
             } else {
-                // Baseline score heuristic
                 when (subject.name.lowercase()) {
                     "matematika" -> 0.88f
                     "fisika" -> 0.52f
                     "biologi" -> 0.78f
                     "kimia" -> 0.65f
-                    "informatika" -> 0.92f
+                    "informatika" -> 0.90f
                     else -> 0.70f
                 }
             }
@@ -132,8 +126,6 @@ fun CompetencyRadarCockpitCard(
                 score = finalScore,
                 formattedScore = "$pct%",
                 subtitle = if (subTopics.isNotEmpty()) "$mastered/${subTopics.size} Topik Dikuasai" else "Syllabus Aktif",
-                color = subject.color,
-                icon = Icons.Filled.School,
                 associatedSubjectId = subject.id
             )
         }
@@ -162,60 +154,12 @@ fun CompetencyRadarCockpitCard(
         totalTopics, masteredTopics, totalBankAttempts, correctBankAttempts, totalWeeklyHours, completedTasks, totalTasks
     ) {
         listOf(
-            RadarAxisItem(
-                id = "concept",
-                label = "Konsep",
-                score = conceptScore,
-                formattedScore = "${(conceptScore * 100).toInt()}%",
-                subtitle = "$masteredTopics dari $totalTopics Topik Dikuasai",
-                color = Color(0xFF2563EB),
-                icon = Icons.Filled.MenuBook
-            ),
-            RadarAxisItem(
-                id = "problem_solving",
-                label = "Problem Solving",
-                score = problemSolvingScore,
-                formattedScore = "${(problemSolvingScore * 100).toInt()}%",
-                subtitle = if (totalBankAttempts > 0) "$correctBankAttempts/$totalBankAttempts Soal Benar" else "Akurasi Kuis & Latihan Soal",
-                color = Color(0xFF8B5CF6),
-                icon = Icons.Filled.Psychology
-            ),
-            RadarAxisItem(
-                id = "memory",
-                label = "Daya Ingat",
-                score = memoryScore,
-                formattedScore = "${(memoryScore * 100).toInt()}%",
-                subtitle = "Retensi Spaced Repetition",
-                color = Color(0xFFEC4899),
-                icon = Icons.Filled.Style
-            ),
-            RadarAxisItem(
-                id = "discipline",
-                label = "Disiplin Jam",
-                score = disciplineScore,
-                formattedScore = "${(disciplineScore * 100).toInt()}%",
-                subtitle = String.format(Locale.US, "%.1f Jam / Minggu", totalWeeklyHours),
-                color = Color(0xFF10B981),
-                icon = Icons.Filled.Timer
-            ),
-            RadarAxisItem(
-                id = "task_execution",
-                label = "Eksekusi Tugas",
-                score = taskExecutionScore,
-                formattedScore = "${(taskExecutionScore * 100).toInt()}%",
-                subtitle = "$completedTasks dari $totalTasks Tugas Tuntas",
-                color = Color(0xFF06B6D4),
-                icon = Icons.Filled.CheckCircle
-            ),
-            RadarAxisItem(
-                id = "synthesis",
-                label = "Sintesis Catatan",
-                score = notesSynthesisScore,
-                formattedScore = "${(notesSynthesisScore * 100).toInt()}%",
-                subtitle = "${AcademicWorkspaceState.notes.size} Catatan & Modul",
-                color = Color(0xFFF59E0B),
-                icon = Icons.Filled.EditNote
-            )
+            RadarAxisItem("concept", "Konsep", conceptScore, "${(conceptScore * 100).toInt()}%", "$masteredTopics/$totalTopics Topik"),
+            RadarAxisItem("problem_solving", "Problem Solving", problemSolvingScore, "${(problemSolvingScore * 100).toInt()}%", if (totalBankAttempts > 0) "$correctBankAttempts/$totalBankAttempts Soal Benar" else "Akurasi Latihan"),
+            RadarAxisItem("memory", "Daya Ingat", memoryScore, "${(memoryScore * 100).toInt()}%", "Retensi Spaced Repetition"),
+            RadarAxisItem("discipline", "Disiplin", disciplineScore, "${(disciplineScore * 100).toInt()}%", String.format(Locale.US, "%.1f Jam/Minggu", totalWeeklyHours)),
+            RadarAxisItem("task_execution", "Tugas", taskExecutionScore, "${(taskExecutionScore * 100).toInt()}%", "$completedTasks/$totalTasks Tuntas"),
+            RadarAxisItem("synthesis", "Catatan", notesSynthesisScore, "${(notesSynthesisScore * 100).toInt()}%", "${AcademicWorkspaceState.notes.size} Dokumen")
         )
     }
 
@@ -227,115 +171,69 @@ fun CompetencyRadarCockpitCard(
     val topStrength = remember(currentAxes) { currentAxes.maxByOrNull { it.score } ?: currentAxes[0] }
     val weakestArea = remember(currentAxes) { currentAxes.minByOrNull { it.score } ?: currentAxes[0] }
 
-    // Cognitive Persona Title
-    val cognitivePersona = remember(currentAxes, topStrength) {
+    val personaTitle = remember(currentAxes, topStrength) {
         val scoreDiff = (currentAxes.maxOf { it.score } - currentAxes.minOf { it.score })
         when {
-            scoreDiff < 0.16f -> PersonaInfo(
-                title = "The Balanced Polymath",
-                badge = "🌌 Multitalenta Seimbang",
-                desc = "Profil kompetensimu merata di setiap sudut radar. Kamu memiliki keseimbangan prima antara teori, logika, dan konsistensi belajar."
-            )
-            topStrength.label.contains("Matematika", ignoreCase = true) || topStrength.label.contains("Problem", ignoreCase = true) -> PersonaInfo(
-                title = "The Analytical Strategist",
-                badge = "⚡ Pemikir Analitis",
-                desc = "Kekuatan terbesarmu terletak pada penalaran logis, akurasi pemecahan masalah, dan kecepatan mencerna pola hitungan."
-            )
-            topStrength.label.contains("Disiplin", ignoreCase = true) || topStrength.label.contains("Jam", ignoreCase = true) -> PersonaInfo(
-                title = "The Relentless Achiever",
-                badge = "🛡️ Pejuang Konsisten",
-                desc = "Ketahanan mental, streak belajar, dan alokasi waktu fokus mingguanmu adalah motor utama yang membawa kemajuan pesat."
-            )
-            topStrength.label.contains("Konsep", ignoreCase = true) || topStrength.label.contains("Sains", ignoreCase = true) -> PersonaInfo(
-                title = "The Concept Architect",
-                badge = "🧠 Penguasa Konsep",
-                desc = "Kamu tidak hanya menghafal, tetapi memahami esensi dan struktur ilmu secara komprehensif hingga ke akar teorinya."
-            )
-            topStrength.label.contains("Daya Ingat", ignoreCase = true) || topStrength.label.contains("Flashcard", ignoreCase = true) -> PersonaInfo(
-                title = "The Memory Prodigy",
-                badge = "📚 Master Retensi",
-                desc = "Daya simpan memori jangka panjangmu sangat tajam berkat pengulangan terjadwal (spaced repetition) yang teratur."
-            )
-            else -> PersonaInfo(
-                title = "The Agile Explorer",
-                badge = "🚀 Pembelajar Proaktif",
-                desc = "Kamu adaptif dan cepat menangkap berbagai materi baru dengan dorongan eksplorasi yang tinggi."
-            )
+            scoreDiff < 0.16f -> "The Balanced Polymath" to "Profil belajar seimbang di seluruh dimensi materi."
+            topStrength.label.contains("Matematika", ignoreCase = true) || topStrength.label.contains("Problem", ignoreCase = true) ->
+                "The Analytical Strategist" to "Pola berpikir analitis dan penalaran logis sangat dominan."
+            topStrength.label.contains("Disiplin", ignoreCase = true) || topStrength.label.contains("Jam", ignoreCase = true) ->
+                "The Relentless Achiever" to "Konsistensi tinggi dan alokasi jam studi adalah kekuatan utamamu."
+            topStrength.label.contains("Konsep", ignoreCase = true) || topStrength.label.contains("Sains", ignoreCase = true) ->
+                "The Concept Architect" to "Pemahaman teori dan struktur konsep sangat kokoh."
+            else -> "The Agile Scholar" to "Cepat beradaptasi dan mencerna konsep materi baru."
         }
     }
 
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .border(1.dp, LernspaceBorder, RoundedCornerShape(16.dp)),
+            .clip(RoundedCornerShape(14.dp))
+            .border(1.dp, LernspaceBorder, RoundedCornerShape(14.dp)),
         color = LernspaceSurfaceCard,
-        shadowElevation = 2.dp
+        shadowElevation = 1.dp
     ) {
         Column(
-            modifier = Modifier.padding(22.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp)
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // ── Cockpit Header & Mode Switcher ──────────────────────────────
+            // ── Header & Minimal Mode Switcher ───────────────────────────────
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(34.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(Color(0xFF2563EB).copy(alpha = 0.12f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Radar,
-                                contentDescription = null,
-                                tint = Color(0xFF2563EB),
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                        Column {
-                            Text(
-                                text = "Radar Kompetensi & Analisis Bakat",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = LernspaceDark
-                            )
-                            Text(
-                                text = selectedMode.subtitle,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = LernspaceTextSecondary
-                            )
-                        }
-                    }
+                    Text(
+                        text = "Radar Kompetensi & Analisis",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = LernspaceDark
+                    )
+                    Text(
+                        text = selectedMode.subtitle,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = LernspaceTextSecondary
+                    )
                 }
 
-                // Toggle Mode Switcher (Mapel vs Dimensi Kognitif)
+                // Minimalist Pill Tabs
                 Surface(
-                    shape = RoundedCornerShape(24.dp),
+                    shape = RoundedCornerShape(20.dp),
                     color = LernspaceSurfaceLow,
                     border = BorderStroke(1.dp, LernspaceBorder)
                 ) {
                     Row(
                         modifier = Modifier.padding(3.dp),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
-                        RadarModeTabPill(
-                            title = "Peta Mapel",
-                            icon = Icons.Filled.School,
+                        MinimalTabPill(
+                            title = "Mata Kuliah",
                             isSelected = selectedMode == RadarMode.SUBJECTS,
                             onClick = { selectedMode = RadarMode.SUBJECTS }
                         )
-                        RadarModeTabPill(
+                        MinimalTabPill(
                             title = "Dimensi Kognitif",
-                            icon = Icons.Filled.Psychology,
                             isSelected = selectedMode == RadarMode.COGNITIVE,
                             onClick = { selectedMode = RadarMode.COGNITIVE }
                         )
@@ -343,17 +241,17 @@ fun CompetencyRadarCockpitCard(
                 }
             }
 
-            // ── Main Two-Column Cockpit Layout ──────────────────────────────
+            // ── Cockpit Split Layout (Chart + Analysis) ──────────────────────
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(24.dp),
+                horizontalArrangement = Arrangement.spacedBy(20.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // ── Left: Spider Radar Canvas (50% Width) ───────────────────
+                // ── Left: Minimal Spider Radar Canvas ────────────────────────
                 Box(
                     modifier = Modifier
                         .weight(0.48f)
-                        .height(340.dp),
+                        .height(300.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     SpiderRadarCanvas(
@@ -364,17 +262,16 @@ fun CompetencyRadarCockpitCard(
                     )
                 }
 
-                // ── Right: Mimo's Talent Diagnostic & Action Panel (50% Width)
+                // ── Right: Minimalist Diagnostics & Action Panel ─────────────
                 Column(
-                    modifier = Modifier
-                        .weight(0.52f),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    modifier = Modifier.weight(0.52f),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    // Persona Card Banner
+                    // Persona Row
                     Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = Color(0xFF0F172A),
-                        border = BorderStroke(1.dp, Color(0xFF334155)),
+                        shape = RoundedCornerShape(10.dp),
+                        color = LernspaceSurfaceLow,
+                        border = BorderStroke(1.dp, LernspaceBorder),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
@@ -384,63 +281,45 @@ fun CompetencyRadarCockpitCard(
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(36.dp)
+                                    .size(28.dp)
                                     .clip(CircleShape)
-                                    .background(Color(0xFF38BDF8).copy(alpha = 0.20f)),
+                                    .background(LernspaceDark.copy(alpha = 0.08f)),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
-                                    imageVector = Icons.Filled.AutoAwesome,
+                                    imageVector = Icons.Filled.Insights,
                                     contentDescription = null,
-                                    tint = Color(0xFF38BDF8),
-                                    modifier = Modifier.size(20.dp)
+                                    tint = LernspaceDark,
+                                    modifier = Modifier.size(16.dp)
                                 )
                             }
                             Column {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Text(
-                                        text = cognitivePersona.title,
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color.White
-                                    )
-                                    Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = Color(0xFF334155)
-                                    ) {
-                                        Text(
-                                            text = cognitivePersona.badge,
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = Color(0xFF7DD3FC),
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                        )
-                                    }
-                                }
                                 Text(
-                                    text = cognitivePersona.desc,
+                                    text = personaTitle.first,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = LernspaceDark
+                                )
+                                Text(
+                                    text = personaTitle.second,
                                     style = MaterialTheme.typography.bodySmall,
                                     fontSize = 11.sp,
-                                    color = Color(0xFF94A3B8),
-                                    lineHeight = 15.sp
+                                    color = LernspaceTextSecondary
                                 )
                             }
                         }
                     }
 
-                    // Superpower & Blindspot Split Cards
+                    // Strength & Weakness Minimal Cards
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        // Superpower Card
+                        // Strength Tile
                         Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = Color(0xFFFEF3C7).copy(alpha = 0.50f),
-                            border = BorderStroke(1.dp, Color(0xFFFDE68A)),
+                            shape = RoundedCornerShape(10.dp),
+                            color = LernspaceSurfaceLow,
+                            border = BorderStroke(1.dp, LernspaceBorder),
                             modifier = Modifier.weight(1f)
                         ) {
                             Column(
@@ -452,38 +331,37 @@ fun CompetencyRadarCockpitCard(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Filled.WorkspacePremium,
+                                        imageVector = Icons.AutoMirrored.Filled.TrendingUp,
                                         contentDescription = null,
-                                        tint = Color(0xFFD97706),
-                                        modifier = Modifier.size(16.dp)
+                                        tint = LernspaceDark,
+                                        modifier = Modifier.size(14.dp)
                                     )
                                     Text(
                                         text = "Kekuatan Utama",
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.Bold,
-                                        color = Color(0xFF92400E)
+                                        color = LernspaceTextSecondary
                                     )
                                 }
                                 Text(
-                                    text = "${topStrength.label} (${topStrength.formattedScore})",
-                                    style = MaterialTheme.typography.titleSmall,
+                                    text = "${topStrength.label} · ${topStrength.formattedScore}",
+                                    style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF78350F)
+                                    color = LernspaceDark
                                 )
                                 Text(
-                                    text = "Unggul paling tinggi. ${topStrength.subtitle}. Jadikan bidang ini fondasi untuk materi lanjutan.",
+                                    text = topStrength.subtitle,
                                     fontSize = 11.sp,
-                                    color = Color(0xFF92400E),
-                                    lineHeight = 15.sp
+                                    color = LernspaceTextSecondary
                                 )
                             }
                         }
 
-                        // Growth Opportunity / Blindspot Card
+                        // Growth Area Tile
                         Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = Color(0xFFFEE2E2).copy(alpha = 0.50f),
-                            border = BorderStroke(1.dp, Color(0xFFFECACA)),
+                            shape = RoundedCornerShape(10.dp),
+                            color = LernspaceSurfaceLow,
+                            border = BorderStroke(1.dp, LernspaceBorder),
                             modifier = Modifier.weight(1f)
                         ) {
                             Column(
@@ -497,107 +375,96 @@ fun CompetencyRadarCockpitCard(
                                     Icon(
                                         imageVector = Icons.Filled.TrackChanges,
                                         contentDescription = null,
-                                        tint = Color(0xFFDC2626),
-                                        modifier = Modifier.size(16.dp)
+                                        tint = LernspaceDark,
+                                        modifier = Modifier.size(14.dp)
                                     )
                                     Text(
-                                        text = "Area Pertumbuhan",
+                                        text = "Perlu Ditingkatkan",
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.Bold,
-                                        color = Color(0xFF991B1B)
+                                        color = LernspaceTextSecondary
                                     )
                                 }
                                 Text(
-                                    text = "${weakestArea.label} (${weakestArea.formattedScore})",
-                                    style = MaterialTheme.typography.titleSmall,
+                                    text = "${weakestArea.label} · ${weakestArea.formattedScore}",
+                                    style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF7F1D1D)
+                                    color = LernspaceDark
                                 )
                                 Text(
-                                    text = "Paling perlu ditingkatkan. ${weakestArea.subtitle}. Perbanyak latihan soal & sesi review.",
+                                    text = weakestArea.subtitle,
                                     fontSize = 11.sp,
-                                    color = Color(0xFF991B1B),
-                                    lineHeight = 15.sp
+                                    color = LernspaceTextSecondary
                                 )
                             }
                         }
                     }
 
-                    // Actionable Quick Launch Buttons (Bukan cuma baca laporan!)
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    // Action Buttons (Clean Monochrome)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(
-                            text = "Rekomendasi Tindakan Nyata dari Mimo:",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = LernspaceTextSecondary
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        Button(
+                            onClick = {
+                                if (onNavigateToBankSoal != null) {
+                                    onNavigateToBankSoal()
+                                } else {
+                                    Toast.makeText(context, "Membuka Bank Soal...", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = LernspaceDark,
+                                contentColor = LernspaceSurfaceCard
+                            ),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                            modifier = Modifier.weight(1f)
                         ) {
-                            Button(
-                                onClick = {
-                                    if (onNavigateToBankSoal != null) {
-                                        onNavigateToBankSoal()
-                                    } else {
-                                        Toast.makeText(context, "Membuka Bank Soal latihan...", Toast.LENGTH_SHORT).show()
-                                    }
-                                },
-                                shape = RoundedCornerShape(10.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFF2563EB),
-                                    contentColor = Color.White
-                                ),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(Icons.Filled.FolderCopy, contentDescription = null, modifier = Modifier.size(15.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text("Latihan Soal", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                            }
+                            Icon(Icons.Filled.FolderCopy, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Latihan Soal", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        }
 
-                            OutlinedButton(
-                                onClick = {
-                                    if (onNavigateToSyllabus != null) {
-                                        onNavigateToSyllabus(weakestArea.associatedSubjectId)
-                                    } else {
-                                        Toast.makeText(context, "Membuka Silabus materi...", Toast.LENGTH_SHORT).show()
-                                    }
-                                },
-                                shape = RoundedCornerShape(10.dp),
-                                border = BorderStroke(1.dp, LernspaceBorder),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = LernspaceDark),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(Icons.Filled.MenuBook, contentDescription = null, modifier = Modifier.size(15.dp), tint = LernspaceDark)
-                                Spacer(Modifier.width(6.dp))
-                                Text("Buka Silabus", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                            }
+                        OutlinedButton(
+                            onClick = {
+                                if (onNavigateToSyllabus != null) {
+                                    onNavigateToSyllabus(weakestArea.associatedSubjectId)
+                                } else {
+                                    Toast.makeText(context, "Membuka Silabus...", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, LernspaceBorder),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = LernspaceDark),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Filled.MenuBook, contentDescription = null, modifier = Modifier.size(14.dp), tint = LernspaceDark)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Buka Silabus", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        }
 
-                            FilledTonalButton(
-                                onClick = {
-                                    AcademicWorkspaceState.startFocusSession(
-                                        subject = subjects.firstOrNull { it.id == weakestArea.associatedSubjectId } ?: subjects.firstOrNull(),
-                                        topic = topics.firstOrNull { it.subjectId == weakestArea.associatedSubjectId },
-                                        preset = FocusTimerPreset.POMODORO_25
-                                    )
-                                    Toast.makeText(context, "Sesi Pomodoro 25 Menit dimulai! Fokus pada ${weakestArea.label}.", Toast.LENGTH_LONG).show()
-                                },
-                                shape = RoundedCornerShape(10.dp),
-                                colors = ButtonDefaults.filledTonalButtonColors(
-                                    containerColor = Color(0xFF10B981).copy(alpha = 0.15f),
-                                    contentColor = Color(0xFF047857)
-                                ),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                                modifier = Modifier.weight(1.1f)
-                            ) {
-                                Icon(Icons.Filled.Timer, contentDescription = null, modifier = Modifier.size(15.dp), tint = Color(0xFF047857))
-                                Spacer(Modifier.width(6.dp))
-                                Text("Fokus 25m", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                            }
+                        FilledTonalButton(
+                            onClick = {
+                                AcademicWorkspaceState.startFocusSession(
+                                    subject = subjects.firstOrNull { it.id == weakestArea.associatedSubjectId } ?: subjects.firstOrNull(),
+                                    topic = topics.firstOrNull { it.subjectId == weakestArea.associatedSubjectId },
+                                    preset = FocusTimerPreset.POMODORO_25
+                                )
+                                Toast.makeText(context, "Sesi Fokus 25m Dimulai (${weakestArea.label})", Toast.LENGTH_SHORT).show()
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = LernspaceSurfaceLow,
+                                contentColor = LernspaceDark
+                            ),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Filled.Timer, contentDescription = null, modifier = Modifier.size(14.dp), tint = LernspaceDark)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Fokus 25m", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         }
                     }
                 }
@@ -606,7 +473,7 @@ fun CompetencyRadarCockpitCard(
     }
 }
 
-// ── Radar Canvas Implementation ──────────────────────────────────────────────
+// ── Minimalist Radar Canvas Implementation ───────────────────────────────────
 
 @Composable
 fun SpiderRadarCanvas(
@@ -617,18 +484,20 @@ fun SpiderRadarCanvas(
 ) {
     val textMeasurer = rememberTextMeasurer()
     val defaultTextColor = LernspaceDark
+    val defaultBorderColor = LernspaceBorder
+    val defaultSurfaceCard = LernspaceSurfaceCard
     val animProgress = remember { Animatable(0f) }
 
     LaunchedEffect(items) {
         animProgress.snapTo(0f)
         animProgress.animateTo(
             targetValue = 1f,
-            animationSpec = tween(durationMillis = 750, easing = FastOutSlowInEasing)
+            animationSpec = tween(durationMillis = 650, easing = FastOutSlowInEasing)
         )
     }
 
     val numAxes = items.size.coerceAtLeast(3)
-    val ringLevels = listOf(0.2f, 0.4f, 0.6f, 0.8f, 1.0f)
+    val ringLevels = listOf(0.25f, 0.50f, 0.75f, 1.0f)
 
     Canvas(
         modifier = modifier
@@ -637,7 +506,7 @@ fun SpiderRadarCanvas(
                 detectTapGestures { tapOffset ->
                     val cx = size.width / 2f
                     val cy = size.height / 2f
-                    val maxR = minOf(cx, cy) - 46.dp.toPx()
+                    val maxR = minOf(cx, cy) - 38.dp.toPx()
                     val curProgress = animProgress.value
 
                     var closestItem: RadarAxisItem? = null
@@ -649,7 +518,7 @@ fun SpiderRadarCanvas(
                         val vx = cx + r * cos(angle)
                         val vy = cy + r * sin(angle)
                         val d = hypot(tapOffset.x - vx, tapOffset.y - vy)
-                        if (d < minDist && d < 50.dp.toPx()) {
+                        if (d < minDist && d < 44.dp.toPx()) {
                             minDist = d
                             closestItem = item
                         }
@@ -660,10 +529,10 @@ fun SpiderRadarCanvas(
     ) {
         val cx = size.width / 2f
         val cy = size.height / 2f
-        val maxR = minOf(cx, cy) - 46.dp.toPx()
+        val maxR = minOf(cx, cy) - 38.dp.toPx()
         val curProgress = animProgress.value
 
-        // 1. Draw Concentric Web Polygon Rings (20%, 40%, 60%, 80%, 100%)
+        // 1. Draw Clean Subtle Web Rings
         ringLevels.forEach { lvl ->
             val ringPath = Path()
             val ringR = maxR * lvl
@@ -676,38 +545,27 @@ fun SpiderRadarCanvas(
             }
             ringPath.close()
 
-            val ringColor = if (lvl == 1.0f) Color(0xFF94A3B8).copy(alpha = 0.5f) else Color(0xFFCBD5E1).copy(alpha = 0.35f)
-            val strokeW = if (lvl == 1.0f) 1.5.dp.toPx() else 1.0.dp.toPx()
-            drawPath(path = ringPath, color = ringColor, style = Stroke(width = strokeW))
-
-            // Percentage guideline label on the vertical top axis
-            if (lvl in listOf(0.4f, 0.8f, 1.0f)) {
-                val pctText = "${(lvl * 100).toInt()}%"
-                val measure = textMeasurer.measure(
-                    text = AnnotatedString(pctText),
-                    style = TextStyle(fontSize = 9.sp, color = Color(0xFF94A3B8), fontWeight = FontWeight.Medium)
-                )
-                drawText(
-                    textLayoutResult = measure,
-                    topLeft = Offset(cx + 4.dp.toPx(), cy - ringR - measure.size.height / 2f)
-                )
-            }
+            drawPath(
+                path = ringPath,
+                color = defaultBorderColor.copy(alpha = if (lvl == 1.0f) 0.8f else 0.4f),
+                style = Stroke(width = if (lvl == 1.0f) 1.2.dp.toPx() else 0.8.dp.toPx())
+            )
         }
 
-        // 2. Draw Radial Spokes radiating from center to outer boundary
+        // 2. Draw Subtle Radial Spokes
         for (i in 0 until numAxes) {
             val angle = -PI.toFloat() / 2f + (i * 2f * PI.toFloat() / numAxes)
             val endX = cx + maxR * cos(angle)
             val endY = cy + maxR * sin(angle)
             drawLine(
-                color = Color(0xFFCBD5E1).copy(alpha = 0.45f),
+                color = defaultBorderColor.copy(alpha = 0.5f),
                 start = Offset(cx, cy),
                 end = Offset(endX, endY),
-                strokeWidth = 1.dp.toPx()
+                strokeWidth = 0.8.dp.toPx()
             )
         }
 
-        // 3. Build Filled Data Polygon
+        // 3. Build Minimal Data Polygon
         val dataPath = Path()
         val vertexPoints = mutableListOf<Offset>()
 
@@ -722,65 +580,57 @@ fun SpiderRadarCanvas(
         }
         dataPath.close()
 
-        // Draw Translucent Gradient Fill
-        val fillBrush = Brush.radialGradient(
-            colors = listOf(
-                Color(0xFF2563EB).copy(alpha = 0.42f),
-                Color(0xFF6366F1).copy(alpha = 0.28f),
-                Color(0xFF8B5CF6).copy(alpha = 0.12f)
-            ),
-            center = Offset(cx, cy),
-            radius = maxR
-        )
-        drawPath(path = dataPath, brush = fillBrush)
-
-        // Draw Polygon Crisp Outline
+        // Clean subtle fill (Dark tone at 9% opacity, matches theme perfectly)
         drawPath(
             path = dataPath,
-            color = Color(0xFF2563EB),
-            style = Stroke(width = 2.5.dp.toPx())
+            color = defaultTextColor.copy(alpha = 0.09f)
         )
 
-        // 4. Draw Vertex Nodes & Outer Axis Labels
+        // Outline (1.8dp Stroke)
+        drawPath(
+            path = dataPath,
+            color = defaultTextColor.copy(alpha = 0.85f),
+            style = Stroke(width = 1.8.dp.toPx())
+        )
+
+        // 4. Draw Vertex Nodes & Clean Outer Labels
         items.forEachIndexed { i, item ->
             val pt = vertexPoints[i]
             val isSelected = item.id == selectedItem?.id
 
-            // Glow / Pulse circle if selected
+            // Selected vertex ring
             if (isSelected) {
                 drawCircle(
-                    color = Color(0xFF2563EB).copy(alpha = 0.25f),
-                    radius = 12.dp.toPx(),
+                    color = defaultTextColor.copy(alpha = 0.15f),
+                    radius = 9.dp.toPx(),
                     center = pt
                 )
             }
 
-            // Outer Vertex Dot
+            // Dot
             drawCircle(
-                color = if (isSelected) Color(0xFF2563EB) else item.color,
-                radius = if (isSelected) 6.dp.toPx() else 4.5.dp.toPx(),
+                color = defaultTextColor,
+                radius = if (isSelected) 4.5.dp.toPx() else 3.5.dp.toPx(),
                 center = pt
             )
-            // Inner White Center
             drawCircle(
-                color = Color.White,
-                radius = if (isSelected) 3.dp.toPx() else 2.2.dp.toPx(),
+                color = defaultSurfaceCard,
+                radius = if (isSelected) 2.2.dp.toPx() else 1.6.dp.toPx(),
                 center = pt
             )
 
-            // Outer Axis Label
+            // Outer Axis Label (Clean single-line: "Mapel · 85%")
             val angle = -PI.toFloat() / 2f + (i * 2f * PI.toFloat() / numAxes)
-            val labelDistance = maxR + 24.dp.toPx()
+            val labelDistance = maxR + 20.dp.toPx()
             val lx = cx + labelDistance * cos(angle)
             val ly = cy + labelDistance * sin(angle)
 
-            val labelText = AnnotatedString("${item.label}\n${item.formattedScore}")
             val textLayout = textMeasurer.measure(
-                text = labelText,
+                text = AnnotatedString("${item.label} · ${item.formattedScore}"),
                 style = TextStyle(
                     fontSize = if (isSelected) 11.sp else 10.sp,
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
-                    color = if (isSelected) Color(0xFF1D4ED8) else defaultTextColor,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                    color = if (isSelected) defaultTextColor else defaultTextColor.copy(alpha = 0.75f),
                     textAlign = TextAlign.Center
                 )
             )
@@ -796,43 +646,25 @@ fun SpiderRadarCanvas(
     }
 }
 
-// ── Helper Pills & Data Models ──────────────────────────────────────────────
+// ── Minimalist Tab Pill ──────────────────────────────────────────────────────
 
 @Composable
-fun RadarModeTabPill(
+fun MinimalTabPill(
     title: String,
-    icon: ImageVector,
     isSelected: Boolean,
     onClick: () -> Unit
 ) {
     Surface(
-        shape = RoundedCornerShape(20.dp),
-        color = if (isSelected) Color(0xFF0F172A) else Color.Transparent,
+        shape = RoundedCornerShape(16.dp),
+        color = if (isSelected) LernspaceDark else Color.Transparent,
         modifier = Modifier.clickable { onClick() }
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = if (isSelected) Color.White else LernspaceTextSecondary,
-                modifier = Modifier.size(14.dp)
-            )
-            Text(
-                text = title,
-                fontSize = 12.sp,
-                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                color = if (isSelected) Color.White else LernspaceTextSecondary
-            )
-        }
+        Text(
+            text = title,
+            fontSize = 12.sp,
+            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+            color = if (isSelected) LernspaceSurfaceCard else LernspaceTextSecondary,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+        )
     }
 }
-
-data class PersonaInfo(
-    val title: String,
-    val badge: String,
-    val desc: String
-)
