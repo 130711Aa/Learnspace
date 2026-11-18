@@ -283,7 +283,7 @@ fun generateEditorHtml(
     background: var(--paper);
   }
 
-  /* ── PAPER SHEET (DYNAMIC SIZE & MARGINS VIA JS) ── */
+  /* ── PAPER STACK & DISCRETE FULL-PAGE SHEETS (GOOGLE DOCS / WORD STYLE) ── */
   #paper-shell {
     position: relative;
     margin: 0 auto;
@@ -292,10 +292,8 @@ fun generateEditorHtml(
   #paper {
     position: relative;
     margin: 0 auto;
-    background: var(--paper);
-    border: 1px solid var(--border);
-    border-radius: 3px;
-    box-shadow: 0 2px 12px rgba(15,23,42,0.08);
+    background: transparent;
+    border: none;
     width: 794px;
     max-width: 100%;
     min-height: 1123px;
@@ -303,6 +301,7 @@ fun generateEditorHtml(
     transition: width 0.18s ease, padding 0.18s ease;
   }
   body.pageless-mode #paper {
+    background: var(--paper);
     width: 100% !important;
     max-width: 960px !important;
     min-height: 100vh !important;
@@ -312,67 +311,47 @@ fun generateEditorHtml(
     padding: 28px 36px 96px 36px !important;
   }
 
-  /* ── SUBTLE RUNNING HEADER & FOOTER INSIDE PAPER MARGINS ── */
-  #running-header {
-    display: none;
-    position: absolute;
-    top: 18px;
-    left: 36px;
-    right: 36px;
-    font-size: 11px;
-    color: var(--muted);
-    text-align: right;
-    pointer-events: none;
-    user-select: none;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  #running-footer {
-    display: none;
-    position: absolute;
-    bottom: 16px;
-    left: 36px;
-    right: 36px;
-    font-size: 11px;
-    color: var(--muted);
-    text-align: center;
-    pointer-events: none;
-    user-select: none;
-  }
-  body.pageless-mode #running-header,
-  body.pageless-mode #running-footer { display: none !important; }
-
-  /* ── VISUAL PAGE BREAK GUIDES (OVERLAY — NEVER BREAKS CURSOR/EDITING) ── */
-  #page-guides {
+  /* ── INDIVIDUAL FULL-SIZE PAGE SHEET CARDS BEHIND EDITOR ── */
+  #page-sheets-bg {
     position: absolute;
     top: 0;
     left: 0;
     right: 0;
-    bottom: 0;
     pointer-events: none;
-    overflow: hidden;
-    z-index: 2;
-  }
-  body.pageless-mode #page-guides { display: none; }
-  .page-guide-bar {
-    position: absolute;
-    left: -1px;
-    right: -1px;
-    height: 18px;
-    background: var(--guide-gap);
-    border-top: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
+    z-index: 1;
     display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    padding: 0 14px;
+    flex-direction: column;
+    gap: 20px;
   }
-  .page-guide-tag {
-    font-size: 10px;
-    font-weight: 600;
+  body.pageless-mode #page-sheets-bg { display: none; }
+  .sheet-card {
+    position: relative;
+    width: 100%;
+    background: var(--paper);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    box-shadow: 0 2px 10px rgba(15,23,42,0.08);
+    flex-shrink: 0;
+  }
+  .sheet-hdr {
+    position: absolute;
+    top: 16px;
+    font-size: 11px;
     color: var(--muted);
-    letter-spacing: 0.2px;
+    text-align: right;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .sheet-ftr {
+    position: absolute;
+    bottom: 14px;
+    font-size: 11px;
+    color: var(--muted);
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   /* ── MAIN EDITOR ── */
@@ -633,14 +612,13 @@ fun generateEditorHtml(
       background: #FFFFFF !important; padding: 0 !important; margin: 0 !important;
     }
     #editor { color: #0F172A !important; min-height: 0 !important; }
-    #wc-pill, #wc-popover, #img-resizer, #img-toolbar, #tbl-toolbar, #page-guides { display: none !important; }
+    #wc-pill, #wc-popover, #img-resizer, #img-toolbar, #tbl-toolbar, #page-sheets-bg { display: none !important; }
     #editor .doc-page-break {
       margin: 0 !important; padding: 0 !important; height: 0 !important;
       break-after: page; page-break-after: always; visibility: hidden;
     }
     #editor .doc-page-break::before, #editor .doc-page-break::after,
     #editor .doc-page-break .pb-label, #editor .doc-page-break .pb-del { display: none !important; }
-    #running-header, #running-footer { position: static !important; margin-bottom: 10px; }
   }
 </style>
 </head>
@@ -714,22 +692,18 @@ fun generateEditorHtml(
   <button class="ft-btn danger" onclick="deleteTable()">Hapus Tabel</button>
 </div>
 
-<!-- Pure Clean Document Paper with Page Guides -->
+<!-- Pure Clean Document Paper with Discrete Full-Size Sheets -->
 <div id="paper-shell">
   <div id="paper">
-    <div id="running-header"></div>
-    <div id="page-guides"></div>
+    <div id="page-sheets-bg"></div>
     <div id="editor" contenteditable="true" spellcheck="true">$safeContent</div>
-    <div id="running-footer"></div>
   </div>
 </div>
 
 <script>
 var paper = document.getElementById('paper');
 var editor = document.getElementById('editor');
-var pageGuides = document.getElementById('page-guides');
-var runningHeader = document.getElementById('running-header');
-var runningFooter = document.getElementById('running-footer');
+var pageSheetsBg = document.getElementById('page-sheets-bg');
 var dynamicPageStyle = document.getElementById('dynamic-page-style');
 
 var imgResizer = document.getElementById('img-resizer');
@@ -749,13 +723,48 @@ var lastFmtKey = '';
 var wordCountEnabled = false;
 var pageConfig = $initialConfigJson;
 var estimatedPageCount = 1;
+var lastSheetsRenderKey = '';
+var PAGE_GAP = 20;
 
 try { document.execCommand('defaultParagraphSeparator', false, 'p'); } catch(_) {}
 
-// ── PAGE SETUP ENGINE (SIZE, ORIENTATION, MARGINS, PAGELESS, PAGE GUIDES) ──
+function getScaledPageMetrics() {
+  var cfg = pageConfig;
+  var availW = Math.max(300, window.innerWidth - 28);
+  var scale = Math.min(1, availW / cfg.widthPx);
+  var pageH = Math.max(400, Math.round(cfg.heightPx * scale));
+  var padT = Math.max(16, Math.round(cfg.mTopPx * scale));
+  var padR = Math.max(16, Math.round(cfg.mRightPx * scale));
+  var padB = Math.max(16, Math.round(cfg.mBottomPx * scale));
+  var padL = Math.max(16, Math.round(cfg.mLeftPx * scale));
+  return { scale: scale, pageH: pageH, padT: padT, padR: padR, padB: padB, padL: padL };
+}
+
+function measureContentHeight() {
+  var edRect = editor.getBoundingClientRect();
+  var maxBottom = 0;
+  var children = editor.children;
+  for (var i = 0; i < children.length; i++) {
+    var r = children[i].getBoundingClientRect();
+    var b = r.bottom - edRect.top;
+    if (b > maxBottom) maxBottom = b;
+  }
+  if (maxBottom === 0 && (editor.textContent || '').trim().length > 0) {
+    try {
+      var range = document.createRange();
+      range.selectNodeContents(editor);
+      var rr = range.getBoundingClientRect();
+      maxBottom = Math.max(0, rr.bottom - edRect.top);
+    } catch(_) {}
+  }
+  return maxBottom;
+}
+
+// ── PAGE SETUP ENGINE (FULL-SIZE DISCRETE SHEETS) ──
 function applyPageSetup(cfg) {
   if (!cfg) return;
   pageConfig = cfg;
+  lastSheetsRenderKey = '';
   document.body.classList.toggle('pageless-mode', !!cfg.pageless);
 
   // Update @page print CSS dynamically
@@ -764,85 +773,84 @@ function applyPageSetup(cfg) {
     'margin: ' + cfg.mTopCm + 'cm ' + cfg.mRightCm + 'cm ' + cfg.mBottomCm + 'cm ' + cfg.mLeftCm + 'cm; }';
 
   if (!cfg.pageless) {
-    // Scale margins proportionally if screen is narrower than paper width
-    var availW = Math.max(300, window.innerWidth - 28);
-    var scale = Math.min(1, availW / cfg.widthPx);
-    var padT = Math.max(16, Math.round(cfg.mTopPx * scale));
-    var padR = Math.max(16, Math.round(cfg.mRightPx * scale));
-    var padB = Math.max(16, Math.round(cfg.mBottomPx * scale));
-    var padL = Math.max(16, Math.round(cfg.mLeftPx * scale));
-
+    var m = getScaledPageMetrics();
     paper.style.width = cfg.widthPx + 'px';
-    paper.style.minHeight = Math.round(cfg.heightPx * scale) + 'px';
-    paper.style.padding = padT + 'px ' + padR + 'px ' + padB + 'px ' + padL + 'px';
-    editor.style.minHeight = Math.max(400, Math.round(cfg.heightPx * scale) - padT - padB) + 'px';
-
-    // Header & Footer
-    if (cfg.headerText) {
-      runningHeader.textContent = cfg.headerText;
-      runningHeader.style.display = 'block';
-      runningHeader.style.left = padL + 'px';
-      runningHeader.style.right = padR + 'px';
-    } else {
-      runningHeader.style.display = 'none';
-    }
-
-    var ftrParts = [];
-    if (cfg.footerText) ftrParts.push(cfg.footerText);
-    if (cfg.showPageNumbers) ftrParts.push('Halaman 1');
-    if (ftrParts.length > 0) {
-      runningFooter.textContent = ftrParts.join('  ·  ');
-      runningFooter.style.display = 'block';
-      runningFooter.style.left = padL + 'px';
-      runningFooter.style.right = padR + 'px';
-    } else {
-      runningFooter.style.display = 'none';
-    }
+    paper.style.padding = m.padT + 'px ' + m.padR + 'px ' + m.padB + 'px ' + m.padL + 'px';
+    editor.style.minHeight = Math.max(200, m.pageH - m.padT - m.padB) + 'px';
   } else {
-    runningHeader.style.display = 'none';
-    runningFooter.style.display = 'none';
+    paper.style.minHeight = '';
+    editor.style.minHeight = '';
   }
 
   requestAnimationFrame(rebuildPageGuides);
 }
 
 function rebuildPageGuides() {
-  pageGuides.innerHTML = '';
   if (!pageConfig || pageConfig.pageless) {
+    pageSheetsBg.innerHTML = '';
     estimatedPageCount = 1;
+    lastSheetsRenderKey = 'pageless';
     updateWordCount();
     return;
   }
-  var availW = Math.max(300, window.innerWidth - 28);
-  var scale = Math.min(1, availW / pageConfig.widthPx);
-  var pageH = Math.max(400, Math.round(pageConfig.heightPx * scale));
-  var totalH = paper.scrollHeight;
+
+  var m = getScaledPageMetrics();
+  var firstPageUsable = Math.max(180, m.pageH - m.padT - m.padB);
+  var stride = m.pageH + PAGE_GAP;
+  var contentH = measureContentHeight();
+
+  // Snap strictly to whole full-size pages!
+  // The moment text exceeds Page 1, immediately render Page 2 at full sheet height!
+  var autoPages = 1;
+  if (contentH > firstPageUsable + 2) {
+    autoPages = 1 + Math.ceil((contentH - firstPageUsable) / stride);
+  }
   var manualBreaks = editor.querySelectorAll('.doc-page-break').length;
-  var autoPages = Math.max(1, Math.ceil((totalH - 20) / pageH));
-  estimatedPageCount = Math.max(autoPages, manualBreaks + 1);
+  var pageCount = Math.max(1, autoPages, manualBreaks + 1);
+  estimatedPageCount = pageCount;
 
-  for (var p = 1; p < autoPages; p++) {
-    var bar = document.createElement('div');
-    bar.className = 'page-guide-bar';
-    bar.style.top = (p * pageH - 9) + 'px';
-    var tag = document.createElement('span');
-    tag.className = 'page-guide-tag';
-    tag.textContent = pageConfig.showPageNumbers
-      ? ('Halaman ' + (p + 1) + '  ·  ' + pageConfig.sizeLabel)
-      : pageConfig.sizeLabel;
-    bar.appendChild(tag);
-    pageGuides.appendChild(bar);
-  }
+  // Snap #paper height to exact N full sheets + gaps
+  var totalPaperH = pageCount * m.pageH + (pageCount - 1) * PAGE_GAP;
+  paper.style.minHeight = totalPaperH + 'px';
 
-  // Update footer summary
-  if (runningFooter.style.display !== 'none') {
-    var ftrParts = [];
-    if (pageConfig.footerText) ftrParts.push(pageConfig.footerText);
-    if (pageConfig.showPageNumbers) {
-      ftrParts.push(estimatedPageCount > 1 ? ('Total ' + estimatedPageCount + ' halaman') : 'Halaman 1');
+  var renderKey = pageCount + '|' + m.pageH + '|' + m.padL + '|' + m.padR + '|' +
+    (pageConfig.headerText || '') + '|' + (pageConfig.footerText || '') + '|' + pageConfig.showPageNumbers;
+
+  if (renderKey !== lastSheetsRenderKey) {
+    lastSheetsRenderKey = renderKey;
+    var frag = document.createDocumentFragment();
+    for (var p = 1; p <= pageCount; p++) {
+      var card = document.createElement('div');
+      card.className = 'sheet-card';
+      card.style.height = m.pageH + 'px';
+
+      if (pageConfig.headerText) {
+        var hdr = document.createElement('div');
+        hdr.className = 'sheet-hdr';
+        hdr.style.left = m.padL + 'px';
+        hdr.style.right = m.padR + 'px';
+        hdr.textContent = pageConfig.headerText;
+        card.appendChild(hdr);
+      }
+
+      var ftrParts = [];
+      if (pageConfig.footerText) ftrParts.push(pageConfig.footerText);
+      if (pageConfig.showPageNumbers) ftrParts.push('Halaman ' + p);
+      if (ftrParts.length > 0) {
+        var ftr = document.createElement('div');
+        ftr.className = 'sheet-ftr';
+        ftr.style.left = m.padL + 'px';
+        ftr.style.right = m.padR + 'px';
+        ftr.textContent = ftrParts.join('  ·  ');
+        card.appendChild(ftr);
+      }
+
+      frag.appendChild(card);
     }
-    runningFooter.textContent = ftrParts.join('  ·  ');
+    pageSheetsBg.innerHTML = '';
+    pageSheetsBg.appendChild(frag);
   }
+
   updateWordCount();
 }
 
@@ -1031,6 +1039,7 @@ function flushChangeNow() {
 
 editor.addEventListener('input', function() {
   if (selectedImg) deselectImage();
+  requestAnimationFrame(rebuildPageGuides);
   notifyChange();
   scheduleScrollIntoView();
 });
