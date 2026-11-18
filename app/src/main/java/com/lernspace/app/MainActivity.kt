@@ -1,6 +1,8 @@
 package com.lernspace.app
 
+import android.content.Intent
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -13,8 +15,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.lifecycleScope
+import com.lernspace.app.data.local.AcademicDatabaseManager
 import com.lernspace.app.data.local.AppSettingsManager
 import com.lernspace.app.data.local.AppThemeMode
+import com.lernspace.app.data.local.NoteStorageManager
 import com.lernspace.app.data.repository.AcademicWorkspaceState
 import com.lernspace.app.navigation.LernspaceTabHost
 import com.lernspace.app.navigation.Screen
@@ -27,6 +32,18 @@ import com.lernspace.app.ui.home.HomeViewModel
 import com.lernspace.app.ui.theme.LernspaceDark
 import com.lernspace.app.ui.theme.LernspaceTheme
 import com.lernspace.app.ui.workspace.NoteEditorScreen
+import com.lernspace.app.ui.workspace.document.DocxDocumentCodec
+import com.lernspace.app.ui.workspace.model.NoteCanvasType
+import com.lernspace.app.ui.workspace.model.NotePageData
+import com.lernspace.app.ui.workspace.model.NoteUiModel
+import com.lernspace.app.ui.workspace.model.PaperStyle
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.UUID
 
 class MainActivity : ComponentActivity() {
 
@@ -38,6 +55,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
+        handleIncomingDocumentIntent(intent)
         setContent {
             val isDarkTheme = when (AppSettingsManager.themeMode) {
                 AppThemeMode.SYSTEM -> isSystemInDarkTheme()
@@ -155,6 +173,54 @@ class MainActivity : ComponentActivity() {
                         onDismiss = { AcademicWorkspaceState.dismissFocusSession() }
                     )
                 }
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIncomingDocumentIntent(intent)
+    }
+
+    private fun handleIncomingDocumentIntent(incomingIntent: Intent?) {
+        if (incomingIntent?.action != Intent.ACTION_VIEW) return
+        val uri = incomingIntent.data ?: return
+        val mime = incomingIntent.type ?: contentResolver.getType(uri)
+        val displayName = DocxDocumentCodec.getDisplayName(this, uri)
+        if (!DocxDocumentCodec.isEditableDocument(displayName, mime)) return
+
+        lifecycleScope.launch {
+            val importedRes = withContext(Dispatchers.IO) {
+                DocxDocumentCodec.importFromUri(this@MainActivity, uri)
+            }
+            importedRes.onSuccess { imported ->
+                val noteId = UUID.randomUUID().toString()
+                withContext(Dispatchers.IO) {
+                    if (imported.plainText.isNotBlank()) {
+                        NoteStorageManager.saveExtractedText(this@MainActivity, noteId, imported.plainText)
+                    }
+                }
+                val timeStr = "Today, " + SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
+                val snippetText = imported.plainText.replace("\n", " ").take(90)
+                    .ifBlank { "${imported.formatLabel}..." }
+                val newNote = NoteUiModel(
+                    id = noteId,
+                    title = imported.title,
+                    subject = imported.formatLabel,
+                    date = timeStr,
+                    snippet = snippetText,
+                    canvasType = NoteCanvasType.DOC_DOCUMENT,
+                    paperStyle = PaperStyle.BLANK,
+                    documentContent = imported.html,
+                    pages = mutableListOf(NotePageData(pageIndex = 0))
+                )
+                AcademicWorkspaceState.notes.add(0, newNote)
+                AcademicDatabaseManager.persistNote(newNote)
+                AcademicWorkspaceState.openNoteEditor(newNote)
+                Toast.makeText(this@MainActivity, "Membuka ${imported.title}", Toast.LENGTH_SHORT).show()
+            }.onFailure { err ->
+                Toast.makeText(this@MainActivity, "Gagal membuka dokumen: ${err.message}", Toast.LENGTH_LONG).show()
             }
         }
     }

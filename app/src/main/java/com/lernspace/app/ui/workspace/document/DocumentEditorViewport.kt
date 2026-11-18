@@ -2,6 +2,7 @@ package com.lernspace.app.ui.workspace.document
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -46,9 +47,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
+import androidx.core.content.FileProvider
 import com.lernspace.app.ui.theme.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.FileOutputStream
 
 // ── ENUMS ────────────────────────────────────────────────────────────────────
 enum class DocParagraphStyle(val label: String, val htmlTag: String) {
@@ -76,7 +83,6 @@ enum class DocFontFamily(val label: String, val css: String) {
 // ── THREAD-SAFE SYNC HOLDER (NOT COMPOSE STATE — PREVENTS RECOMPOSITION LOOP) ─
 private class DocumentSyncState {
     var lastEmittedHtml: String? = null
-    var lastEmittedTitle: String? = null
     var lastAppliedDark: Boolean? = null
     var isReady: Boolean = false
 }
@@ -85,18 +91,12 @@ private class DocumentSyncState {
 class DocumentJsBridge(
     private val mainHandler: Handler,
     private val onContentChanged: (String) -> Unit,
-    private val onTitleChanged: (String) -> Unit,
     private val onFormatStateChanged: (bold: Boolean, italic: Boolean, underline: Boolean, strike: Boolean, alignIdx: Int) -> Unit,
     private val onRequestReplaceImage: () -> Unit
 ) {
     @JavascriptInterface
     fun onContentChange(html: String) {
         mainHandler.post { onContentChanged(html) }
-    }
-
-    @JavascriptInterface
-    fun onTitleChange(newTitle: String) {
-        mainHandler.post { onTitleChanged(newTitle) }
     }
 
     @JavascriptInterface
@@ -165,16 +165,17 @@ private fun normalizeInitialBody(raw: String): String {
     }
 }
 
-// ── GENERATE FULL NATIVE-FEEL DOCUMENT EDITOR HTML ────────────────────────────
+private fun sanitizeFileName(raw: String): String {
+    val clean = raw.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim()
+    return clean.ifBlank { "Dokumen_LearnSpace" }
+}
+
+// ── GENERATE CLEAN HEADERLESS GOOGLE DOCS-STYLE EDITOR HTML ───────────────────
 fun generateEditorHtml(
     isDark: Boolean,
-    subject: String,
-    title: String,
     bodyContent: String
 ): String {
     val safeContent = normalizeInitialBody(bodyContent)
-    val safeTitle = title.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    val safeSubject = subject.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     val darkClass = if (isDark) "dark" else ""
 
     return """<!DOCTYPE html>
@@ -191,9 +192,6 @@ fun generateEditorHtml(
     --text: #1E293B;
     --muted: #94A3B8;
     --border: #E2E8F0;
-    --chip-bg: #EFF6FF;
-    --chip-text: #2563EB;
-    --chip-border: #2563EB33;
     --link: #2563EB;
     --tbl-border: #CBD5E1;
     --tbl-head: #F8FAFC;
@@ -212,9 +210,6 @@ fun generateEditorHtml(
     --text: #F1F5F9;
     --muted: #64748B;
     --border: #334155;
-    --chip-bg: #1D4ED822;
-    --chip-text: #60A5FA;
-    --chip-border: #1D4ED855;
     --link: #60A5FA;
     --tbl-border: #475569;
     --tbl-head: #262A38;
@@ -238,59 +233,21 @@ fun generateEditorHtml(
     padding: 18px 14px 200px 14px;
   }
 
-  /* ── A4 PAPER SHEET ── */
+  /* ── CLEAN HEADERLESS A4 PAPER SHEET ── */
   #paper {
     max-width: 840px;
     margin: 0 auto;
     background: var(--paper);
     border: 1px solid var(--border);
-    border-radius: 6px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.07);
-    padding: 40px 44px 72px 44px;
+    border-radius: 4px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+    padding: 44px 48px 76px 48px;
     position: relative;
+    min-height: 1050px;
   }
   @media (max-width: 600px) {
-    #paper { padding: 24px 20px 64px 20px; }
+    #paper { padding: 26px 22px 64px 22px; }
   }
-
-  /* ── HEADER META ── */
-  #doc-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 14px;
-    user-select: none;
-  }
-  .subject-chip {
-    background: var(--chip-bg);
-    color: var(--chip-text);
-    border: 1px solid var(--chip-border);
-    border-radius: 12px;
-    padding: 3px 10px;
-    font-size: 11px;
-    font-weight: 700;
-  }
-  .wc-row { display: flex; align-items: center; gap: 7px; }
-  #word-count { font-size: 11px; color: var(--muted); }
-  .green-dot { width: 7px; height: 7px; background: #10B981; border-radius: 50%; display: inline-block; }
-
-  /* ── DOCUMENT TITLE ── */
-  #doc-title {
-    font-size: 26px;
-    font-weight: 700;
-    color: var(--text);
-    outline: none;
-    min-height: 36px;
-    line-height: 1.3;
-    margin-bottom: 12px;
-    word-break: break-word;
-  }
-  #doc-title:empty::before {
-    content: attr(data-placeholder);
-    color: var(--muted);
-    pointer-events: none;
-  }
-  #title-divider { border: none; border-top: 1px solid var(--border); margin-bottom: 18px; }
 
   /* ── MAIN EDITOR ── */
   #editor {
@@ -301,7 +258,7 @@ fun generateEditorHtml(
     line-height: 1.78;
     word-wrap: break-word;
     overflow-wrap: break-word;
-    min-height: 520px;
+    min-height: 920px;
   }
   #editor::after { content: ""; display: table; clear: both; }
   #editor:empty::before {
@@ -312,8 +269,8 @@ fun generateEditorHtml(
   }
 
   #editor p, #editor div { margin: 0 0 6px 0; min-height: 1.78em; }
-  #editor h1 { font-size: 26px; font-weight: 700; margin: 18px 0 8px 0; clear: both; }
-  #editor h2 { font-size: 21px; font-weight: 700; margin: 15px 0 7px 0; clear: both; }
+  #editor h1 { font-size: 26px; font-weight: 700; margin: 16px 0 8px 0; clear: both; }
+  #editor h2 { font-size: 21px; font-weight: 700; margin: 14px 0 6px 0; clear: both; }
   #editor h3 { font-size: 18px; font-weight: 600; margin: 12px 0 5px 0; clear: both; }
   #editor h4 { font-size: 16px; font-weight: 600; margin: 10px 0 4px 0; clear: both; }
   #editor h5 { font-size: 14px; font-weight: 600; margin: 8px 0 3px 0; clear: both; }
@@ -376,7 +333,7 @@ fun generateEditorHtml(
   #editor table th { background: var(--tbl-head); font-weight: 600; text-align: left; }
   #editor table td:focus, #editor table th:focus { outline: 2px solid #2563EB; outline-offset: -2px; }
 
-  /* ── IMAGES & WRAP MODES (GOOGLE DOCS NATIVE) ── */
+  /* ── IMAGES & WRAP MODES ── */
   #editor img {
     max-width: 100%;
     height: auto;
@@ -417,6 +374,54 @@ fun generateEditorHtml(
     font-size: 14px;
     display: inline-block;
   }
+
+  /* ── OPTIONAL FLOATING WORD COUNT PILL (BOTTOM-LEFT, HIDDEN BY DEFAULT) ── */
+  #wc-pill {
+    display: none;
+    position: fixed;
+    left: 14px;
+    bottom: 14px;
+    background: var(--toolbar-bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 6px 13px;
+    font-size: 11.5px;
+    font-weight: 600;
+    box-shadow: var(--toolbar-shadow);
+    z-index: 8800;
+    cursor: pointer;
+    user-select: none;
+    align-items: center;
+    gap: 6px;
+  }
+  #wc-pill.visible { display: inline-flex; }
+  #wc-popover {
+    display: none;
+    position: fixed;
+    left: 14px;
+    bottom: 52px;
+    background: var(--toolbar-bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 16px;
+    min-width: 210px;
+    box-shadow: var(--toolbar-shadow);
+    z-index: 8900;
+    font-size: 12px;
+    user-select: none;
+  }
+  #wc-popover.visible { display: block; }
+  .wc-stat-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .wc-stat-row:last-child { border-bottom: none; }
+  .wc-stat-label { color: var(--muted); }
+  .wc-stat-val { font-weight: 700; color: var(--text); }
 
   /* ── GOOGLE DOCS IMAGE RESIZE OVERLAY ── */
   #img-resizer {
@@ -475,7 +480,7 @@ fun generateEditorHtml(
     white-space: nowrap;
   }
 
-  /* ── FLOATING CONTEXT TOOLBARS (GOOGLE DOCS PILL STYLE) ── */
+  /* ── FLOATING CONTEXT TOOLBARS ── */
   .floating-toolbar {
     display: none;
     position: fixed;
@@ -524,6 +529,18 @@ fun generateEditorHtml(
 </style>
 </head>
 <body>
+
+<!-- Optional Word Count Pill (Bottom-Left, off by default) -->
+<div id="wc-pill" onclick="toggleWcPopover(event)">
+  <span id="wc-pill-text">0 kata</span>
+</div>
+<div id="wc-popover">
+  <div class="wc-stat-row"><span class="wc-stat-label">Kata</span><span class="wc-stat-val" id="st-words">0</span></div>
+  <div class="wc-stat-row"><span class="wc-stat-label">Karakter</span><span class="wc-stat-val" id="st-chars">0</span></div>
+  <div class="wc-stat-row"><span class="wc-stat-label">Tanpa spasi</span><span class="wc-stat-val" id="st-nospace">0</span></div>
+  <div class="wc-stat-row"><span class="wc-stat-label">Paragraf</span><span class="wc-stat-val" id="st-paras">0</span></div>
+  <div class="wc-stat-row"><span class="wc-stat-label">Waktu baca</span><span class="wc-stat-val" id="st-read">&lt; 1 mnt</span></div>
+</div>
 
 <!-- Native Google Docs Style Image Resize Frame -->
 <div id="img-resizer">
@@ -580,35 +597,19 @@ fun generateEditorHtml(
   <button class="ft-btn danger" onclick="deleteTable()">Hapus Tabel</button>
 </div>
 
-<!-- Paper Sheet -->
+<!-- Pure Clean Document Paper -->
 <div id="paper">
-  <div id="doc-header">
-    <span class="subject-chip">📄 $safeSubject · Dokumen Teks</span>
-    <div class="wc-row">
-      <span id="word-count">0 kata</span>
-      <span class="green-dot"></span>
-    </div>
-  </div>
-
-  <div id="doc-title"
-       contenteditable="true"
-       data-placeholder="Judul Dokumen..."
-       spellcheck="false"
-       onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('editor').focus();}"
-  >$safeTitle</div>
-
-  <hr id="title-divider">
-
   <div id="editor" contenteditable="true" spellcheck="true">$safeContent</div>
 </div>
 
 <script>
 var editor = document.getElementById('editor');
-var docTitle = document.getElementById('doc-title');
 var imgResizer = document.getElementById('img-resizer');
 var imgSizeBadge = document.getElementById('img-size-badge');
 var imgToolbar = document.getElementById('img-toolbar');
 var tblToolbar = document.getElementById('tbl-toolbar');
+var wcPill = document.getElementById('wc-pill');
+var wcPopover = document.getElementById('wc-popover');
 
 var debounceTimer = null;
 var savedRange = null;
@@ -617,17 +618,43 @@ var currentCell = null;
 var currentRow = null;
 var currentTable = null;
 var lastFmtKey = '';
+var wordCountEnabled = false;
 
 try { document.execCommand('defaultParagraphSeparator', false, 'p'); } catch(_) {}
 
-// ── WORD COUNT & CHANGE NOTIFICATION ──
+// ── OPTIONAL WORD COUNT ENGINE ──
 function updateWordCount() {
-  var text = (editor.innerText || '').trim();
-  var words = text ? text.split(/\s+/).filter(Boolean).length : 0;
-  var el = document.getElementById('word-count');
-  if (el) el.textContent = words + ' kata • ' + text.length + ' karakter';
+  if (!wordCountEnabled) return;
+  var raw = (editor.innerText || '');
+  var trimmed = raw.trim();
+  var words = trimmed ? trimmed.split(/\s+/).filter(Boolean).length : 0;
+  var chars = trimmed.length;
+  var noSpace = trimmed.replace(/\s+/g, '').length;
+  var paras = trimmed ? trimmed.split(/\n+/).filter(function(l){ return l.trim().length > 0; }).length : 0;
+  var mins = Math.max(1, Math.round(words / 200));
+
+  document.getElementById('wc-pill-text').textContent = words + ' kata · ' + chars + ' karakter';
+  document.getElementById('st-words').textContent = words;
+  document.getElementById('st-chars').textContent = chars;
+  document.getElementById('st-nospace').textContent = noSpace;
+  document.getElementById('st-paras').textContent = paras;
+  document.getElementById('st-read').textContent = words < 100 ? '< 1 mnt' : mins + ' mnt';
 }
 
+function setWordCountVisible(show) {
+  wordCountEnabled = !!show;
+  wcPill.classList.toggle('visible', wordCountEnabled);
+  if (!wordCountEnabled) wcPopover.classList.remove('visible');
+  else updateWordCount();
+}
+
+function toggleWcPopover(e) {
+  e.stopPropagation();
+  updateWordCount();
+  wcPopover.classList.toggle('visible');
+}
+
+// ── CHANGE NOTIFICATION ──
 function notifyChange() {
   updateWordCount();
   clearTimeout(debounceTimer);
@@ -650,10 +677,6 @@ editor.addEventListener('input', function() {
 
 editor.addEventListener('blur', function() {
   flushChangeNow();
-});
-
-docTitle.addEventListener('input', function() {
-  LernspaceDoc.onTitleChange(docTitle.textContent || '');
 });
 
 // ── SELECTION TRACKING & ACTIVE TOOLBAR SYNC ──
@@ -696,7 +719,7 @@ function syncToolbarState() {
   } catch(_) {}
 }
 
-// ── GENTLE SCROLL INTO VIEW (NEVER JUMPS WHEN ALREADY VISIBLE) ──
+// ── GENTLE SCROLL INTO VIEW ──
 var scrollTimer = null;
 function scheduleScrollIntoView() {
   clearTimeout(scrollTimer);
@@ -911,7 +934,6 @@ function attachImageHandlers() {
 function selectImage(img) {
   hideTableToolbar();
   selectedImg = img;
-  // Blur editor so keyboard doesn't cover image resize handles
   if (document.activeElement === editor) editor.blur();
   imgResizer.classList.add('visible');
   imgToolbar.classList.add('visible');
@@ -938,7 +960,6 @@ function updateWrapButtons() {
 function setImageWrap(mode) {
   if (!selectedImg) return;
   selectedImg.setAttribute('data-wrap', mode);
-  // If switching to wrap left/right and image is too wide (>65%), shrink neatly so text has room to flow!
   var maxW = editor.clientWidth || 600;
   var curW = selectedImg.getBoundingClientRect().width;
   if ((mode === 'left' || mode === 'right') && curW > maxW * 0.62) {
@@ -975,7 +996,6 @@ function repositionImageOverlay() {
   imgResizer.style.width = rect.width + 'px';
   imgResizer.style.height = rect.height + 'px';
 
-  // Position floating bar below image (or above if near bottom)
   var tbW = imgToolbar.offsetWidth || 320;
   var tbH = imgToolbar.offsetHeight || 42;
   var vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
@@ -989,7 +1009,7 @@ function repositionImageOverlay() {
   imgToolbar.style.left = leftPos + 'px';
 }
 
-// ── DRAG-TO-RESIZE HANDLES (TOUCH + STYLUS + MOUSE) ──
+// ── DRAG-TO-RESIZE HANDLES ──
 imgResizer.querySelectorAll('.rz-handle').forEach(function(handle) {
   handle.addEventListener('pointerdown', function(e) {
     if (!selectedImg) return;
@@ -1015,25 +1035,19 @@ imgResizer.querySelectorAll('.rz-handle').forEach(function(handle) {
       var dy = ev.clientY - startY;
       var newW = startW;
 
-      if (dir === 'e') {
-        newW = startW + dx;
-      } else if (dir === 'w') {
-        newW = startW - dx;
-      } else if (dir === 'se') {
-        var wX = startW + dx;
-        var wY = (startH + dy) * aspect;
+      if (dir === 'e') newW = startW + dx;
+      else if (dir === 'w') newW = startW - dx;
+      else if (dir === 'se') {
+        var wX = startW + dx, wY = (startH + dy) * aspect;
         newW = Math.abs(dy) > Math.abs(dx) ? wY : wX;
       } else if (dir === 'sw') {
-        var wX = startW - dx;
-        var wY = (startH + dy) * aspect;
+        var wX = startW - dx, wY = (startH + dy) * aspect;
         newW = Math.abs(dy) > Math.abs(dx) ? wY : wX;
       } else if (dir === 'ne') {
-        var wX = startW + dx;
-        var wY = (startH - dy) * aspect;
+        var wX = startW + dx, wY = (startH - dy) * aspect;
         newW = Math.abs(dy) > Math.abs(dx) ? wY : wX;
       } else if (dir === 'nw') {
-        var wX = startW - dx;
-        var wY = (startH - dy) * aspect;
+        var wX = startW - dx, wY = (startH - dy) * aspect;
         newW = Math.abs(dy) > Math.abs(dx) ? wY : wX;
       }
 
@@ -1069,7 +1083,6 @@ window.addEventListener('scroll', function() {
   if (currentCell) positionTableToolbar(currentCell);
 }, { passive: true });
 
-// Backspace / Delete removes selected image
 document.addEventListener('keydown', function(e) {
   if ((e.key === 'Backspace' || e.key === 'Delete') && selectedImg) {
     e.preventDefault();
@@ -1077,13 +1090,15 @@ document.addEventListener('keydown', function(e) {
   }
 });
 
-// Dismiss overlays when clicking outside
 document.addEventListener('click', function(e) {
   if (selectedImg && !imgToolbar.contains(e.target) && !imgResizer.contains(e.target) && e.target !== selectedImg) {
     deselectImage();
   }
   if (!tblToolbar.contains(e.target) && !getParentCell(e.target)) {
     hideTableToolbar();
+  }
+  if (!wcPill.contains(e.target) && !wcPopover.contains(e.target)) {
+    wcPopover.classList.remove('visible');
   }
 });
 
@@ -1236,14 +1251,10 @@ function setContentExternal(html) {
   attachChecklistHandlers();
   updateWordCount();
 }
-function setTitleExternal(text) {
-  if (docTitle.textContent !== text) docTitle.textContent = text;
-}
 function applyDarkTheme(dark) {
   document.documentElement.classList.toggle('dark', !!dark);
 }
 
-// Tab indent
 editor.addEventListener('keydown', function(e) {
   if (e.key === 'Tab') {
     e.preventDefault();
@@ -1255,7 +1266,6 @@ editor.addEventListener('keydown', function(e) {
 // Init
 attachImageHandlers();
 attachChecklistHandlers();
-updateWordCount();
 </script>
 </body>
 </html>"""
@@ -1277,15 +1287,17 @@ fun DocumentEditorViewport(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
     val syncState = remember { DocumentSyncState() }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
 
-    // Keep latest callbacks without recreating WebView
     val latestOnContentChange by rememberUpdatedState(onContentChange)
     val latestOnTitleChange by rememberUpdatedState(onTitleChange)
+    val latestContent by rememberUpdatedState(content)
+    val latestTitle by rememberUpdatedState(title)
 
-    // Toolbar UI state (only changes when user toggles style or moves to differently styled text)
+    // Toolbar UI state
     var selectedStyle by remember { mutableStateOf(DocParagraphStyle.NORMAL) }
     var selectedFont by remember { mutableStateOf(DocFontFamily.INTER) }
     var fontSizePx by remember { mutableIntStateOf(15) }
@@ -1294,11 +1306,13 @@ fun DocumentEditorViewport(
     var isItalicActive by remember { mutableStateOf(false) }
     var isUnderlineActive by remember { mutableStateOf(false) }
     var isStrikeActive by remember { mutableStateOf(false) }
+    var showWordCount by remember { mutableStateOf(false) } // Off by default — user toggles in Tools!
 
     var showStyleDropdown by remember { mutableStateOf(false) }
     var showFontDropdown by remember { mutableStateOf(false) }
     var showColorDropdown by remember { mutableStateOf(false) }
     var showHighlightDropdown by remember { mutableStateOf(false) }
+    var showToolsDropdown by remember { mutableStateOf(false) }
     var showTableDialog by remember { mutableStateOf(false) }
     var showLinkDialog by remember { mutableStateOf(false) }
     var showMathDialog by remember { mutableStateOf(false) }
@@ -1317,13 +1331,17 @@ fun DocumentEditorViewport(
         webViewRef?.evaluateJavascript(script, null)
     }
 
-    // Image picker (insert new OR replace selected image)
+    // ── IMAGE PICKER (INSERT OR REPLACE) ──
     val imagePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         val replaceMode = isReplacingImage
         isReplacingImage = false
         if (uri != null) {
-            try {
-                val dataUri = encodeUriToDataUri(context, uri)
+            scope.launch {
+                val dataUri = withContext(Dispatchers.IO) {
+                    try { encodeUriToDataUri(context, uri) } catch (e: Exception) {
+                        Log.e("DocEditor", "Image encode error", e); null
+                    }
+                }
                 if (dataUri != null) {
                     val quoted = JSONObject.quote(dataUri)
                     if (replaceMode) {
@@ -1334,11 +1352,130 @@ fun DocumentEditorViewport(
                         Toast.makeText(context, "Gambar disisipkan — tarik sudut untuk ubah ukuran", Toast.LENGTH_SHORT).show()
                     }
                 } else {
-                    Toast.makeText(context, "Gagal membaca gambar", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Gagal memuat gambar", Toast.LENGTH_SHORT).show()
                 }
-            } catch (e: Exception) {
-                Log.e("DocEditor", "Image encode error", e)
-                Toast.makeText(context, "Gagal memuat gambar", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    // ── IMPORT EXTERNAL FILE (.docx / .html / .md / .txt / .rtf) ──
+    val importDocLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null) {
+            scope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    DocxDocumentCodec.importFromUri(context, uri)
+                }
+                result.onSuccess { imported ->
+                    syncState.lastEmittedHtml = imported.html
+                    js("setContentExternal(${JSONObject.quote(imported.html)});")
+                    latestOnContentChange(imported.html)
+                    if (latestTitle.isBlank() || latestTitle.startsWith("Dokumen Teks Baru")) {
+                        latestOnTitleChange(imported.title)
+                    }
+                    Toast.makeText(context, "Berhasil membuka ${imported.title} (${imported.formatLabel})", Toast.LENGTH_SHORT).show()
+                }.onFailure { err ->
+                    Toast.makeText(context, "Gagal membuka file: ${err.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    // ── EXPORT TO .DOCX (SAVE TO DEVICE / GOOGLE DRIVE) ──
+    val exportDocxLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(DocxDocumentCodec.MIME_DOCX)
+    ) { uri: Uri? ->
+        if (uri != null) {
+            scope.launch {
+                val res = withContext(Dispatchers.IO) {
+                    runCatching {
+                        context.contentResolver.openOutputStream(uri)?.use { out ->
+                            DocxDocumentCodec.exportToDocx(latestContent, out)
+                        } ?: error("Tidak dapat menulis file")
+                    }
+                }
+                res.onSuccess {
+                    Toast.makeText(context, "Berhasil diekspor ke .docx ✓", Toast.LENGTH_SHORT).show()
+                }.onFailure { err ->
+                    Toast.makeText(context, "Gagal ekspor .docx: ${err.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    // ── EXPORT TO .HTML ──
+    val exportHtmlLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(DocxDocumentCodec.MIME_HTML)
+    ) { uri: Uri? ->
+        if (uri != null) {
+            scope.launch {
+                val res = withContext(Dispatchers.IO) {
+                    runCatching {
+                        val fullHtml = DocxDocumentCodec.exportToHtmlFile(latestTitle, latestContent)
+                        context.contentResolver.openOutputStream(uri)?.use { out ->
+                            out.write(fullHtml.toByteArray(Charsets.UTF_8))
+                        } ?: error("Tidak dapat menulis file")
+                    }
+                }
+                res.onSuccess {
+                    Toast.makeText(context, "Berhasil diekspor ke .html ✓", Toast.LENGTH_SHORT).show()
+                }.onFailure { err ->
+                    Toast.makeText(context, "Gagal ekspor .html: ${err.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    // ── EXPORT TO .TXT ──
+    val exportTxtLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(DocxDocumentCodec.MIME_TXT)
+    ) { uri: Uri? ->
+        if (uri != null) {
+            scope.launch {
+                val res = withContext(Dispatchers.IO) {
+                    runCatching {
+                        val plain = DocxDocumentCodec.exportToPlainText(latestContent)
+                        context.contentResolver.openOutputStream(uri)?.use { out ->
+                            out.write(plain.toByteArray(Charsets.UTF_8))
+                        } ?: error("Tidak dapat menulis file")
+                    }
+                }
+                res.onSuccess {
+                    Toast.makeText(context, "Berhasil diekspor ke .txt ✓", Toast.LENGTH_SHORT).show()
+                }.onFailure { err ->
+                    Toast.makeText(context, "Gagal ekspor .txt: ${err.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    // ── SHARE .DOCX VIA ANDROID SHARE SHEET ──
+    fun shareAsDocx() {
+        scope.launch {
+            val res = withContext(Dispatchers.IO) {
+                runCatching {
+                    val dir = File(context.cacheDir, "exports").apply { if (!exists()) mkdirs() }
+                    val file = File(dir, "${sanitizeFileName(latestTitle)}.docx")
+                    FileOutputStream(file).use { out ->
+                        DocxDocumentCodec.exportToDocx(latestContent, out)
+                    }
+                    file
+                }
+            }
+            res.onSuccess { file ->
+                try {
+                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                    val intent = Intent(Intent.ACTION_SEND).apply {
+                        type = DocxDocumentCodec.MIME_DOCX
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        putExtra(Intent.EXTRA_SUBJECT, latestTitle)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    context.startActivity(Intent.createChooser(intent, "Bagikan Dokumen (.docx)"))
+                } catch (e: Exception) {
+                    Toast.makeText(context, "Gagal membagikan file: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }.onFailure { err ->
+                Toast.makeText(context, "Gagal membuat .docx: ${err.message}", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -1364,10 +1501,9 @@ fun DocumentEditorViewport(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(2.dp)
             ) {
-                // Undo / Redo / Print
+                // Undo / Redo
                 DocToolbarIcon(Icons.AutoMirrored.Filled.Undo, "Undo") { js("undo();") }
                 DocToolbarIcon(Icons.AutoMirrored.Filled.Redo, "Redo") { js("redo();") }
-                DocToolbarIcon(Icons.Filled.Print, "Export PDF", onClick = onExportPdf)
                 DocToolbarDiv()
 
                 // Paragraph Style
@@ -1409,7 +1545,7 @@ fun DocumentEditorViewport(
                 }
                 DocToolbarDiv()
 
-                // Font Family (10 distinct fonts!)
+                // Font Family (10 distinct fonts)
                 Box {
                     Surface(
                         shape = RoundedCornerShape(6.dp),
@@ -1479,7 +1615,7 @@ fun DocumentEditorViewport(
                 }
                 DocToolbarDiv()
 
-                // Inline Formatting (with active state highlight!)
+                // Inline Formatting
                 DocToolbarTextBtn("B", FontWeight.Bold, isActive = isBoldActive, tooltip = "Tebal") { js("toggleBold();") }
                 DocToolbarTextBtn("I", fontStyle = FontStyle.Italic, isActive = isItalicActive, tooltip = "Miring") { js("toggleItalic();") }
                 DocToolbarTextBtn("U", isActive = isUnderlineActive, tooltip = "Garis Bawah") { js("toggleUnderline();") }
@@ -1552,7 +1688,7 @@ fun DocumentEditorViewport(
                 }
                 DocToolbarDiv()
 
-                // Single Cycling Alignment Button (Left -> Center -> Right -> Justify)
+                // Single Cycling Alignment Button
                 Surface(
                     shape = RoundedCornerShape(5.dp),
                     color = Color.Transparent,
@@ -1586,6 +1722,95 @@ fun DocumentEditorViewport(
                 DocToolbarIcon(Icons.Filled.TableChart, "Tabel") { showTableDialog = true }
                 DocToolbarIcon(Icons.Filled.HorizontalRule, "Garis") { js("insertHR();") }
                 DocToolbarIcon(Icons.Filled.FormatClear, "Hapus Format") { js("clearFormatting();") }
+                DocToolbarDiv()
+
+                // ── TOOLS & FILE COMPATIBILITY MENU (Word Count Toggle + DOCX Import/Export) ──
+                Box {
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = if (showWordCount) AccentBlue.copy(alpha = 0.10f) else Color.Transparent,
+                        modifier = Modifier
+                            .height(30.dp)
+                            .clickable { showToolsDropdown = true }
+                            .padding(horizontal = 6.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            Icon(Icons.Filled.Tune, "Alat & File", Modifier.size(15.dp), tint = if (showWordCount) AccentBlue else LernspaceTextPrimary)
+                            Text("Alat", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = if (showWordCount) AccentBlue else LernspaceTextPrimary)
+                            Icon(Icons.Filled.ArrowDropDown, null, Modifier.size(15.dp), tint = LernspaceTextSecondary)
+                        }
+                    }
+                    DropdownMenu(expanded = showToolsDropdown, onDismissRequest = { showToolsDropdown = false }) {
+                        DropdownMenuItem(
+                            leadingIcon = {
+                                Icon(
+                                    if (showWordCount) Icons.Filled.CheckBox else Icons.Filled.CheckBoxOutlineBlank,
+                                    null,
+                                    tint = if (showWordCount) AccentBlue else LernspaceTextSecondary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            },
+                            text = { Text("Tampilkan Jumlah Kata", fontSize = 13.sp) },
+                            onClick = {
+                                showWordCount = !showWordCount
+                                js("setWordCountVisible($showWordCount);")
+                                showToolsDropdown = false
+                            }
+                        )
+                        HorizontalDivider()
+                        DropdownMenuItem(
+                            leadingIcon = { Icon(Icons.Filled.FolderOpen, null, Modifier.size(18.dp), tint = AccentBlue) },
+                            text = { Text("Buka / Impor (.docx, .md, .txt, .html)", fontSize = 13.sp) },
+                            onClick = {
+                                showToolsDropdown = false
+                                importDocLauncher.launch(DocxDocumentCodec.SUPPORTED_IMPORT_MIMES)
+                            }
+                        )
+                        DropdownMenuItem(
+                            leadingIcon = { Icon(Icons.Filled.Description, null, Modifier.size(18.dp), tint = Color(0xFF2563EB)) },
+                            text = { Text("Simpan sebagai Word / GDocs (.docx)", fontSize = 13.sp) },
+                            onClick = {
+                                showToolsDropdown = false
+                                exportDocxLauncher.launch("${sanitizeFileName(latestTitle)}.docx")
+                            }
+                        )
+                        DropdownMenuItem(
+                            leadingIcon = { Icon(Icons.Filled.Share, null, Modifier.size(18.dp), tint = Color(0xFF059669)) },
+                            text = { Text("Bagikan sebagai .docx", fontSize = 13.sp) },
+                            onClick = {
+                                showToolsDropdown = false
+                                shareAsDocx()
+                            }
+                        )
+                        DropdownMenuItem(
+                            leadingIcon = { Icon(Icons.Filled.Code, null, Modifier.size(18.dp), tint = LernspaceTextSecondary) },
+                            text = { Text("Ekspor ke HTML (.html)", fontSize = 13.sp) },
+                            onClick = {
+                                showToolsDropdown = false
+                                exportHtmlLauncher.launch("${sanitizeFileName(latestTitle)}.html")
+                            }
+                        )
+                        DropdownMenuItem(
+                            leadingIcon = { Icon(Icons.Filled.TextSnippet, null, Modifier.size(18.dp), tint = LernspaceTextSecondary) },
+                            text = { Text("Ekspor ke Teks (.txt)", fontSize = 13.sp) },
+                            onClick = {
+                                showToolsDropdown = false
+                                exportTxtLauncher.launch("${sanitizeFileName(latestTitle)}.txt")
+                            }
+                        )
+                        DropdownMenuItem(
+                            leadingIcon = { Icon(Icons.Filled.Print, null, Modifier.size(18.dp), tint = LernspaceTextSecondary) },
+                            text = { Text("Cetak / Ekspor PDF", fontSize = 13.sp) },
+                            onClick = {
+                                showToolsDropdown = false
+                                onExportPdf()
+                            }
+                        )
+                    }
+                }
                 DocToolbarDiv()
 
                 // Mimo AI Quick Actions
@@ -1622,7 +1847,7 @@ fun DocumentEditorViewport(
             }
         }
 
-        // ── WEBVIEW EDITOR (OWN SCROLL, ZERO CURSOR JUMP) ──────────────────
+        // ── WEBVIEW EDITOR (CLEAN HEADERLESS PAPER, ZERO CURSOR JUMP) ──────
         AndroidView(
             factory = { ctx ->
                 val bridge = DocumentJsBridge(
@@ -1630,10 +1855,6 @@ fun DocumentEditorViewport(
                     onContentChanged = { html ->
                         syncState.lastEmittedHtml = html
                         latestOnContentChange(html)
-                    },
-                    onTitleChanged = { newTitle ->
-                        syncState.lastEmittedTitle = newTitle
-                        latestOnTitleChange(newTitle)
                     },
                     onFormatStateChanged = { b, i, u, s, align ->
                         isBoldActive = b
@@ -1667,14 +1888,14 @@ fun DocumentEditorViewport(
                         override fun onPageFinished(view: WebView?, url: String?) {
                             super.onPageFinished(view, url)
                             syncState.isReady = true
+                            view?.evaluateJavascript("setWordCountVisible($showWordCount);", null)
                         }
                     }
 
                     syncState.lastEmittedHtml = content
-                    syncState.lastEmittedTitle = title
                     syncState.lastAppliedDark = isDarkTheme
 
-                    val html = generateEditorHtml(isDarkTheme, subject, title, content)
+                    val html = generateEditorHtml(isDarkTheme, content)
                     loadDataWithBaseURL("https://learnspace.local/", html, "text/html", "UTF-8", null)
                     webViewRef = this
                 }
@@ -1682,20 +1903,12 @@ fun DocumentEditorViewport(
             update = { wv ->
                 if (!syncState.isReady) return@AndroidView
 
-                // Only sync external content updates (e.g. Mimo AI Cheat Sheet / Summary injection)
                 if (content != syncState.lastEmittedHtml) {
                     syncState.lastEmittedHtml = content
                     val normalized = normalizeInitialBody(content)
                     wv.evaluateJavascript("setContentExternal(${JSONObject.quote(normalized)});", null)
                 }
 
-                // Only sync external title updates
-                if (title != syncState.lastEmittedTitle) {
-                    syncState.lastEmittedTitle = title
-                    wv.evaluateJavascript("setTitleExternal(${JSONObject.quote(title)});", null)
-                }
-
-                // Live dark/light paper switch without losing cursor
                 if (isDarkTheme != syncState.lastAppliedDark) {
                     syncState.lastAppliedDark = isDarkTheme
                     wv.evaluateJavascript("applyDarkTheme($isDarkTheme);", null)

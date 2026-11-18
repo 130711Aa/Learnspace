@@ -79,10 +79,46 @@ fun WorkspaceScreen(
             coroutineScope.launch {
                 val noteId = UUID.randomUUID().toString()
                 try {
-                    val (titleName, pageCount, savedPdfUri, docSubject) = withContext(Dispatchers.IO) {
-                        val rawName = DocumentToPdfConverter.getFileName(context, pickedUri)
-                        val mime = context.contentResolver.getType(pickedUri)
+                    val rawName = withContext(Dispatchers.IO) {
+                        DocumentToPdfConverter.getFileName(context, pickedUri)
+                    }
+                    val mime = context.contentResolver.getType(pickedUri)
+                    val timeStr = "Today, " + SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
 
+                    // ── Editable Docs (.docx, .doc, .html, .md, .txt, .rtf) -> Open directly in WYSIWYG Document Editor! ──
+                    if (!DocumentToPdfConverter.isPdf(rawName, mime) &&
+                        !DocumentToPdfConverter.isPptx(rawName, mime) &&
+                        com.lernspace.app.ui.workspace.document.DocxDocumentCodec.isEditableDocument(rawName, mime)
+                    ) {
+                        val importedRes = withContext(Dispatchers.IO) {
+                            com.lernspace.app.ui.workspace.document.DocxDocumentCodec.importFromUri(context, pickedUri)
+                        }
+                        val imported = importedRes.getOrThrow()
+                        withContext(Dispatchers.IO) {
+                            if (imported.plainText.isNotBlank()) {
+                                NoteStorageManager.saveExtractedText(context, noteId, imported.plainText)
+                            }
+                        }
+                        val snippetText = imported.plainText.replace("\n", " ").take(90)
+                            .ifBlank { "${imported.formatLabel}..." }
+                        val newNote = NoteUiModel(
+                            id = noteId,
+                            title = imported.title,
+                            subject = imported.formatLabel,
+                            date = timeStr,
+                            snippet = snippetText,
+                            canvasType = NoteCanvasType.DOC_DOCUMENT,
+                            paperStyle = PaperStyle.BLANK,
+                            documentContent = imported.html,
+                            pages = mutableListOf(NotePageData(pageIndex = 0))
+                        )
+                        notes.add(0, newNote)
+                        AcademicDatabaseManager.persistNote(newNote)
+                        AcademicWorkspaceState.openNoteEditor(newNote)
+                        return@launch
+                    }
+
+                    val (titleName, pageCount, savedPdfUri, docSubject) = withContext(Dispatchers.IO) {
                         if (DocumentToPdfConverter.isPdf(rawName, mime)) {
                             val name = rawName.removeSuffix(".pdf")
                             val copiedUri = NoteStorageManager.copyPdfToInternal(context, pickedUri, noteId)
@@ -132,7 +168,6 @@ fun WorkspaceScreen(
                     }
 
                     val pageCountInt = pageCount.toIntOrNull() ?: 1
-                    val timeStr = "Today, " + SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
                     val newNote = NoteUiModel(
                         id = noteId,
                         title = titleName,
