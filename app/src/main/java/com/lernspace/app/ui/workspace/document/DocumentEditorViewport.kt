@@ -96,7 +96,22 @@ private class DocumentSyncState {
 class DocumentJsBridge(
     private val mainHandler: Handler,
     private val onContentChanged: (String) -> Unit,
-    private val onFormatStateChanged: (bold: Boolean, italic: Boolean, underline: Boolean, strike: Boolean, alignIdx: Int) -> Unit,
+    private val onFormatStateChanged: (
+        bold: Boolean,
+        italic: Boolean,
+        underline: Boolean,
+        strike: Boolean,
+        alignIdx: Int,
+        fontSizePx: Int,
+        fontFamilyName: String,
+        blockTag: String,
+        textColorHex: String,
+        lineSpacingStr: String,
+        indentPx: Int,
+        indentMode: String,
+        spaceBeforePt: Int,
+        spaceAfterPt: Int
+    ) -> Unit,
     private val onRequestReplaceImage: () -> Unit
 ) {
     @JavascriptInterface
@@ -105,8 +120,29 @@ class DocumentJsBridge(
     }
 
     @JavascriptInterface
-    fun onFormatState(bold: Boolean, italic: Boolean, underline: Boolean, strike: Boolean, alignIdx: Int) {
-        mainHandler.post { onFormatStateChanged(bold, italic, underline, strike, alignIdx) }
+    fun onFormatState(
+        bold: Boolean,
+        italic: Boolean,
+        underline: Boolean,
+        strike: Boolean,
+        alignIdx: Int,
+        fontSizePx: Int,
+        fontFamilyName: String,
+        blockTag: String,
+        textColorHex: String,
+        lineSpacingStr: String,
+        indentPx: Int,
+        indentMode: String,
+        spaceBeforePt: Int,
+        spaceAfterPt: Int
+    ) {
+        mainHandler.post {
+            onFormatStateChanged(
+                bold, italic, underline, strike, alignIdx,
+                fontSizePx, fontFamilyName, blockTag, textColorHex,
+                lineSpacingStr, indentPx, indentMode, spaceBeforePt, spaceAfterPt
+            )
+        }
     }
 
     @JavascriptInterface
@@ -361,8 +397,8 @@ fun generateEditorHtml(
     outline: none;
     caret-color: #2563EB;
     color: var(--text);
-    font-size: 15px;
-    line-height: 1.65;
+    font-size: 14.67px;
+    line-height: 1.15;
     word-wrap: break-word;
     overflow-wrap: break-word;
     min-height: 860px;
@@ -375,12 +411,15 @@ fun generateEditorHtml(
     pointer-events: none;
   }
 
-  #editor p, #editor div { margin: 0 0 6px 0; min-height: 1.5em; }
-  #editor h1 { font-size: 26px; font-weight: 700; margin: 16px 0 8px 0; clear: both; }
-  #editor h2 { font-size: 21px; font-weight: 700; margin: 14px 0 6px 0; clear: both; }
-  #editor h3 { font-size: 18px; font-weight: 600; margin: 12px 0 5px 0; clear: both; }
+  #editor p, #editor div { margin: 0; min-height: 1em; }
+  #editor h1 { font-size: 26.67px; font-weight: 700; margin: 16px 0 10px 0; clear: both; }
+  #editor h2 { font-size: 21.33px; font-weight: 700; margin: 14px 0 8px 0; clear: both; }
+  #editor h3 { font-size: 18.67px; font-weight: 600; margin: 12px 0 6px 0; clear: both; }
   #editor h4 { font-size: 16px; font-weight: 600; margin: 10px 0 4px 0; clear: both; }
-  #editor h5 { font-size: 14px; font-weight: 600; margin: 8px 0 3px 0; clear: both; }
+  #editor h5 { font-size: 14.67px; font-weight: 600; margin: 8px 0 4px 0; clear: both; }
+  #editor > h1:first-child:not([data-space-before]),
+  #editor > h2:first-child:not([data-space-before]),
+  #editor > h3:first-child:not([data-space-before]) { margin-top: 0; }
   #editor a { color: var(--link); text-decoration: underline; }
   #editor hr { border: none; border-top: 1.5px solid var(--border); margin: 16px 0; clear: both; }
 
@@ -421,10 +460,29 @@ fun generateEditorHtml(
     padding: 2px 5px;
   }
 
+  /* ── ZERO-DOM-NODE PAGE PUSH (SMOOTH MARGIN-TOP JUMP, NO SPACER DIVS) ── */
+  #editor [data-page-push] { clear: both; }
+  #editor [data-page-parked] {
+    height: 1px !important;
+    min-height: 1px !important;
+    line-height: 1px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+  }
+  body.pageless-mode #editor [data-page-push] { margin-top: 0 !important; }
+  body.pageless-mode #editor [data-page-parked] {
+    height: auto !important; min-height: 1.15em !important; line-height: inherit !important;
+    margin: 0 !important; opacity: 1 !important; pointer-events: auto !important;
+  }
+  #editor .doc-page-spacer { display: none !important; height: 0 !important; }
+
   /* ── LISTS & CHECKLIST ── */
-  #editor ul { list-style-type: disc; margin: 6px 0 10px 0; padding-left: 28px; }
-  #editor ol { list-style-type: decimal; margin: 6px 0 10px 0; padding-left: 28px; }
-  #editor li { margin: 3px 0; line-height: 1.65; }
+  #editor ul { list-style-type: disc; margin: 4px 0 6px 0; padding-left: 28px; }
+  #editor ol { list-style-type: decimal; margin: 4px 0 6px 0; padding-left: 28px; }
+  #editor li { margin: 2px 0; line-height: 1.3; }
   #editor ul.checklist { list-style: none; padding-left: 4px; }
   #editor ul.checklist li { display: flex; align-items: flex-start; gap: 8px; margin: 5px 0; }
   #editor ul.checklist li input[type="checkbox"] {
@@ -442,6 +500,15 @@ fun generateEditorHtml(
     border-radius: 0 6px 6px 0;
     color: var(--quote-text);
     font-style: italic;
+    min-height: 1.5em;
+  }
+  #editor blockquote:empty::before,
+  #editor blockquote:has(br:only-child)::before {
+    content: 'Tulis kutipan di sini...';
+    color: var(--muted);
+    font-style: italic;
+    pointer-events: none;
+    opacity: 0.6;
   }
   #editor pre {
     background: var(--code-bg);
@@ -612,7 +679,8 @@ fun generateEditorHtml(
       background: #FFFFFF !important; padding: 0 !important; margin: 0 !important;
     }
     #editor { color: #0F172A !important; min-height: 0 !important; }
-    #wc-pill, #wc-popover, #img-resizer, #img-toolbar, #tbl-toolbar, #page-sheets-bg { display: none !important; }
+    #wc-pill, #wc-popover, #img-resizer, #img-toolbar, #tbl-toolbar, #page-sheets-bg, #editor .doc-page-spacer { display: none !important; }
+    #editor [data-page-push] { margin-top: 0 !important; }
     #editor .doc-page-break {
       margin: 0 !important; padding: 0 !important; height: 0 !important;
       break-after: page; page-break-after: always; visibility: hidden;
@@ -728,36 +796,34 @@ var PAGE_GAP = 20;
 
 try { document.execCommand('defaultParagraphSeparator', false, 'p'); } catch(_) {}
 
-function getScaledPageMetrics() {
-  var cfg = pageConfig;
-  var availW = Math.max(300, window.innerWidth - 28);
-  var scale = Math.min(1, availW / cfg.widthPx);
-  var pageH = Math.max(400, Math.round(cfg.heightPx * scale));
-  var padT = Math.max(16, Math.round(cfg.mTopPx * scale));
-  var padR = Math.max(16, Math.round(cfg.mRightPx * scale));
-  var padB = Math.max(16, Math.round(cfg.mBottomPx * scale));
-  var padL = Math.max(16, Math.round(cfg.mLeftPx * scale));
-  return { scale: scale, pageH: pageH, padT: padT, padR: padR, padB: padB, padL: padL };
+function isBlockEmpty(el) {
+  if (!el) return true;
+  if (el.classList.contains('doc-page-break')) return false;
+  if (el.querySelector('img, table, hr, iframe')) return false;
+  return !(el.textContent || '').trim();
 }
 
-function measureContentHeight() {
-  var edRect = editor.getBoundingClientRect();
-  var maxBottom = 0;
-  var children = editor.children;
-  for (var i = 0; i < children.length; i++) {
-    var r = children[i].getBoundingClientRect();
-    var b = r.bottom - edRect.top;
-    if (b > maxBottom) maxBottom = b;
+function getLastContentIndex(children) {
+  for (var i = children.length - 1; i >= 0; i--) {
+    var el = children[i];
+    if (el.nodeType !== 1) continue;
+    if (el.classList.contains('doc-page-spacer')) continue;
+    if (el.classList.contains('doc-page-break')) return i;
+    if (!isBlockEmpty(el)) return i;
   }
-  if (maxBottom === 0 && (editor.textContent || '').trim().length > 0) {
-    try {
-      var range = document.createRange();
-      range.selectNodeContents(editor);
-      var rr = range.getBoundingClientRect();
-      maxBottom = Math.max(0, rr.bottom - edRect.top);
-    } catch(_) {}
-  }
-  return maxBottom;
+  return -1;
+}
+
+function getScaledPageMetrics() {
+  var cfg = pageConfig;
+  return {
+    pageH: cfg.heightPx,
+    pageW: cfg.widthPx,
+    padT: cfg.mTopPx,
+    padR: cfg.mRightPx,
+    padB: cfg.mBottomPx,
+    padL: cfg.mLeftPx
+  };
 }
 
 // ── PAGE SETUP ENGINE (FULL-SIZE DISCRETE SHEETS) ──
@@ -772,86 +838,404 @@ function applyPageSetup(cfg) {
     '@page { size: ' + cfg.widthMm + 'mm ' + cfg.heightMm + 'mm; ' +
     'margin: ' + cfg.mTopCm + 'cm ' + cfg.mRightCm + 'cm ' + cfg.mBottomCm + 'cm ' + cfg.mLeftCm + 'cm; }';
 
+  var shell = document.getElementById('paper-shell');
   if (!cfg.pageless) {
     var m = getScaledPageMetrics();
+    if (shell) shell.style.width = cfg.widthPx + 'px';
     paper.style.width = cfg.widthPx + 'px';
     paper.style.padding = m.padT + 'px ' + m.padR + 'px ' + m.padB + 'px ' + m.padL + 'px';
     editor.style.minHeight = Math.max(200, m.pageH - m.padT - m.padB) + 'px';
   } else {
+    if (shell) shell.style.width = '';
     paper.style.minHeight = '';
     editor.style.minHeight = '';
   }
 
-  requestAnimationFrame(rebuildPageGuides);
+  requestAnimationFrame(paginateDocument);
 }
 
-function rebuildPageGuides() {
+function splitBlockAtPageBoundary(block, maxBottom) {
+  if (block.tagName !== 'P' && block.tagName !== 'DIV') return false;
+  if (block.querySelector('table, pre, ul, ol, img, iframe, .doc-page-break')) return false;
+
+  var edRect = editor.getBoundingClientRect();
+  var bRect = block.getBoundingClientRect();
+  if (bRect.height < 36) return false;
+
+  var walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, null, false);
+  var textNodes = [];
+  var node;
+  while ((node = walker.nextNode())) { textNodes.push(node); }
+  if (textNodes.length === 0) return false;
+
+  var range = document.createRange();
+  var splitNode = null;
+  var splitOffset = -1;
+
+  for (var n = 0; n < textNodes.length; n++) {
+    var tn = textNodes[n];
+    var val = tn.nodeValue || '';
+    for (var i = 0; i < val.length; i++) {
+      range.setStart(tn, i);
+      range.setEnd(tn, Math.min(i + 1, val.length));
+      var r = range.getBoundingClientRect();
+      if ((r.bottom - edRect.top) > maxBottom) {
+        var cut = i;
+        while (cut > 0 && !/\s/.test(val[cut])) cut--;
+        if (cut === 0) cut = i;
+        splitNode = tn;
+        splitOffset = cut;
+        break;
+      }
+    }
+    if (splitNode) break;
+  }
+
+  if (!splitNode || splitOffset <= 0) return false;
+
+  var secondText = splitNode.splitText(splitOffset);
+  var newP = document.createElement('p');
+  newP.style.cssText = block.style.cssText;
+  newP.style.marginTop = '';
+  delete newP.dataset.pagePush;
+
+  var curr = secondText;
+  while (curr) {
+    var next = curr.nextSibling;
+    newP.appendChild(curr);
+    curr = next;
+  }
+
+  block.parentNode.insertBefore(newP, block.nextSibling);
+
+  var sel = window.getSelection();
+  if (sel && sel.rangeCount > 0) {
+    var sr = sel.getRangeAt(0);
+    if (sr.startContainer === splitNode && sr.startOffset >= splitOffset) {
+      var newRange = document.createRange();
+      newRange.setStart(secondText, Math.max(0, sr.startOffset - splitOffset));
+      newRange.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(newRange);
+    }
+  }
+
+  return true;
+}
+
+var isPaginating = false;
+var lastPaginatedEditorH = -1;
+
+function getNaturalMarginTop(el) {
+  if (el.dataset && el.dataset.spaceBefore) {
+    return parseFloat(el.dataset.spaceBefore) || 0;
+  }
+  if (el.classList.contains('doc-page-break')) return 22;
+  switch (el.tagName) {
+    case 'H1': return 16;
+    case 'H2': return 14;
+    case 'H3': return 12;
+    case 'H4': return 10;
+    case 'H5': return 8;
+    case 'HR': return 16;
+    case 'UL': case 'OL': return 6;
+    case 'BLOCKQUOTE': case 'PRE': return 10;
+    case 'TABLE': return 12;
+    default: return 0;
+  }
+}
+
+function createSheetCard(pageNum, m) {
+  var card = document.createElement('div');
+  card.className = 'sheet-card';
+  card.style.height = m.pageH + 'px';
+
+  if (pageConfig.headerText) {
+    var hdr = document.createElement('div');
+    hdr.className = 'sheet-hdr';
+    hdr.style.left = m.padL + 'px';
+    hdr.style.right = m.padR + 'px';
+    hdr.textContent = pageConfig.headerText;
+    card.appendChild(hdr);
+  }
+
+  var ftrParts = [];
+  if (pageConfig.footerText) ftrParts.push(pageConfig.footerText);
+  if (pageConfig.showPageNumbers) ftrParts.push('Halaman ' + pageNum);
+  if (ftrParts.length > 0) {
+    var ftr = document.createElement('div');
+    ftr.className = 'sheet-ftr';
+    ftr.style.left = m.padL + 'px';
+    ftr.style.right = m.padR + 'px';
+    ftr.textContent = ftrParts.join('  ·  ');
+    card.appendChild(ftr);
+  }
+  return card;
+}
+
+var lastCaretBlock = null;
+
+function getCaretBlock() {
+  if (document.activeElement !== editor) return null;
+  var sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return null;
+  var node = sel.getRangeAt(0).startContainer;
+  if (!editor.contains(node)) return null;
+  if (node === editor) {
+    var off = sel.getRangeAt(0).startOffset;
+    return editor.children[Math.min(off, editor.children.length - 1)] || null;
+  }
+  return findClosestBlock(node);
+}
+
+function hasRealContent(el) {
+  if (!el) return false;
+  if (el.classList.contains('doc-page-break')) return true;
+  if (el.querySelector('img, table, hr, iframe')) return true;
+  return (el.textContent || '').replace(/\u200B/g, '').trim().length > 0;
+}
+
+function clearAllPagePushes() {
+  var pushed = editor.querySelectorAll('[data-page-push]');
+  for (var i = 0; i < pushed.length; i++) {
+    pushed[i].style.marginTop = pushed[i].dataset.spaceBefore ? (pushed[i].dataset.spaceBefore + 'px') : '';
+    delete pushed[i].dataset.pagePush;
+  }
+  var parked = editor.querySelectorAll('[data-page-parked]');
+  for (var p = 0; p < parked.length; p++) {
+    delete parked[p].dataset.pageParked;
+  }
+  var oldSpacers = editor.querySelectorAll('.doc-page-spacer');
+  for (var s = 0; s < oldSpacers.length; s++) {
+    oldSpacers[s].parentNode.removeChild(oldSpacers[s]);
+  }
+}
+
+function paginateDocument() {
+  if (isPaginating) return;
   if (!pageConfig || pageConfig.pageless) {
+    clearAllPagePushes();
     pageSheetsBg.innerHTML = '';
     estimatedPageCount = 1;
     lastSheetsRenderKey = 'pageless';
+    lastPaginatedEditorH = editor.offsetHeight;
     updateWordCount();
     return;
   }
 
-  var m = getScaledPageMetrics();
-  var firstPageUsable = Math.max(180, m.pageH - m.padT - m.padB);
-  var stride = m.pageH + PAGE_GAP;
-  var contentH = measureContentHeight();
+  isPaginating = true;
+  try {
+    var m = getScaledPageMetrics();
+    var usableH = Math.max(180, m.pageH - m.padT - m.padB);
+    var stride = m.pageH + PAGE_GAP;
 
-  // Snap strictly to whole full-size pages!
-  // The moment text exceeds Page 1, immediately render Page 2 at full sheet height!
-  var autoPages = 1;
-  if (contentH > firstPageUsable + 2) {
-    autoPages = 1 + Math.ceil((contentH - firstPageUsable) / stride);
-  }
-  var manualBreaks = editor.querySelectorAll('.doc-page-break').length;
-  var pageCount = Math.max(1, autoPages, manualBreaks + 1);
-  estimatedPageCount = pageCount;
+    function pageStart(p) { return (p - 1) * stride; }
+    function pageEnd(p) { return (p - 1) * stride + usableH; }
+    function nextPageStart(p) { return p * stride; }
 
-  // Snap #paper height to exact N full sheets + gaps
-  var totalPaperH = pageCount * m.pageH + (pageCount - 1) * PAGE_GAP;
-  paper.style.minHeight = totalPaperH + 'px';
-
-  var renderKey = pageCount + '|' + m.pageH + '|' + m.padL + '|' + m.padR + '|' +
-    (pageConfig.headerText || '') + '|' + (pageConfig.footerText || '') + '|' + pageConfig.showPageNumbers;
-
-  if (renderKey !== lastSheetsRenderKey) {
-    lastSheetsRenderKey = renderKey;
-    var frag = document.createDocumentFragment();
-    for (var p = 1; p <= pageCount; p++) {
-      var card = document.createElement('div');
-      card.className = 'sheet-card';
-      card.style.height = m.pageH + 'px';
-
-      if (pageConfig.headerText) {
-        var hdr = document.createElement('div');
-        hdr.className = 'sheet-hdr';
-        hdr.style.left = m.padL + 'px';
-        hdr.style.right = m.padR + 'px';
-        hdr.textContent = pageConfig.headerText;
-        card.appendChild(hdr);
-      }
-
-      var ftrParts = [];
-      if (pageConfig.footerText) ftrParts.push(pageConfig.footerText);
-      if (pageConfig.showPageNumbers) ftrParts.push('Halaman ' + p);
-      if (ftrParts.length > 0) {
-        var ftr = document.createElement('div');
-        ftr.className = 'sheet-ftr';
-        ftr.style.left = m.padL + 'px';
-        ftr.style.right = m.padR + 'px';
-        ftr.textContent = ftrParts.join('  ·  ');
-        card.appendChild(ftr);
-      }
-
-      frag.appendChild(card);
+    // Remove any legacy spacer divs (only if present from older saved content)
+    var legacySpacers = editor.querySelectorAll('.doc-page-spacer');
+    for (var ls = 0; ls < legacySpacers.length; ls++) {
+      legacySpacers[ls].parentNode.removeChild(legacySpacers[ls]);
     }
-    pageSheetsBg.innerHTML = '';
-    pageSheetsBg.appendChild(frag);
+
+    var children = Array.prototype.slice.call(editor.children);
+    var caretBlock = getCaretBlock();
+    lastCaretBlock = caretBlock;
+
+    // Highest block index that has real typed content OR currently holds the cursor
+    var lastActiveIdx = -1;
+    for (var a = children.length - 1; a >= 0; a--) {
+      var cEl = children[a];
+      if (cEl.nodeType !== 1) continue;
+      if (hasRealContent(cEl) || (caretBlock && (cEl === caretBlock || cEl.contains(caretBlock)))) {
+        lastActiveIdx = a;
+        break;
+      }
+    }
+
+    var currentPage = 1;
+    var prevBottom = 0;
+    var prevMb = 0;
+    var forceBreakBeforeNext = false;
+    var writes = [];
+    var pushedWrites = [];
+    var parkedKept = false;
+    var toRemove = [];
+
+    // Pure in-memory measurement pass: NEVER strip existing marginTop before measuring,
+    // so Page 2+ NEVER collapses/expands on every keystroke!
+    for (var i = 0; i < children.length; i++) {
+      var el = children[i];
+      if (el.nodeType !== 1) continue;
+
+      var isTrailingEmpty = (i > lastActiveIdx);
+      if (isTrailingEmpty && el.dataset.pageParked && currentPage > 1) {
+        toRemove.push(el);
+        continue;
+      }
+      if (!isTrailingEmpty && el.dataset.pageParked) {
+        delete el.dataset.pageParked;
+      }
+
+      var r = el.getBoundingClientRect();
+      var h = r.height;
+      var cs = window.getComputedStyle(el);
+      var mb = parseFloat(cs.marginBottom) || 0;
+      var hasPush = !!el.dataset.pagePush;
+      var currentPush = hasPush ? (parseFloat(el.dataset.pagePush) || 0) : 0;
+      var mt = hasPush ? getNaturalMarginTop(el) : (parseFloat(cs.marginTop) || 0);
+
+      if (el.classList.contains('doc-page-break')) {
+        if (hasPush) {
+          writes.push({ el: el, push: 0, targetNext: 0 });
+        }
+        var brkGap = (i === 0) ? mt : Math.max(prevMb, mt);
+        prevBottom = prevBottom + brkGap + h;
+        prevMb = mb;
+        forceBreakBeforeNext = true;
+        continue;
+      }
+
+      var gap = (i === 0) ? mt : Math.max(prevMb, mt);
+      var naturalTop = prevBottom + gap;
+      var naturalBottom = naturalTop + (el.dataset.pageParked ? 25 : h);
+      var currentMax = pageEnd(currentPage);
+
+      var isAtPageStart = !forceBreakBeforeNext && (prevBottom <= pageStart(currentPage) + 2);
+      var fitsOnPage = !forceBreakBeforeNext && (naturalBottom <= currentMax + 1);
+
+      if (fitsOnPage || isAtPageStart) {
+        if (el.dataset.pageParked) {
+          delete el.dataset.pageParked;
+        }
+        if (hasPush) {
+          writes.push({ el: el, push: 0, targetNext: 0 });
+        }
+        prevBottom = naturalBottom;
+        prevMb = mb;
+        forceBreakBeforeNext = false;
+      } else if (isTrailingEmpty) {
+        // No typed content AND no cursor on this overflow block -> do NOT keep an empty page open!
+        if (hasPush) {
+          writes.push({ el: el, push: 0, targetNext: 0 });
+        }
+        if (!parkedKept) {
+          parkedKept = true;
+          if (!el.dataset.pageParked) {
+            el.dataset.pageParked = '1';
+          }
+        } else {
+          toRemove.push(el);
+        }
+      } else {
+        if (!forceBreakBeforeNext && naturalTop < currentMax - 20 && h >= 36 && splitBlockAtPageBoundary(el, currentMax)) {
+          if (hasPush) {
+            writes.push({ el: el, push: 0, targetNext: 0 });
+          }
+          var hFirst = el.getBoundingClientRect().height;
+          prevBottom = naturalTop + hFirst;
+          prevMb = mb;
+          if (el.nextSibling) {
+            children.splice(i + 1, 0, el.nextSibling);
+            if (lastActiveIdx >= i) lastActiveIdx++;
+          }
+          continue;
+        }
+
+        // Exceeds currentPage! Push cleanly via margin-top to exact top of nextPage (zero extra DOM nodes)
+        var targetNext = nextPageStart(currentPage);
+        var desiredPush = Math.max(0, Math.round((targetNext - prevBottom) * 100) / 100);
+        if (!hasPush || Math.abs(desiredPush - currentPush) > 0.5) {
+          var wItem = { el: el, push: desiredPush, targetNext: targetNext };
+          writes.push(wItem);
+          pushedWrites.push(wItem);
+        }
+        currentPage++;
+        prevBottom = targetNext + h;
+        prevMb = mb;
+        forceBreakBeforeNext = false;
+      }
+    }
+
+    // Remove redundant extra empty trailing blocks beyond the 1 parked block
+    for (var rm = 0; rm < toRemove.length; rm++) {
+      if (toRemove[rm].parentNode) {
+        toRemove[rm].parentNode.removeChild(toRemove[rm]);
+      }
+    }
+
+    // Single write pass: ZERO DOM writes when typing normally on Page 1 or Page 2+!
+    for (var w = 0; w < writes.length; w++) {
+      var item = writes[w];
+      if (item.push > 0) {
+        item.el.style.marginTop = item.push + 'px';
+        item.el.dataset.pagePush = String(item.push);
+      } else {
+        item.el.style.marginTop = item.el.dataset.spaceBefore ? (item.el.dataset.spaceBefore + 'px') : '';
+        delete item.el.dataset.pagePush;
+      }
+    }
+
+    // Drift verification ONLY when a page break push was newly created/updated
+    if (pushedWrites.length > 0) {
+      var edRectAfter = editor.getBoundingClientRect();
+      for (var pw = 0; pw < pushedWrites.length; pw++) {
+        var pItem = pushedWrites[pw];
+        var actualTop = pItem.el.getBoundingClientRect().top - edRectAfter.top;
+        var drift = actualTop - pItem.targetNext;
+        if (Math.abs(drift) > 0.5) {
+          var adj = Math.max(0, Math.round((pItem.push - drift) * 100) / 100);
+          pItem.el.style.marginTop = adj + 'px';
+          pItem.el.dataset.pagePush = String(adj);
+        }
+      }
+    }
+
+    var pageCount = Math.max(1, currentPage);
+    estimatedPageCount = pageCount;
+
+    // Snap #paper height to exact N full sheets + gaps
+    var totalPaperH = pageCount * m.pageH + (pageCount - 1) * PAGE_GAP;
+    var targetMinH = totalPaperH + 'px';
+    if (paper.style.minHeight !== targetMinH) {
+      paper.style.minHeight = targetMinH;
+    }
+
+    // Incremental sheet card updates: NEVER flash/wipe existing sheets when pageCount changes!
+    var layoutKey = m.pageH + '|' + m.padL + '|' + m.padR + '|' +
+      (pageConfig.headerText || '') + '|' + (pageConfig.footerText || '') + '|' + pageConfig.showPageNumbers;
+
+    if (layoutKey !== lastSheetsRenderKey) {
+      lastSheetsRenderKey = layoutKey;
+      var frag = document.createDocumentFragment();
+      for (var p = 1; p <= pageCount; p++) {
+        frag.appendChild(createSheetCard(p, m));
+      }
+      pageSheetsBg.innerHTML = '';
+      pageSheetsBg.appendChild(frag);
+    } else {
+      var curSheets = pageSheetsBg.children.length;
+      while (curSheets < pageCount) {
+        curSheets++;
+        pageSheetsBg.appendChild(createSheetCard(curSheets, m));
+      }
+      while (curSheets > pageCount) {
+        pageSheetsBg.removeChild(pageSheetsBg.lastChild);
+        curSheets--;
+      }
+    }
+
+    lastPaginatedEditorH = editor.offsetHeight;
+  } finally {
+    isPaginating = false;
   }
 
   updateWordCount();
+}
+
+function rebuildPageGuides() {
+  paginateDocument();
 }
 
 window.addEventListener('resize', function() {
@@ -859,7 +1243,11 @@ window.addEventListener('resize', function() {
 });
 
 if (typeof ResizeObserver !== 'undefined') {
-  var ro = new ResizeObserver(function() { rebuildPageGuides(); });
+  var ro = new ResizeObserver(function() {
+    if (!isPaginating && editor.offsetHeight !== lastPaginatedEditorH) {
+      paginateDocument();
+    }
+  });
   ro.observe(editor);
 }
 
@@ -918,7 +1306,7 @@ function hydratePageBreaks() {
 // ── LINE SPACING & INDENTATION (SKRIPSI / MAKALAH READY) ──
 function findClosestBlock(node) {
   while (node && node !== editor) {
-    if (node.nodeType === 1 && /^(P|DIV|H1|H2|H3|H4|H5|H6|LI|BLOCKQUOTE|PRE)$/.test(node.tagName)) {
+    if (node.nodeType === 1 && !node.classList.contains('doc-page-spacer') && /^(P|DIV|H1|H2|H3|H4|H5|H6|LI|BLOCKQUOTE|PRE)$/.test(node.tagName)) {
       return node;
     }
     node = node.parentNode;
@@ -926,18 +1314,143 @@ function findClosestBlock(node) {
   return null;
 }
 
+function findClosestBlockquote(node) {
+  while (node && node !== editor) {
+    if (node.nodeType === 1 && node.tagName === 'BLOCKQUOTE') {
+      return node;
+    }
+    node = node.parentNode;
+  }
+  return null;
+}
+
+function isCaretAtBlockStart(block, range) {
+  if (!block || !range || !range.collapsed) return false;
+  var testRange = document.createRange();
+  testRange.setStart(block, 0);
+  testRange.setEnd(range.startContainer, range.startOffset);
+  var beforeTxt = testRange.toString().replace(/\u200B/g, '');
+  return beforeTxt.length === 0;
+}
+
+function splitSoftBreaksIfNeeded(block) {
+  if (!block || (block.tagName !== 'P' && block.tagName !== 'DIV')) return false;
+  if (block.classList.contains('doc-page-break')) return false;
+  var brs = block.querySelectorAll('br');
+  if (brs.length === 0) return false;
+  // Check if any direct-child <br> actually separates two lines (has content after it)
+  var hasSeparatingBr = false;
+  for (var i = 0; i < block.childNodes.length; i++) {
+    var cn = block.childNodes[i];
+    if (cn.nodeType === 1 && cn.tagName === 'BR') {
+      var nxt = cn.nextSibling;
+      while (nxt && nxt.nodeType === 3 && !nxt.nodeValue) nxt = nxt.nextSibling;
+      if (nxt) {
+        hasSeparatingBr = true;
+        break;
+      }
+    }
+  }
+  if (!hasSeparatingBr) return false;
+
+  // Save caret position before splitting soft breaks into per-line <p> elements
+  var sel = window.getSelection();
+  var sc = null, so = 0, ec = null, eo = 0;
+  if (sel && sel.rangeCount > 0) {
+    var sr = sel.getRangeAt(0);
+    sc = sr.startContainer; so = sr.startOffset;
+    ec = sr.endContainer; eo = sr.endOffset;
+  }
+
+  var groups = [[]];
+  while (block.firstChild) {
+    var child = block.firstChild;
+    block.removeChild(child);
+    if (child.nodeType === 1 && child.tagName === 'BR') {
+      groups.push([]);
+    } else {
+      groups[groups.length - 1].push(child);
+    }
+  }
+  // Remove trailing empty group if block ended with a placeholder <br>
+  if (groups.length > 1 && groups[groups.length - 1].length === 0) {
+    groups.pop();
+  }
+
+  var parent = block.parentNode;
+  var refNext = block.nextSibling;
+  var baseStyle = block.style.cssText;
+
+  groups.forEach(function(nodes, idx) {
+    var p = (idx === 0) ? block : document.createElement('p');
+    if (idx > 0) {
+      p.style.cssText = baseStyle;
+      p.style.marginTop = '';
+      delete p.dataset.pagePush;
+      delete p.dataset.pageParked;
+      parent.insertBefore(p, refNext);
+    }
+    if (nodes.length === 0) {
+      p.innerHTML = '<br>';
+    } else {
+      nodes.forEach(function(n) { p.appendChild(n); });
+    }
+  });
+
+  if (sel && sc && editor.contains(sc)) {
+    try {
+      var nr = document.createRange();
+      nr.setStart(sc, so);
+      nr.setEnd(ec && editor.contains(ec) ? ec : sc, ec && editor.contains(ec) ? eo : so);
+      sel.removeAllRanges();
+      sel.addRange(nr);
+      savedRange = nr.cloneRange();
+    } catch(_) {}
+  }
+  return true;
+}
+
 function getSelectedBlocks() {
   var blocks = [];
   var sel = window.getSelection();
   if (!sel || sel.rangeCount === 0) return blocks;
   var range = sel.getRangeAt(0);
+  if (!editor.contains(range.commonAncestorContainer)) return blocks;
+
+  // Wrap bare top-level text node into <p> so per-line/per-paragraph formatting always works
+  if (range.startContainer.nodeType === 3 && range.startContainer.parentNode === editor) {
+    var tn = range.startContainer;
+    var pWrap = document.createElement('p');
+    editor.insertBefore(pWrap, tn);
+    pWrap.appendChild(tn);
+    var nr = document.createRange();
+    nr.setStart(tn, range.startOffset);
+    nr.setEnd(range.endContainer === tn ? tn : range.endContainer, range.endOffset);
+    sel.removeAllRanges();
+    sel.addRange(nr);
+    savedRange = nr.cloneRange();
+    range = nr;
+  }
+
   var startBlock = findClosestBlock(range.startContainer);
   var endBlock = findClosestBlock(range.endContainer);
   if (!startBlock && !endBlock) return blocks;
+
+  // Split any soft <br> breaks inside the active paragraph so indentation applies strictly per line!
+  if (startBlock && splitSoftBreaksIfNeeded(startBlock)) {
+    range = sel.getRangeAt(0);
+    startBlock = findClosestBlock(range.startContainer);
+    endBlock = findClosestBlock(range.endContainer);
+  }
+  if (endBlock && endBlock !== startBlock && splitSoftBreaksIfNeeded(endBlock)) {
+    range = sel.getRangeAt(0);
+    endBlock = findClosestBlock(range.endContainer);
+  }
+
   if (startBlock && (!endBlock || startBlock === endBlock)) {
     return [startBlock];
   }
-  var all = editor.querySelectorAll('p, div:not(.doc-page-break), h1, h2, h3, h4, h5, li, blockquote');
+  var all = editor.querySelectorAll('p, div:not(.doc-page-break):not(.doc-page-spacer), h1, h2, h3, h4, h5, li, blockquote');
   var inRange = false;
   for (var i = 0; i < all.length; i++) {
     var el = all[i];
@@ -948,15 +1461,109 @@ function getSelectedBlocks() {
   return blocks.length ? blocks : (startBlock ? [startBlock] : []);
 }
 
+function normalizeLineSpacingStr(raw) {
+  if (!raw) return '1.15';
+  var num = parseFloat(raw);
+  if (isNaN(num)) return '1.15';
+  if (Math.abs(num - 1.0) < 0.03) return '1.0';
+  if (Math.abs(num - 1.15) < 0.03) return '1.15';
+  if (Math.abs(num - 1.5) < 0.03) return '1.5';
+  if (Math.abs(num - 2.0) < 0.03) return '2.0';
+  return String(num);
+}
+
+function getBlockIndentInfo(b) {
+  if (!b) return { indentPx: 0, mode: 'none', lineSpacing: '1.15', spaceBeforePt: 0, spaceAfterPt: 0 };
+  var cs = window.getComputedStyle(b);
+  var ml = Math.round(parseFloat(b.style.marginLeft || '0') || 0);
+  var ti = Math.round(parseFloat(cs.textIndent || '0') || 0);
+  var mode = 'none';
+  if (ti > 4) mode = 'first';
+  else if (ti < -4) mode = 'hanging';
+  var rawLs = b.style.lineHeight || editor.style.lineHeight || '1.15';
+  var mtPx = b.dataset.spaceBefore
+    ? (parseFloat(b.dataset.spaceBefore) || 0)
+    : (b.dataset.pagePush ? 0 : (parseFloat(b.style.marginTop || '0') || 0));
+  var mbPx = parseFloat(b.style.marginBottom || '0') || 0;
+  return {
+    indentPx: ml,
+    mode: mode,
+    lineSpacing: normalizeLineSpacingStr(rawLs),
+    spaceBeforePt: mtPx > 0.5 ? Math.round(mtPx * 0.75) : 0,
+    spaceAfterPt: mbPx > 0.5 ? Math.round(mbPx * 0.75) : 0
+  };
+}
+
 function setLineSpacing(multiplier) {
   restoreSelection();
   var blocks = getSelectedBlocks();
   if (blocks.length === 0) {
     editor.style.lineHeight = String(multiplier);
   } else {
-    blocks.forEach(function(b) { b.style.lineHeight = String(multiplier); });
+    blocks.forEach(function(b) {
+      b.style.lineHeight = String(multiplier);
+      b.querySelectorAll('span, font').forEach(function(el) {
+        if (el.style && el.style.lineHeight) el.style.lineHeight = '';
+      });
+      syncBlockStrutFontSize(b);
+    });
   }
-  rebuildPageGuides();
+  paginateDocument();
+  syncToolbarState();
+  notifyChange();
+}
+
+function applySpaceBeforePx(b, px) {
+  if (px > 0.5) {
+    var rounded = Math.round(px * 100) / 100;
+    b.dataset.spaceBefore = String(rounded);
+    if (!b.dataset.pagePush) {
+      b.style.marginTop = rounded + 'px';
+    }
+  } else {
+    delete b.dataset.spaceBefore;
+    if (!b.dataset.pagePush) {
+      b.style.marginTop = '';
+    }
+  }
+}
+
+function toggleSpaceBeforeParagraph() {
+  restoreSelection();
+  var blocks = getSelectedBlocks();
+  if (blocks.length === 0) return;
+  var info = getBlockIndentInfo(blocks[0]);
+  var nextPx = info.spaceBeforePt > 0 ? 0 : (10 * 4 / 3); // Google Docs standard 10pt = 13.33px
+  blocks.forEach(function(b) { applySpaceBeforePx(b, nextPx); });
+  paginateDocument();
+  syncToolbarState();
+  notifyChange();
+}
+
+function toggleSpaceAfterParagraph() {
+  restoreSelection();
+  var blocks = getSelectedBlocks();
+  if (blocks.length === 0) return;
+  var info = getBlockIndentInfo(blocks[0]);
+  var nextVal = info.spaceAfterPt > 0 ? '' : '13.33px'; // Google Docs standard 10pt = 13.33px
+  blocks.forEach(function(b) { b.style.marginBottom = nextVal; });
+  paginateDocument();
+  syncToolbarState();
+  notifyChange();
+}
+
+function setParagraphSpacing(beforePt, afterPt) {
+  restoreSelection();
+  var blocks = getSelectedBlocks();
+  if (blocks.length === 0) return;
+  var beforePx = beforePt > 0 ? (Math.round(beforePt * 400 / 3) / 100) : 0;
+  var afterVal = afterPt > 0 ? ((Math.round(afterPt * 400 / 3) / 100) + 'px') : '';
+  blocks.forEach(function(b) {
+    applySpaceBeforePx(b, beforePx);
+    b.style.marginBottom = afterVal;
+  });
+  paginateDocument();
+  syncToolbarState();
   notifyChange();
 }
 
@@ -965,10 +1572,60 @@ function adjustIndent(deltaPx) {
   var blocks = getSelectedBlocks();
   if (blocks.length === 0) return;
   blocks.forEach(function(b) {
-    var cur = parseInt(b.style.marginLeft || '0', 10) || 0;
+    var cur = Math.round(parseFloat(b.style.marginLeft || '0') || 0);
+    var ti = Math.round(parseFloat(window.getComputedStyle(b).textIndent || '0') || 0);
+    if (deltaPx < 0 && ti < -4 && cur <= 48) {
+      // Decreasing indent on a hanging paragraph cleanly resets hanging indent
+      b.style.textIndent = '';
+      b.style.marginLeft = '';
+      return;
+    }
     var next = Math.max(0, Math.min(288, cur + deltaPx));
     b.style.marginLeft = next > 0 ? (next + 'px') : '';
+    if (next === 0 && ti < -4) {
+      b.style.textIndent = '';
+    }
   });
+  paginateDocument();
+  syncToolbarState();
+  notifyChange();
+}
+
+function setIndentMode(mode) {
+  restoreSelection();
+  var blocks = getSelectedBlocks();
+  if (blocks.length === 0) return;
+  blocks.forEach(function(b) {
+    var curMl = Math.round(parseFloat(b.style.marginLeft || '0') || 0);
+    if (mode === 'first') {
+      // First-line indent (1.27cm ≈ 48px), keep any existing left indent >= 0
+      var curTi = Math.round(parseFloat(window.getComputedStyle(b).textIndent || '0') || 0);
+      if (curTi < -4 && curMl >= 48) {
+        var restoredMl = curMl - 48;
+        b.style.marginLeft = restoredMl > 0 ? (restoredMl + 'px') : '';
+      }
+      b.style.textIndent = '48px';
+    } else if (mode === 'hanging') {
+      // Hanging indent (Daftar Pustaka / APA): wrapped lines indented 48px, first line back -48px
+      var curTi2 = Math.round(parseFloat(window.getComputedStyle(b).textIndent || '0') || 0);
+      if (curTi2 >= 0) {
+        b.style.marginLeft = (curMl + 48) + 'px';
+      } else if (curMl < 48) {
+        b.style.marginLeft = '48px';
+      }
+      b.style.textIndent = '-48px';
+    } else {
+      // 'none': remove first-line / hanging special indent while preserving regular left indent
+      var curTi3 = Math.round(parseFloat(window.getComputedStyle(b).textIndent || '0') || 0);
+      if (curTi3 < -4 && curMl >= 48) {
+        var newMl = curMl - 48;
+        b.style.marginLeft = newMl > 0 ? (newMl + 'px') : '';
+      }
+      b.style.textIndent = '';
+    }
+  });
+  paginateDocument();
+  syncToolbarState();
   notifyChange();
 }
 
@@ -976,10 +1633,20 @@ function toggleFirstLineIndent() {
   restoreSelection();
   var blocks = getSelectedBlocks();
   if (blocks.length === 0) return;
-  var hasIndent = blocks[0].style.textIndent && blocks[0].style.textIndent !== '0px' && blocks[0].style.textIndent !== '0cm';
+  var info = getBlockIndentInfo(blocks[0]);
+  setIndentMode(info.mode === 'first' ? 'none' : 'first');
+}
+
+function resetIndent() {
+  restoreSelection();
+  var blocks = getSelectedBlocks();
+  if (blocks.length === 0) return;
   blocks.forEach(function(b) {
-    b.style.textIndent = hasIndent ? '' : '1.27cm';
+    b.style.marginLeft = '';
+    b.style.textIndent = '';
   });
+  paginateDocument();
+  syncToolbarState();
   notifyChange();
 }
 
@@ -1022,33 +1689,95 @@ function prepareForPrint() {
   wcPopover.classList.remove('visible');
 }
 
+function cleanEmptyBlockquotes(excludeActive) {
+  var bqs = editor.querySelectorAll('blockquote');
+  var sel = window.getSelection();
+  var activeNode = (sel && sel.rangeCount > 0) ? sel.getRangeAt(0).commonAncestorContainer : null;
+  for (var i = 0; i < bqs.length; i++) {
+    var b = bqs[i];
+    if (!b.textContent.trim() && !b.querySelector('img, table')) {
+      if (excludeActive && activeNode && b.contains(activeNode)) {
+        continue;
+      }
+      b.parentNode.removeChild(b);
+    }
+  }
+}
+
 // ── CHANGE NOTIFICATION ──
+function getCleanHtml() {
+  var clone = editor.cloneNode(true);
+  var spacers = clone.querySelectorAll('.doc-page-spacer');
+  for (var i = 0; i < spacers.length; i++) {
+    spacers[i].parentNode.removeChild(spacers[i]);
+  }
+  var parked = clone.querySelectorAll('[data-page-parked]');
+  for (var p = 0; p < parked.length; p++) {
+    parked[p].parentNode.removeChild(parked[p]);
+  }
+  var pushed = clone.querySelectorAll('[data-page-push]');
+  for (var k = 0; k < pushed.length; k++) {
+    pushed[k].style.marginTop = pushed[k].dataset.spaceBefore ? (pushed[k].dataset.spaceBefore + 'px') : '';
+    pushed[k].removeAttribute('data-page-push');
+    if (!pushed[k].getAttribute('style')) pushed[k].removeAttribute('style');
+  }
+  var anchors = clone.querySelectorAll('[data-typing-anchor]');
+  for (var a = 0; a < anchors.length; a++) {
+    var anc = anchors[a];
+    anc.removeAttribute('data-typing-anchor');
+    var rawTxt = (anc.textContent || '').replace(/\u200B/g, '');
+    if (!rawTxt && !anc.querySelector('img, br')) {
+      anc.parentNode.removeChild(anc);
+    }
+  }
+  var bqs = clone.querySelectorAll('blockquote');
+  for (var j = 0; j < bqs.length; j++) {
+    if (!bqs[j].textContent.trim() && !bqs[j].querySelector('img, table')) {
+      bqs[j].parentNode.removeChild(bqs[j]);
+    }
+  }
+  return clone.innerHTML.replace(/\u200B/g, '');
+}
+
 function notifyChange() {
   updateWordCount();
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(function() {
-    LernspaceDoc.onContentChange(editor.innerHTML);
+    LernspaceDoc.onContentChange(getCleanHtml());
   }, 350);
 }
 
 function flushChangeNow() {
   clearTimeout(debounceTimer);
   updateWordCount();
-  LernspaceDoc.onContentChange(editor.innerHTML);
+  LernspaceDoc.onContentChange(getCleanHtml());
 }
 
 editor.addEventListener('input', function() {
   if (selectedImg) deselectImage();
-  requestAnimationFrame(rebuildPageGuides);
+  // Clean up typing anchor marker once user has typed real characters inside it
+  var anchors = editor.querySelectorAll('span[data-typing-anchor="1"]');
+  for (var a = 0; a < anchors.length; a++) {
+    var anc = anchors[a];
+    var txt = anc.textContent || '';
+    if (txt.replace(/\u200B/g, '').length > 0) {
+      delete anc.dataset.typingAnchor;
+    }
+  }
+  paginateDocument();
+  syncToolbarState();
   notifyChange();
   scheduleScrollIntoView();
 });
 
 editor.addEventListener('blur', function() {
+  cleanEmptyBlockquotes(false);
+  lastCaretBlock = null;
+  paginateDocument();
   flushChangeNow();
 });
 
-// ── SELECTION TRACKING & ACTIVE TOOLBAR SYNC ──
+// ── SELECTION TRACKING & PER-CHARACTER TOOLBAR SYNC (GOOGLE DOCS STYLE) ──
 document.addEventListener('selectionchange', function() {
   var sel = window.getSelection();
   if (!sel || sel.rangeCount === 0) return;
@@ -1056,6 +1785,12 @@ document.addEventListener('selectionchange', function() {
   if (editor.contains(range.commonAncestorContainer)) {
     savedRange = range.cloneRange();
     syncToolbarState();
+    var blk = getCaretBlock();
+    if (blk !== lastCaretBlock) {
+      lastCaretBlock = blk;
+      paginateDocument();
+      scheduleScrollIntoView();
+    }
   }
 });
 
@@ -1070,6 +1805,60 @@ function restoreSelection() {
   }
 }
 
+function rgbToHex(rgb) {
+  if (!rgb) return '#1E293B';
+  if (rgb.charAt(0) === '#') return rgb;
+  var m = rgb.match(/\d+/g);
+  if (!m || m.length < 3) return '#1E293B';
+  var r = parseInt(m[0], 10).toString(16).padStart(2, '0');
+  var g = parseInt(m[1], 10).toString(16).padStart(2, '0');
+  var b = parseInt(m[2], 10).toString(16).padStart(2, '0');
+  return '#' + r + g + b;
+}
+
+function matchFontFamilyName(computedFont) {
+  var f = (computedFont || '').toLowerCase();
+  if (f.indexOf('poppins') !== -1) return 'POPPINS';
+  if (f.indexOf('montserrat') !== -1) return 'MONTSERRAT';
+  if (f.indexOf('sans-serif-light') !== -1) return 'ROBOTO_LIGHT';
+  if (f.indexOf('merriweather') !== -1) return 'MERRIWEATHER';
+  if (f.indexOf('lora') !== -1) return 'LORA';
+  if (f.indexOf('playfair') !== -1) return 'PLAYFAIR';
+  if (f.indexOf('roboto mono') !== -1 || f.indexOf('courier') !== -1) return 'ROBOTO_MONO';
+  if (f.indexOf('casual') !== -1 || f.indexOf('comic sans') !== -1) return 'CASUAL';
+  if (f.indexOf('caveat') !== -1) return 'CAVEAT';
+  return 'INTER';
+}
+
+function getIntersectingTextNodes(range) {
+  var common = range.commonAncestorContainer;
+  if (common.nodeType === 3) {
+    return (common.nodeValue && common.nodeValue.length > 0) ? [common] : [];
+  }
+  var walker = document.createTreeWalker(common, NodeFilter.SHOW_TEXT, null, false);
+  var out = [];
+  var tn;
+  while ((tn = walker.nextNode())) {
+    if (!tn.nodeValue || tn.nodeValue.length === 0) continue;
+    var nr = document.createRange();
+    nr.selectNodeContents(tn);
+    if (range.compareBoundaryPoints(Range.END_TO_START, nr) < 0 &&
+        range.compareBoundaryPoints(Range.START_TO_END, nr) > 0) {
+      out.push(tn);
+    }
+  }
+  return out;
+}
+
+function pxToPt(px) {
+  var val = parseFloat(px);
+  if (isNaN(val) || val <= 0) return 11;
+  return Math.max(6, Math.round(val * 0.75));
+}
+function ptToPx(pt) {
+  return (Math.round(pt * 400 / 3) / 100) + 'px';
+}
+
 function syncToolbarState() {
   try {
     var b = document.queryCommandState('bold');
@@ -1080,19 +1869,84 @@ function syncToolbarState() {
     if (document.queryCommandState('justifyCenter')) alignIdx = 1;
     else if (document.queryCommandState('justifyRight')) alignIdx = 2;
     else if (document.queryCommandState('justifyFull')) alignIdx = 3;
-    var key = b + '|' + i + '|' + u + '|' + s + '|' + alignIdx;
+
+    var fontSizePt = 11;
+    var fontFamilyName = 'INTER';
+    var blockTag = 'p';
+    var textColorHex = '#1E293B';
+    var lineSpacingStr = '1.15';
+    var indentPx = 0;
+    var indentMode = 'none';
+    var spaceBeforePt = 0;
+    var spaceAfterPt = 0;
+
+    var sel = window.getSelection();
+    if (sel && sel.rangeCount > 0 && editor.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+      var range = sel.getRangeAt(0);
+      var blk = findClosestBlock(range.startContainer);
+      if (blk) {
+        var tg = blk.tagName.toLowerCase();
+        if (/^(p|h1|h2|h3|h4|h5)$/.test(tg)) blockTag = tg;
+        var indInfo = getBlockIndentInfo(blk);
+        indentPx = indInfo.indentPx;
+        indentMode = indInfo.mode;
+        lineSpacingStr = indInfo.lineSpacing;
+        spaceBeforePt = indInfo.spaceBeforePt;
+        spaceAfterPt = indInfo.spaceAfterPt;
+      }
+
+      if (range.collapsed) {
+        var node = range.startContainer;
+        var el = (node.nodeType === 3) ? node.parentElement : node;
+        if (!el || !editor.contains(el)) el = editor;
+        var cs = window.getComputedStyle(el);
+        fontSizePt = pxToPt(cs.fontSize);
+        fontFamilyName = matchFontFamilyName(cs.fontFamily);
+        textColorHex = rgbToHex(cs.color);
+      } else {
+        var texts = getIntersectingTextNodes(range);
+        if (texts.length > 0) {
+          var firstEl = texts[0].parentElement || editor;
+          var firstCs = window.getComputedStyle(firstEl);
+          var fs = pxToPt(firstCs.fontSize);
+          var ff = matchFontFamilyName(firstCs.fontFamily);
+          textColorHex = rgbToHex(firstCs.color);
+          for (var t = 1; t < texts.length; t++) {
+            var tCs = window.getComputedStyle(texts[t].parentElement || editor);
+            var tFs = pxToPt(tCs.fontSize);
+            var tFf = matchFontFamilyName(tCs.fontFamily);
+            if (tFs !== fs) fs = -1;
+            if (tFf !== ff) ff = '';
+            if (fs === -1 && ff === '') break;
+          }
+          fontSizePt = fs;
+          fontFamilyName = ff;
+        } else {
+          var elFallback = (range.startContainer.nodeType === 3) ? range.startContainer.parentElement : range.startContainer;
+          var csFb = window.getComputedStyle(elFallback || editor);
+          fontSizePt = pxToPt(csFb.fontSize);
+          fontFamilyName = matchFontFamilyName(csFb.fontFamily);
+          textColorHex = rgbToHex(csFb.color);
+        }
+      }
+    }
+
+    var key = b + '|' + i + '|' + u + '|' + s + '|' + alignIdx + '|' + fontSizePt + '|' + fontFamilyName + '|' + blockTag + '|' + textColorHex + '|' + lineSpacingStr + '|' + indentPx + '|' + indentMode + '|' + spaceBeforePt + '|' + spaceAfterPt;
     if (key !== lastFmtKey) {
       lastFmtKey = key;
-      LernspaceDoc.onFormatState(b, i, u, s, alignIdx);
+      LernspaceDoc.onFormatState(b, i, u, s, alignIdx, fontSizePt, fontFamilyName, blockTag, textColorHex, lineSpacingStr, indentPx, indentMode, spaceBeforePt, spaceAfterPt);
     }
   } catch(_) {}
 }
 
-// ── GENTLE SCROLL INTO VIEW ──
-var scrollTimer = null;
+// ── GENTLE SCROLL INTO VIEW (ZERO-LAG RAF) ──
+var scrollRaf = 0;
 function scheduleScrollIntoView() {
-  clearTimeout(scrollTimer);
-  scrollTimer = setTimeout(scrollCaretIntoView, 60);
+  if (scrollRaf) cancelAnimationFrame(scrollRaf);
+  scrollRaf = requestAnimationFrame(function() {
+    scrollRaf = 0;
+    scrollCaretIntoView();
+  });
 }
 function scrollCaretIntoView() {
   var sel = window.getSelection();
@@ -1100,12 +1954,20 @@ function scrollCaretIntoView() {
   var range = sel.getRangeAt(0);
   if (!editor.contains(range.commonAncestorContainer)) return;
   var rect = range.getBoundingClientRect();
+  if (!rect || (rect.top === 0 && rect.bottom === 0)) {
+    var block = findClosestBlock(range.startContainer);
+    if (block) {
+      rect = block.getBoundingClientRect();
+    }
+  }
   if (!rect || (rect.top === 0 && rect.bottom === 0)) return;
-  var vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
-  if (rect.bottom > vh - 44) {
-    window.scrollBy({ top: rect.bottom - vh + 72, behavior: 'auto' });
-  } else if (rect.top < 16) {
-    window.scrollBy({ top: rect.top - 48, behavior: 'auto' });
+  var vvTop = (window.visualViewport && window.visualViewport.offsetTop) || 0;
+  var vvH = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+  var vvBottom = vvTop + vvH;
+  if (rect.bottom > vvBottom - 40) {
+    window.scrollBy(0, rect.bottom - vvBottom + 64);
+  } else if (rect.top < vvTop + 20) {
+    window.scrollBy(0, rect.top - vvTop - 48);
   }
 }
 if (window.visualViewport) {
@@ -1115,46 +1977,258 @@ if (window.visualViewport) {
   });
 }
 
+// ── PER-CHARACTER INLINE STYLE ENGINE (GOOGLE DOCS MODEL) ──
+function syncBlockStrutFontSize(block) {
+  if (!block || (block.tagName !== 'P' && block.tagName !== 'DIV' && block.tagName !== 'LI')) return;
+  if (block.classList.contains('doc-page-break')) return;
+
+  // 1. Strip fontSize from any outer wrapper span/font that has NO direct non-empty text of its own
+  //    (prevents a giant outer <span style="font-size:26px"><span style="font-size:12px"> from inflating line height!)
+  var inlines = block.querySelectorAll('span, font');
+  for (var i = 0; i < inlines.length; i++) {
+    var el = inlines[i];
+    if ((el.style && el.style.fontSize) || (el.tagName === 'FONT' && el.hasAttribute('size'))) {
+      var hasDirectText = false;
+      for (var c = 0; c < el.childNodes.length; c++) {
+        var ch = el.childNodes[c];
+        if (ch.nodeType === 3 && (ch.nodeValue || '').replace(/\u200B/g, '').length > 0) {
+          hasDirectText = true;
+          break;
+        }
+      }
+      if (!hasDirectText && el.querySelector('span[style*="font-size"], font[size]')) {
+        if (el.style) el.style.fontSize = '';
+        if (el.tagName === 'FONT') el.removeAttribute('size');
+      }
+    }
+  }
+
+  // 2. Sync block's own strut fontSize to the smallest explicit span size if all text in block is inside spans
+  var walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, null, false);
+  var tn;
+  var minPx = Infinity;
+  var hasAnyText = false;
+  while ((tn = walker.nextNode())) {
+    var v = (tn.nodeValue || '').replace(/\u200B/g, '');
+    if (!v.length) continue;
+    hasAnyText = true;
+    var pEl = tn.parentElement;
+    if (pEl === block) return;
+    var sz = parseFloat(window.getComputedStyle(pEl).fontSize || '14.67');
+    if (sz < minPx) minPx = sz;
+  }
+  if (hasAnyText && minPx < Infinity) {
+    block.style.fontSize = (Math.round(minPx * 100) / 100) + 'px';
+  }
+}
+
+function normalizeAllBlockLineBoxes() {
+  var blocks = editor.querySelectorAll('p, div:not(.doc-page-break), li');
+  for (var i = 0; i < blocks.length; i++) {
+    syncBlockStrutFontSize(blocks[i]);
+  }
+}
+
+function applyInlineStyle(prop, value) {
+  restoreSelection();
+  var sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return;
+  var range = sel.getRangeAt(0);
+  if (!editor.contains(range.commonAncestorContainer)) return;
+
+  // Case 1: Collapsed caret -> update or insert typing anchor span so next typed letters get exact style
+  if (range.collapsed) {
+    var curBlk = findClosestBlock(range.startContainer);
+    if (prop === 'fontSize' && curBlk && (curBlk.tagName === 'P' || curBlk.tagName === 'DIV' || curBlk.tagName === 'LI')) {
+      var rawBlkTxt = (curBlk.textContent || '').replace(/\u200B/g, '').trim();
+      if (!rawBlkTxt) {
+        curBlk.style.fontSize = value;
+      }
+    }
+    var container = range.startContainer;
+    var parentEl = (container.nodeType === 3) ? container.parentElement : container;
+    if (parentEl && parentEl.tagName === 'SPAN' && parentEl.dataset.typingAnchor === '1' &&
+        parentEl.childNodes.length === 1 && parentEl.firstChild.nodeType === 3 &&
+        parentEl.firstChild.nodeValue === '\u200B') {
+      parentEl.style[prop] = value;
+      var rReuse = document.createRange();
+      rReuse.setStart(parentEl.firstChild, 1);
+      rReuse.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(rReuse);
+      savedRange = rReuse.cloneRange();
+      paginateDocument();
+      syncToolbarState();
+      return;
+    }
+    var anchor = document.createElement('span');
+    anchor.dataset.typingAnchor = '1';
+    anchor.style[prop] = value;
+    var zws = document.createTextNode('\u200B');
+    anchor.appendChild(zws);
+    range.insertNode(anchor);
+    var rNew = document.createRange();
+    rNew.setStart(zws, 1);
+    rNew.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(rNew);
+    savedRange = rNew.cloneRange();
+    paginateDocument();
+    syncToolbarState();
+    return;
+  }
+
+  // Case 2: Selected text -> split boundary text nodes & style each character run cleanly, preserving selection!
+  var startNode = range.startContainer;
+  var startOff = range.startOffset;
+  var endNode = range.endContainer;
+  var endOff = range.endOffset;
+
+  if (endNode.nodeType === 3 && endOff > 0 && endOff < endNode.nodeValue.length) {
+    endNode.splitText(endOff);
+  }
+  if (startNode.nodeType === 3 && startOff > 0 && startOff < startNode.nodeValue.length) {
+    var afterStart = startNode.splitText(startOff);
+    if (startNode === endNode) {
+      endNode = afterStart;
+      endOff = afterStart.nodeValue.length;
+    }
+    startNode = afterStart;
+    startOff = 0;
+  }
+
+  var workRange = document.createRange();
+  workRange.setStart(startNode, startOff);
+  workRange.setEnd(endNode, endOff);
+
+  var selectedTexts = getIntersectingTextNodes(workRange);
+  if (selectedTexts.length === 0) return;
+
+  var touchedBlocks = [];
+  for (var i = 0; i < selectedTexts.length; i++) {
+    var t = selectedTexts[i];
+    var p = t.parentElement;
+    // Strip legacy <font size/face/color> attributes if overriding
+    if (p && p.tagName === 'FONT') {
+      if (prop === 'fontSize' && p.hasAttribute('size')) p.removeAttribute('size');
+      if (prop === 'fontFamily' && p.hasAttribute('face')) p.removeAttribute('face');
+      if (prop === 'color' && p.hasAttribute('color')) p.removeAttribute('color');
+    }
+    if (p && p.tagName === 'SPAN' && p.childNodes.length === 1 && !p.classList.contains('math-inline')) {
+      p.style[prop] = value;
+      delete p.dataset.typingAnchor;
+    } else {
+      var sp = document.createElement('span');
+      sp.style[prop] = value;
+      t.parentNode.insertBefore(sp, t);
+      sp.appendChild(t);
+    }
+    if (prop === 'fontSize') {
+      var bTouched = findClosestBlock(t);
+      if (bTouched && touchedBlocks.indexOf(bTouched) === -1) touchedBlocks.push(bTouched);
+    }
+  }
+
+  if (prop === 'fontSize') {
+    touchedBlocks.forEach(syncBlockStrutFontSize);
+  }
+
+  // Keep exact selection intact so user can tap +/- or switch fonts repeatedly
+  var firstT = selectedTexts[0];
+  var lastT = selectedTexts[selectedTexts.length - 1];
+  var finalRange = document.createRange();
+  finalRange.setStart(firstT, 0);
+  finalRange.setEnd(lastT, lastT.nodeValue.length);
+  sel.removeAllRanges();
+  sel.addRange(finalRange);
+  savedRange = finalRange.cloneRange();
+
+  paginateDocument();
+  syncToolbarState();
+  notifyChange();
+}
+
 // ── FORMATTING COMMANDS ──
 function exec(cmd, val) {
   restoreSelection();
   document.execCommand(cmd, false, val !== undefined ? val : null);
+  paginateDocument();
   syncToolbarState();
   notifyChange();
 }
-function formatBlock(tag) { exec('formatBlock', '<' + tag + '>'); }
+function formatBlock(tag) {
+  restoreSelection();
+  document.execCommand('formatBlock', false, '<' + tag + '>');
+  // Clear inline fontSize overrides inside the newly formatted heading/paragraph so block style takes effect
+  var blocks = getSelectedBlocks();
+  blocks.forEach(function(blk) {
+    blk.style.fontSize = '';
+    blk.querySelectorAll('span, font').forEach(function(el) {
+      if (el.style && el.style.fontSize) el.style.fontSize = '';
+      if (el.tagName === 'FONT' && el.hasAttribute('size')) el.removeAttribute('size');
+    });
+  });
+  paginateDocument();
+  syncToolbarState();
+  notifyChange();
+}
 function toggleBold() { exec('bold'); }
 function toggleItalic() { exec('italic'); }
 function toggleUnderline() { exec('underline'); }
 function toggleStrikethrough() { exec('strikeThrough'); }
-function setFontFamily(css) { exec('fontName', css); }
-function setTextColor(color) { exec('foreColor', color); }
-function setHighlight(color) { exec('hiliteColor', color || 'transparent'); }
+function setFontFamily(css) { applyInlineStyle('fontFamily', css); }
+function setTextColor(color) { applyInlineStyle('color', color); }
+function setHighlight(color) { applyInlineStyle('backgroundColor', color || 'transparent'); }
+function setFontSize(pt) { applyInlineStyle('fontSize', ptToPx(pt)); }
 function alignText(mode) {
   var cmds = { left: 'justifyLeft', center: 'justifyCenter', right: 'justifyRight', justify: 'justifyFull' };
   exec(cmds[mode] || 'justifyLeft');
 }
 function undo() { exec('undo'); }
 function redo() { exec('redo'); }
-function clearFormatting() { exec('removeFormat'); }
-
-function setFontSize(px) {
+function clearFormatting() {
   restoreSelection();
-  document.execCommand('fontSize', false, '7');
-  var fonts = editor.querySelectorAll('font[size="7"]');
-  fonts.forEach(function(el) {
-    var span = document.createElement('span');
-    span.style.fontSize = px + 'px';
-    while (el.firstChild) span.appendChild(el.firstChild);
-    el.parentNode.replaceChild(span, el);
-  });
+  document.execCommand('removeFormat', false, null);
+  var sel = window.getSelection();
+  if (sel && sel.rangeCount > 0 && !sel.isCollapsed) {
+    var texts = getIntersectingTextNodes(sel.getRangeAt(0));
+    texts.forEach(function(t) {
+      var p = t.parentElement;
+      if (p && (p.tagName === 'SPAN' || p.tagName === 'FONT') && p.childNodes.length === 1 && !p.classList.contains('math-inline')) {
+        p.style.fontSize = '';
+        p.style.fontFamily = '';
+        p.style.color = '';
+        p.style.backgroundColor = '';
+        if (p.tagName === 'FONT') {
+          p.removeAttribute('size');
+          p.removeAttribute('face');
+          p.removeAttribute('color');
+        }
+      }
+    });
+  }
+  paginateDocument();
+  syncToolbarState();
   notifyChange();
 }
 
 // ── LISTS & BLOCKS ──
 function insertBulletList() { exec('insertUnorderedList'); }
 function insertNumberedList() { exec('insertOrderedList'); }
-function insertBlockquote() { exec('formatBlock', '<blockquote>'); }
+function insertBlockquote() {
+  restoreSelection();
+  var sel = window.getSelection();
+  if (sel && sel.rangeCount > 0) {
+    var bq = findClosestBlockquote(sel.getRangeAt(0).commonAncestorContainer);
+    if (bq) {
+      exec('formatBlock', '<p>');
+      notifyChange();
+      return;
+    }
+  }
+  exec('formatBlock', '<blockquote>');
+  notifyChange();
+}
 function insertHR() { exec('insertHorizontalRule'); }
 
 function insertChecklist() {
@@ -1598,6 +2672,7 @@ function setContentExternal(html) {
   attachImageHandlers();
   attachChecklistHandlers();
   hydratePageBreaks();
+  normalizeAllBlockLineBoxes();
   rebuildPageGuides();
 }
 function applyDarkTheme(dark) {
@@ -1607,8 +2682,127 @@ function applyDarkTheme(dark) {
 editor.addEventListener('keydown', function(e) {
   if (e.key === 'Tab') {
     e.preventDefault();
+    var selTab = window.getSelection();
+    if (!selTab || selTab.rangeCount === 0) return;
+    var rTab = selTab.getRangeAt(0);
+    if (e.shiftKey) {
+      var bShift = findClosestBlock(rTab.startContainer);
+      var infoShift = getBlockIndentInfo(bShift);
+      if (infoShift.mode !== 'none') {
+        setIndentMode('none');
+      } else {
+        adjustIndent(-36);
+      }
+      return;
+    }
+    var blocksTab = getSelectedBlocks();
+    if (blocksTab.length > 1) {
+      adjustIndent(36);
+      return;
+    }
+    var singleBlk = blocksTab[0] || findClosestBlock(rTab.startContainer);
+    if (singleBlk && isCaretAtBlockStart(singleBlk, rTab)) {
+      if (singleBlk.tagName === 'LI') {
+        adjustIndent(36);
+      } else {
+        var infoTab = getBlockIndentInfo(singleBlk);
+        if (infoTab.mode === 'none' && infoTab.indentPx === 0) {
+          setIndentMode('first');
+        } else {
+          adjustIndent(36);
+        }
+      }
+      return;
+    }
     document.execCommand('insertHTML', false, '&nbsp;&nbsp;&nbsp;&nbsp;');
+    paginateDocument();
     notifyChange();
+    return;
+  }
+
+  var sel = window.getSelection();
+  if (!sel || !sel.isCollapsed || sel.rangeCount === 0) return;
+  var range = sel.getRangeAt(0);
+
+  // ── INDENT BACKSPACE OUTDENT (GOOGLE DOCS / WORD BEHAVIOR) ──
+  if (e.key === 'Backspace') {
+    var indBlk = findClosestBlock(range.startContainer);
+    if (indBlk && indBlk.tagName !== 'BLOCKQUOTE' && isCaretAtBlockStart(indBlk, range)) {
+      var indInfo = getBlockIndentInfo(indBlk);
+      if (indInfo.mode !== 'none') {
+        e.preventDefault();
+        setIndentMode('none');
+        return;
+      } else if (indInfo.indentPx > 0) {
+        e.preventDefault();
+        adjustIndent(-36);
+        return;
+      }
+    }
+  }
+
+  // ── BLOCKQUOTE CLEANUP (BACKSPACE & ENTER) ──
+  var bq = findClosestBlockquote(range.startContainer);
+  if (bq) {
+    var bqText = (bq.textContent || '').trim();
+    var hasMedia = !!bq.querySelector('img, table');
+    var isBqEmpty = !bqText && !hasMedia;
+
+    if (e.key === 'Backspace') {
+      if (isBqEmpty) {
+        e.preventDefault();
+        var prev = bq.previousElementSibling;
+        while (prev && prev.classList.contains('doc-page-spacer')) {
+          prev = prev.previousElementSibling;
+        }
+        if (prev) {
+          bq.parentNode.removeChild(bq);
+          var r = document.createRange();
+          r.selectNodeContents(prev);
+          r.collapse(false);
+          sel.removeAllRanges();
+          sel.addRange(r);
+        } else {
+          var p = document.createElement('p');
+          p.innerHTML = '<br>';
+          bq.parentNode.replaceChild(p, bq);
+          var r = document.createRange();
+          r.setStart(p, 0);
+          r.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(r);
+        }
+        paginateDocument();
+        notifyChange();
+        scheduleScrollIntoView();
+        return;
+      } else if (range.startOffset === 0) {
+        var walker = document.createTreeWalker(bq, NodeFilter.SHOW_TEXT, null, false);
+        var firstText = walker.nextNode();
+        if (!firstText || range.startContainer === firstText || range.startContainer === bq) {
+          e.preventDefault();
+          document.execCommand('formatBlock', false, '<p>');
+          paginateDocument();
+          notifyChange();
+          scheduleScrollIntoView();
+          return;
+        }
+      }
+    } else if (e.key === 'Enter' && isBqEmpty) {
+      e.preventDefault();
+      var p = document.createElement('p');
+      p.innerHTML = '<br>';
+      bq.parentNode.replaceChild(p, bq);
+      var r = document.createRange();
+      r.setStart(p, 0);
+      r.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(r);
+      paginateDocument();
+      notifyChange();
+      scheduleScrollIntoView();
+      return;
+    }
   }
 });
 
@@ -1616,6 +2810,7 @@ editor.addEventListener('keydown', function(e) {
 attachImageHandlers();
 attachChecklistHandlers();
 hydratePageBreaks();
+normalizeAllBlockLineBoxes();
 applyPageSetup(pageConfig);
 </script>
 </body>
@@ -1653,12 +2848,17 @@ fun DocumentEditorViewport(
     val latestTitle by rememberUpdatedState(title)
     val latestPageSetup by rememberUpdatedState(pageSetup)
 
-    // Toolbar UI state
+    // Toolbar UI state (synced per-character from active caret / selection, Google Docs style)
     var selectedStyle by remember { mutableStateOf(DocParagraphStyle.NORMAL) }
-    var selectedFont by remember { mutableStateOf(DocFontFamily.INTER) }
-    var fontSizePx by remember { mutableIntStateOf(15) }
+    var selectedFont by remember { mutableStateOf<DocFontFamily?>(DocFontFamily.INTER) }
+    var fontSizePx by remember { mutableIntStateOf(11) }
+    var activeTextColor by remember { mutableStateOf(Color(0xFF2563EB)) }
     var alignIndex by remember { mutableIntStateOf(0) }
-    var lineSpacing by remember { mutableStateOf("1.5") }
+    var lineSpacing by remember { mutableStateOf("1.15") }
+    var spaceBeforePt by remember { mutableIntStateOf(0) }
+    var spaceAfterPt by remember { mutableIntStateOf(0) }
+    var activeIndentPx by remember { mutableIntStateOf(0) }
+    var activeIndentMode by remember { mutableStateOf("none") }
     var isBoldActive by remember { mutableStateOf(false) }
     var isItalicActive by remember { mutableStateOf(false) }
     var isUnderlineActive by remember { mutableStateOf(false) }
@@ -1667,9 +2867,12 @@ fun DocumentEditorViewport(
 
     var showStyleDropdown by remember { mutableStateOf(false) }
     var showFontDropdown by remember { mutableStateOf(false) }
+    var showFontSizeDropdown by remember { mutableStateOf(false) }
     var showColorDropdown by remember { mutableStateOf(false) }
     var showHighlightDropdown by remember { mutableStateOf(false) }
     var showSpacingDropdown by remember { mutableStateOf(false) }
+    var showParagraphSpacingDialog by remember { mutableStateOf(false) }
+    var showInsertDropdown by remember { mutableStateOf(false) }
     var showToolsDropdown by remember { mutableStateOf(false) }
     var showPageSetupDialog by remember { mutableStateOf(false) }
     var showTableDialog by remember { mutableStateOf(false) }
@@ -1854,21 +3057,26 @@ fun DocumentEditorViewport(
             .background(if (isDarkTheme) Color(0xFF13141C) else Color(0xFFEEF2F6))
             .imePadding()
     ) {
-        // ── TOOLBAR RIBBON ─────────────────────────────────────────────────
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            color = if (isDarkTheme) Color(0xFF1E202B) else Color(0xFFEDF2FA),
-            border = BorderStroke(1.dp, LernspaceBorder),
-            shadowElevation = 2.dp
+        // ── TOOLBAR RIBBON (Google Docs-style clean floating pill) ─────────
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            contentAlignment = Alignment.Center
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(2.dp)
+            Surface(
+                shape = RoundedCornerShape(22.dp),
+                color = if (isDarkTheme) Color(0xFF1E202B) else Color(0xFFF0F4F9),
+                border = BorderStroke(1.dp, LernspaceBorder.copy(alpha = 0.85f)),
+                shadowElevation = 2.dp
             ) {
+                Row(
+                    modifier = Modifier
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
                 // Undo / Redo
                 DocToolbarIcon(Icons.AutoMirrored.Filled.Undo, "Undo") { js("undo();") }
                 DocToolbarIcon(Icons.AutoMirrored.Filled.Redo, "Redo") { js("redo();") }
@@ -1915,7 +3123,7 @@ fun DocumentEditorViewport(
                             .padding(horizontal = 6.dp)
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                            Text(selectedFont.label.substringBefore(" ("), fontSize = 12.sp, fontWeight = FontWeight.Medium, color = LernspaceTextPrimary)
+                            Text(selectedFont?.label?.substringBefore(" (") ?: "Campuran", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = LernspaceTextPrimary)
                             Icon(Icons.Filled.ArrowDropDown, null, Modifier.size(15.dp), tint = LernspaceTextSecondary)
                         }
                     }
@@ -1941,23 +3149,58 @@ fun DocumentEditorViewport(
                 }
                 DocToolbarDiv()
 
-                // Font Size Stepper
+                // Font Size Stepper + Quick Preset Picker (Google Docs pt scale, per-character)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(1.dp)) {
                     DocToolbarIcon(Icons.Filled.Remove, "Kecilkan") {
-                        if (fontSizePx > 10) { fontSizePx--; js("setFontSize($fontSizePx);") }
+                        val nextSize = if (fontSizePx <= 0) 10 else (fontSizePx - 1).coerceAtLeast(6)
+                        fontSizePx = nextSize
+                        js("setFontSize($nextSize);")
                     }
-                    Surface(
-                        shape = RoundedCornerShape(4.dp),
-                        color = if (isDarkTheme) Color(0xFF2A2D3A) else Color.White,
-                        border = BorderStroke(1.dp, LernspaceBorder),
-                        modifier = Modifier.size(width = 32.dp, height = 26.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text("$fontSizePx", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = LernspaceTextPrimary)
+                    Box {
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = if (isDarkTheme) Color(0xFF2A2D3A) else Color.White,
+                            border = BorderStroke(1.dp, LernspaceBorder),
+                            modifier = Modifier
+                                .size(width = 34.dp, height = 26.dp)
+                                .clickable { showFontSizeDropdown = true }
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    if (fontSizePx > 0) "$fontSizePx" else "–",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = LernspaceTextPrimary
+                                )
+                            }
+                        }
+                        DropdownMenu(
+                            expanded = showFontSizeDropdown,
+                            onDismissRequest = { showFontSizeDropdown = false }
+                        ) {
+                            listOf(8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 72).forEach { sz ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            "$sz",
+                                            fontSize = 13.sp,
+                                            fontWeight = if (sz == fontSizePx) FontWeight.Bold else FontWeight.Normal,
+                                            color = if (sz == fontSizePx) AccentBlue else LernspaceTextPrimary
+                                        )
+                                    },
+                                    onClick = {
+                                        fontSizePx = sz
+                                        showFontSizeDropdown = false
+                                        js("setFontSize($sz);")
+                                    }
+                                )
+                            }
                         }
                     }
                     DocToolbarIcon(Icons.Filled.Add, "Besarkan") {
-                        if (fontSizePx < 72) { fontSizePx++; js("setFontSize($fontSizePx);") }
+                        val nextSize = if (fontSizePx <= 0) 12 else (fontSizePx + 1).coerceAtMost(72)
+                        fontSizePx = nextSize
+                        js("setFontSize($nextSize);")
                     }
                 }
                 DocToolbarDiv()
@@ -1973,7 +3216,7 @@ fun DocumentEditorViewport(
                     IconButton(onClick = { showColorDropdown = true }, modifier = Modifier.size(30.dp)) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                             Text("A", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = LernspaceTextPrimary)
-                            Box(Modifier.size(width = 14.dp, height = 3.dp).background(Color(0xFF2563EB)))
+                            Box(Modifier.size(width = 14.dp, height = 3.dp).background(activeTextColor))
                         }
                     }
                     DropdownMenu(expanded = showColorDropdown, onDismissRequest = { showColorDropdown = false }) {
@@ -2021,6 +3264,7 @@ fun DocumentEditorViewport(
                         }
                     }
                 }
+                DocToolbarIcon(Icons.Filled.FormatClear, "Hapus Format") { js("clearFormatting();") }
                 DocToolbarDiv()
 
                 // Alignment Cycling + Line Spacing + Indent
@@ -2037,15 +3281,15 @@ fun DocumentEditorViewport(
                     }
                 }
 
-                // Line Spacing & First-line Indent Dropdown
+                // Line Spacing & Per-Paragraph Indentation Dropdown
                 Box {
-                    DocToolbarIcon(Icons.Filled.FormatLineSpacing, "Spasi Baris") { showSpacingDropdown = true }
+                    DocToolbarIcon(Icons.Filled.FormatLineSpacing, "Spasi & Indentasi Paragraf") { showSpacingDropdown = true }
                     DropdownMenu(expanded = showSpacingDropdown, onDismissRequest = { showSpacingDropdown = false }) {
                         listOf(
-                            "1.0" to "1.0 · Rapat (Single)",
+                            "1.0" to "Single (1.0)",
                             "1.15" to "1.15 · Standar GDocs",
-                            "1.5" to "1.5 · Standar Makalah",
-                            "2.0" to "2.0 · Spasi Ganda (Skripsi)"
+                            "1.5" to "1.5 · Makalah",
+                            "2.0" to "Double (2.0 · Skripsi)"
                         ).forEach { (mult, label) ->
                             DropdownMenuItem(
                                 text = {
@@ -2065,16 +3309,88 @@ fun DocumentEditorViewport(
                         }
                         HorizontalDivider()
                         DropdownMenuItem(
-                            text = { Text("Toggle Indentasi Baris Pertama (1.27 cm)", fontSize = 12.5.sp) },
+                            text = {
+                                Text(
+                                    if (spaceBeforePt > 0) "Hapus spasi sebelum paragraf (${spaceBeforePt}pt)"
+                                    else "Tambah spasi sebelum paragraf",
+                                    fontSize = 12.5.sp,
+                                    fontWeight = if (spaceBeforePt > 0) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (spaceBeforePt > 0) AccentBlue else LernspaceTextPrimary
+                                )
+                            },
                             onClick = {
-                                js("toggleFirstLineIndent();")
+                                js("toggleSpaceBeforeParagraph();")
                                 showSpacingDropdown = false
                             }
                         )
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    if (spaceAfterPt > 0) "Hapus spasi setelah paragraf (${spaceAfterPt}pt)"
+                                    else "Tambah spasi setelah paragraf",
+                                    fontSize = 12.5.sp,
+                                    fontWeight = if (spaceAfterPt > 0) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (spaceAfterPt > 0) AccentBlue else LernspaceTextPrimary
+                                )
+                            },
+                            onClick = {
+                                js("toggleSpaceAfterParagraph();")
+                                showSpacingDropdown = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Spasi paragraf kustom...", fontSize = 12.5.sp, color = LernspaceTextPrimary) },
+                            onClick = {
+                                showSpacingDropdown = false
+                                showParagraphSpacingDialog = true
+                            }
+                        )
+                        HorizontalDivider()
+                        listOf(
+                            "none" to "Indentasi Normal (Tanpa Khusus)",
+                            "first" to "Indentasi Baris Pertama (1.27 cm)",
+                            "hanging" to "Indentasi Gantung (Daftar Pustaka)"
+                        ).forEach { (mode, label) ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        label,
+                                        fontSize = 12.5.sp,
+                                        fontWeight = if (activeIndentMode == mode) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (activeIndentMode == mode) AccentBlue else LernspaceTextPrimary
+                                    )
+                                },
+                                onClick = {
+                                    activeIndentMode = mode
+                                    js("setIndentMode(${JSONObject.quote(mode)});")
+                                    showSpacingDropdown = false
+                                }
+                            )
+                        }
+                        if (activeIndentPx > 0 || activeIndentMode != "none") {
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Reset Indentasi Paragraf", fontSize = 12.5.sp, color = Color(0xFFDC2626)) },
+                                onClick = {
+                                    js("resetIndent();")
+                                    showSpacingDropdown = false
+                                }
+                            )
+                        }
                     }
                 }
 
-                DocToolbarIcon(Icons.AutoMirrored.Filled.FormatIndentDecrease, "Kurangi Indent") { js("adjustIndent(-36);") }
+                DocToolbarIcon(
+                    Icons.AutoMirrored.Filled.FormatIndentDecrease,
+                    "Kurangi Indent",
+                    enabled = activeIndentPx > 0 || activeIndentMode != "none"
+                ) {
+                    if (activeIndentPx <= 0 && activeIndentMode != "none") {
+                        js("setIndentMode('none');")
+                    } else {
+                        js("adjustIndent(-36);")
+                    }
+                }
                 DocToolbarIcon(Icons.AutoMirrored.Filled.FormatIndentIncrease, "Tambah Indent") { js("adjustIndent(36);") }
                 DocToolbarDiv()
 
@@ -2085,22 +3401,65 @@ fun DocumentEditorViewport(
                 DocToolbarIcon(Icons.Filled.FormatQuote, "Kutipan") { js("insertBlockquote();") }
                 DocToolbarDiv()
 
-                // Insert Tools
-                DocToolbarIcon(Icons.Filled.Link, "Tautan") { showLinkDialog = true }
-                DocToolbarIcon(Icons.Filled.Functions, "Rumus") { showMathDialog = true }
-                DocToolbarIcon(Icons.Filled.Image, "Sisipkan Gambar") {
-                    isReplacingImage = false
-                    imagePickerLauncher.launch("image/*")
+                // Consolidated Insert Dropdown (+ Sisipkan ▾)
+                Box {
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = if (showInsertDropdown) AccentBlue.copy(alpha = 0.12f) else Color.Transparent,
+                        modifier = Modifier
+                            .height(30.dp)
+                            .clickable { showInsertDropdown = true }
+                            .padding(horizontal = 6.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Icon(Icons.Filled.Add, "Sisipkan", Modifier.size(16.dp), tint = if (showInsertDropdown) AccentBlue else LernspaceTextPrimary)
+                            Text("Sisipkan", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = if (showInsertDropdown) AccentBlue else LernspaceTextPrimary)
+                            Icon(Icons.Filled.ArrowDropDown, null, Modifier.size(15.dp), tint = LernspaceTextSecondary)
+                        }
+                    }
+                    DropdownMenu(expanded = showInsertDropdown, onDismissRequest = { showInsertDropdown = false }) {
+                        DropdownMenuItem(
+                            leadingIcon = { Icon(Icons.Filled.Image, null, Modifier.size(18.dp), tint = AccentBlue) },
+                            text = { Text("Gambar", fontSize = 13.sp) },
+                            onClick = {
+                                showInsertDropdown = false
+                                isReplacingImage = false
+                                imagePickerLauncher.launch("image/*")
+                            }
+                        )
+                        DropdownMenuItem(
+                            leadingIcon = { Icon(Icons.Filled.TableChart, null, Modifier.size(18.dp), tint = Color(0xFF059669)) },
+                            text = { Text("Tabel", fontSize = 13.sp) },
+                            onClick = { showInsertDropdown = false; showTableDialog = true }
+                        )
+                        DropdownMenuItem(
+                            leadingIcon = { Icon(Icons.Filled.Link, null, Modifier.size(18.dp), tint = Color(0xFF2563EB)) },
+                            text = { Text("Tautan (Link)", fontSize = 13.sp) },
+                            onClick = { showInsertDropdown = false; showLinkDialog = true }
+                        )
+                        DropdownMenuItem(
+                            leadingIcon = { Icon(Icons.Filled.Functions, null, Modifier.size(18.dp), tint = Color(0xFF7C3AED)) },
+                            text = { Text("Rumus Matematika", fontSize = 13.sp) },
+                            onClick = { showInsertDropdown = false; showMathDialog = true }
+                        )
+                        HorizontalDivider()
+                        DropdownMenuItem(
+                            leadingIcon = { Icon(Icons.Filled.HorizontalRule, null, Modifier.size(18.dp), tint = LernspaceTextSecondary) },
+                            text = { Text("Garis Pemisah", fontSize = 13.sp) },
+                            onClick = { showInsertDropdown = false; js("insertHR();") }
+                        )
+                        DropdownMenuItem(
+                            leadingIcon = { Icon(Icons.Filled.InsertPageBreak, null, Modifier.size(18.dp), tint = LernspaceTextSecondary) },
+                            text = { Text("Pemisah Halaman", fontSize = 13.sp) },
+                            onClick = { showInsertDropdown = false; js("insertPageBreak();") }
+                        )
+                    }
                 }
-                DocToolbarIcon(Icons.Filled.TableChart, "Tabel") { showTableDialog = true }
-                DocToolbarIcon(Icons.Filled.InsertPageBreak, "Pemisah Halaman") { js("insertPageBreak();") }
-                DocToolbarIcon(Icons.Filled.HorizontalRule, "Garis") { js("insertHR();") }
-                DocToolbarIcon(Icons.Filled.FormatClear, "Hapus Format") { js("clearFormatting();") }
                 DocToolbarDiv()
 
                 // Quick Paper Format Chip (1-Tap Page Setup!)
                 Surface(
-                    shape = RoundedCornerShape(6.dp),
+                    shape = RoundedCornerShape(14.dp),
                     color = if (isDarkTheme) Color(0xFF2A2D3A) else Color.White,
                     border = BorderStroke(1.dp, LernspaceBorder),
                     modifier = Modifier
@@ -2108,7 +3467,7 @@ fun DocumentEditorViewport(
                         .clickable { showPageSetupDialog = true }
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 8.dp),
+                        modifier = Modifier.padding(horizontal = 9.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
@@ -2120,7 +3479,7 @@ fun DocumentEditorViewport(
                 // Tools & File Compatibility Menu
                 Box {
                     Surface(
-                        shape = RoundedCornerShape(6.dp),
+                        shape = RoundedCornerShape(14.dp),
                         color = if (showWordCount) AccentBlue.copy(alpha = 0.10f) else Color.Transparent,
                         modifier = Modifier
                             .height(30.dp)
@@ -2138,11 +3497,6 @@ fun DocumentEditorViewport(
                             leadingIcon = { Icon(Icons.Filled.Description, null, Modifier.size(18.dp), tint = AccentBlue) },
                             text = { Text("Penyiapan Halaman (A4, F4, Margin)", fontSize = 13.sp) },
                             onClick = { showToolsDropdown = false; showPageSetupDialog = true }
-                        )
-                        DropdownMenuItem(
-                            leadingIcon = { Icon(Icons.Filled.InsertPageBreak, null, Modifier.size(18.dp), tint = LernspaceTextSecondary) },
-                            text = { Text("Sisipkan Pemisah Halaman", fontSize = 13.sp) },
-                            onClick = { showToolsDropdown = false; js("insertPageBreak();") }
                         )
                         DropdownMenuItem(
                             leadingIcon = {
@@ -2198,38 +3552,24 @@ fun DocumentEditorViewport(
                 }
                 DocToolbarDiv()
 
-                // Mimo AI Quick Actions
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = Color(0xFF8B5CF6).copy(alpha = 0.12f),
-                    border = BorderStroke(1.dp, Color(0xFF8B5CF6).copy(alpha = 0.35f)),
-                    modifier = Modifier.height(30.dp).clickable(onClick = onTriggerCheatSheet)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Text("⚡", fontSize = 11.sp)
-                        Text("Cheat Sheet", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF8B5CF6))
-                    }
-                }
+                // Mimo AI Summary Quick Action (Cheat Sheet is already in top workspace bar)
                 Surface(
                     shape = RoundedCornerShape(14.dp),
                     color = AccentBlue.copy(alpha = 0.10f),
-                    border = BorderStroke(1.dp, AccentBlue.copy(alpha = 0.3f)),
-                    modifier = Modifier.height(30.dp).clickable(onClick = onTriggerSummary)
+                    border = BorderStroke(1.dp, AccentBlue.copy(alpha = 0.28f)),
+                    modifier = Modifier.height(28.dp).clickable(onClick = onTriggerSummary)
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 8.dp),
+                        modifier = Modifier.padding(horizontal = 9.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Text("📝", fontSize = 11.sp)
-                        Text("Rangkum", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = AccentBlue)
+                        Text("Rangkum", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = AccentBlue)
                     }
                 }
             }
+        }
         }
 
         // ── WEBVIEW EDITOR (CLEAN HEADERLESS PAPER + PAGE SETUP) ───────────
@@ -2242,12 +3582,24 @@ fun DocumentEditorViewport(
                         syncState.lastEmittedPacked = packed
                         latestOnContentChange(packed)
                     },
-                    onFormatStateChanged = { b, i, u, s, align ->
+                    onFormatStateChanged = { b, i, u, s, align, fsPx, fontName, blkTag, colorHex, lsStr, indPx, indMode, beforePt, afterPt ->
                         isBoldActive = b
                         isItalicActive = i
                         isUnderlineActive = u
                         isStrikeActive = s
                         alignIndex = align.coerceIn(0, 3)
+                        fontSizePx = fsPx
+                        selectedFont = if (fontName.isBlank()) null else {
+                            DocFontFamily.entries.firstOrNull { it.name == fontName } ?: DocFontFamily.INTER
+                        }
+                        selectedStyle = DocParagraphStyle.entries.firstOrNull { it.htmlTag == blkTag } ?: DocParagraphStyle.NORMAL
+                        runCatching { Color(android.graphics.Color.parseColor(colorHex)) }
+                            .onSuccess { activeTextColor = it }
+                        lineSpacing = lsStr
+                        activeIndentPx = indPx
+                        activeIndentMode = indMode
+                        spaceBeforePt = beforePt
+                        spaceAfterPt = afterPt
                     },
                     onRequestReplaceImage = {
                         isReplacingImage = true
@@ -2262,6 +3614,7 @@ fun DocumentEditorViewport(
                         allowFileAccess = true
                         allowContentAccess = true
                         cacheMode = WebSettings.LOAD_DEFAULT
+                        textZoom = 100
                         setSupportZoom(false)
                         builtInZoomControls = false
                         displayZoomControls = false
@@ -2324,6 +3677,21 @@ fun DocumentEditorViewport(
         )
     }
 
+    // ── PARAGRAPH SPACING DIALOG ──────────────────────────────────────────
+    if (showParagraphSpacingDialog) {
+        ParagraphSpacingDialog(
+            initialBeforePt = spaceBeforePt,
+            initialAfterPt = spaceAfterPt,
+            onDismiss = { showParagraphSpacingDialog = false },
+            onApply = { beforePt, afterPt ->
+                spaceBeforePt = beforePt
+                spaceAfterPt = afterPt
+                js("setParagraphSpacing($beforePt, $afterPt);")
+                showParagraphSpacingDialog = false
+            }
+        )
+    }
+
     // ── TABLE DIALOG ──────────────────────────────────────────────────────
     if (showTableDialog) {
         TableInsertDialog(onDismiss = { showTableDialog = false }) { rows, cols ->
@@ -2350,6 +3718,103 @@ fun DocumentEditorViewport(
 }
 
 // ── TABLE INSERT DIALOG ───────────────────────────────────────────────────────
+@Composable
+fun ParagraphSpacingDialog(
+    initialBeforePt: Int,
+    initialAfterPt: Int,
+    onDismiss: () -> Unit,
+    onApply: (beforePt: Int, afterPt: Int) -> Unit
+) {
+    var beforePt by remember { mutableIntStateOf(initialBeforePt.coerceIn(0, 48)) }
+    var afterPt by remember { mutableIntStateOf(initialAfterPt.coerceIn(0, 48)) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = LernspaceSurfaceCard,
+            border = BorderStroke(1.dp, LernspaceBorder),
+            shadowElevation = 8.dp,
+            modifier = Modifier.widthIn(min = 300.dp, max = 380.dp).wrapContentHeight()
+        ) {
+            Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Filled.FormatLineSpacing, null, tint = AccentBlue)
+                    Text("Spasi Antar Paragraf", style = MaterialTheme.typography.titleMedium, color = LernspaceDark)
+                }
+
+                // Quick presets
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                    listOf(
+                        "Rapat (0pt)" to (0 to 0),
+                        "Sedang (6pt)" to (0 to 6),
+                        "GDocs (10pt)" to (0 to 10),
+                        "Lega (12pt)" to (6 to 12)
+                    ).forEach { (label, pair) ->
+                        val active = beforePt == pair.first && afterPt == pair.second
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (active) AccentBlue.copy(0.14f) else Color.Transparent,
+                            border = BorderStroke(1.dp, if (active) AccentBlue else LernspaceBorder),
+                            modifier = Modifier.weight(1f).clickable {
+                                beforePt = pair.first
+                                afterPt = pair.second
+                            }
+                        ) {
+                            Box(Modifier.padding(vertical = 6.dp, horizontal = 4.dp), contentAlignment = Alignment.Center) {
+                                Text(
+                                    label,
+                                    fontSize = 10.5.sp,
+                                    fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (active) AccentBlue else LernspaceTextPrimary,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
+                    Text("Sebelum paragraf (pt)", fontSize = 13.5.sp, fontWeight = FontWeight.Medium, color = LernspaceDark)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        IconButton(onClick = { beforePt = (beforePt - 2).coerceAtLeast(0) }, Modifier.size(32.dp)) {
+                            Icon(Icons.Filled.Remove, null, Modifier.size(16.dp))
+                        }
+                        Text("${beforePt}pt", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                        IconButton(onClick = { beforePt = (beforePt + 2).coerceAtMost(48) }, Modifier.size(32.dp)) {
+                            Icon(Icons.Filled.Add, null, Modifier.size(16.dp))
+                        }
+                    }
+                }
+
+                Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
+                    Text("Setelah paragraf (pt)", fontSize = 13.5.sp, fontWeight = FontWeight.Medium, color = LernspaceDark)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        IconButton(onClick = { afterPt = (afterPt - 2).coerceAtLeast(0) }, Modifier.size(32.dp)) {
+                            Icon(Icons.Filled.Remove, null, Modifier.size(16.dp))
+                        }
+                        Text("${afterPt}pt", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                        IconButton(onClick = { afterPt = (afterPt + 2).coerceAtMost(48) }, Modifier.size(32.dp)) {
+                            Icon(Icons.Filled.Add, null, Modifier.size(16.dp))
+                        }
+                    }
+                }
+
+                Row(Modifier.fillMaxWidth(), Arrangement.End, Alignment.CenterVertically) {
+                    TextButton(onClick = onDismiss) { Text("Batal", color = LernspaceTextSecondary) }
+                    Spacer(Modifier.width(8.dp))
+                    Button(
+                        onClick = { onApply(beforePt, afterPt) },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)
+                    ) {
+                        Text("Terapkan", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun TableInsertDialog(onDismiss: () -> Unit, onInsert: (Int, Int) -> Unit) {
     var rows by remember { mutableIntStateOf(3) }
@@ -2477,5 +3942,11 @@ private fun DocToolbarTextBtn(
 
 @Composable
 private fun DocToolbarDiv() {
-    Box(Modifier.height(18.dp).width(1.dp).background(LernspaceBorder.copy(alpha = 0.6f)))
+    Box(
+        Modifier
+            .padding(horizontal = 3.dp)
+            .height(18.dp)
+            .width(1.dp)
+            .background(LernspaceBorder.copy(alpha = 0.65f))
+    )
 }

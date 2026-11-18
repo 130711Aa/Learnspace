@@ -4181,7 +4181,7 @@ private fun UnifiedNoteTopBar(
             .statusBarsPadding()
             .padding(horizontal = 14.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.Top
+        verticalAlignment = if (isDocMode) Alignment.CenterVertically else Alignment.Top
     ) {
         val isLeftHanded = AppSettingsManager.handedness == Handedness.LEFT_HANDED
 
@@ -4207,6 +4207,7 @@ private fun UnifiedNoteTopBar(
             )
         } else {
             NoteActionsCapsule(
+                isDocMode = isDocMode,
                 isSplitMode = isSplitMode,
                 onCloseSplit = onCloseSplit,
                 isExporting = isExporting,
@@ -4253,6 +4254,7 @@ private fun UnifiedNoteTopBar(
 
         if (!isLeftHanded) {
             NoteActionsCapsule(
+                isDocMode = isDocMode,
                 isSplitMode = isSplitMode,
                 onCloseSplit = onCloseSplit,
                 isExporting = isExporting,
@@ -4566,6 +4568,7 @@ private fun NoteTitleCapsule(
 
 @Composable
 private fun NoteActionsCapsule(
+    isDocMode: Boolean = false,
     isSplitMode: Boolean,
     onCloseSplit: () -> Unit,
     isExporting: Boolean,
@@ -4586,13 +4589,13 @@ private fun NoteActionsCapsule(
     onToggleAudioBar: () -> Unit = {}
 ) {
     Surface(
-        shape = RoundedCornerShape(24.dp),
-        color = LernspaceSurfaceCard.copy(alpha = 0.95f),
+        shape = RoundedCornerShape(22.dp),
+        color = LernspaceSurfaceCard.copy(alpha = 0.96f),
         shadowElevation = 4.dp,
         border = BorderStroke(1.dp, LernspaceBorder)
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
@@ -4601,7 +4604,7 @@ private fun NoteActionsCapsule(
                     shape = CircleShape,
                     color = Color(0xFFFEE2E2),
                     modifier = Modifier
-                        .size(36.dp)
+                        .size(34.dp)
                         .clickable(onClick = onCloseSplit)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
@@ -4609,86 +4612,100 @@ private fun NoteActionsCapsule(
                             imageVector = Icons.Filled.Close,
                             contentDescription = "Tutup Split Screen",
                             tint = Color(0xFFDC2626),
-                            modifier = Modifier.size(17.dp)
+                            modifier = Modifier.size(16.dp)
                         )
                     }
                 }
-
-                VerticalDivider(modifier = Modifier.height(20.dp), color = LernspaceBorder)
+                VerticalDivider(modifier = Modifier.height(18.dp), color = LernspaceBorder)
             }
 
-            // Audio Lecture Recording Button
+            // ── GROUP 1: Unified Study Utility Cluster (Mic · Grafik · Bagikan) ──
             Surface(
-                shape = CircleShape,
-                color = when {
-                    isAudioBarOpen -> AccentRed.copy(alpha = 0.18f)
-                    hasAudioRecording -> AccentBlueContainer.copy(alpha = 0.7f)
-                    else -> LernspaceSurfaceLow
-                },
-                modifier = Modifier
-                    .size(36.dp)
-                    .clickable(onClick = onToggleAudioBar)
+                shape = RoundedCornerShape(17.dp),
+                color = LernspaceSurfaceLow.copy(alpha = 0.85f),
+                border = BorderStroke(0.5.dp, LernspaceBorder.copy(alpha = 0.7f))
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = if (hasAudioRecording) Icons.Filled.Headphones else Icons.Filled.Mic,
-                        contentDescription = "Audio Kuliah / Rekaman Suara",
-                        tint = when {
-                            isAudioBarOpen -> AccentRed
-                            hasAudioRecording -> AccentBlue
-                            else -> LernspaceDark
+                Row(
+                    modifier = Modifier.padding(horizontal = 3.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    // Audio Lecture Recording
+                    Surface(
+                        shape = CircleShape,
+                        color = when {
+                            isAudioBarOpen -> AccentRed.copy(alpha = 0.16f)
+                            hasAudioRecording -> AccentBlue.copy(alpha = 0.14f)
+                            else -> Color.Transparent
                         },
-                        modifier = Modifier.size(17.dp)
-                    )
-                }
-            }
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clickable(onClick = onToggleAudioBar)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = if (hasAudioRecording) Icons.Filled.Headphones else Icons.Filled.Mic,
+                                contentDescription = "Audio Kuliah / Rekaman Suara",
+                                tint = when {
+                                    isAudioBarOpen -> AccentRed
+                                    hasAudioRecording -> AccentBlue
+                                    else -> LernspaceTextPrimary
+                                },
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
 
-            // Export PDF Button
-            Surface(
-                shape = CircleShape,
-                color = AccentBlueContainer.copy(alpha = 0.5f),
-                modifier = Modifier
-                    .size(36.dp)
-                    .clickable(enabled = !isExporting, onClick = onExportPdf)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    if (isExporting) {
-                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = AccentBlue)
-                    } else {
-                        Icon(
-                            imageVector = Icons.Filled.Share,
-                            contentDescription = "Export PDF",
-                            tint = AccentBlue,
-                            modifier = Modifier.size(17.dp)
-                        )
+                    // GeoGebra Floating Graph
+                    Surface(
+                        shape = CircleShape,
+                        color = Color.Transparent,
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clickable(onClick = onOpenGraph)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Filled.ShowChart,
+                                contentDescription = "Buka Grafik Matematika (GeoGebra)",
+                                tint = LernspaceTextPrimary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+
+                    // Export / Share PDF
+                    Surface(
+                        shape = CircleShape,
+                        color = Color.Transparent,
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clickable(enabled = !isExporting, onClick = onExportPdf)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            if (isExporting) {
+                                CircularProgressIndicator(modifier = Modifier.size(15.dp), strokeWidth = 2.dp, color = AccentBlue)
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Filled.Share,
+                                    contentDescription = "Bagikan / Export PDF",
+                                    tint = LernspaceTextPrimary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }
 
-            // GeoGebra Floating Graph Button
-            Surface(
-                shape = CircleShape,
-                color = AccentBlueContainer.copy(alpha = 0.5f),
-                modifier = Modifier
-                    .size(36.dp)
-                    .clickable(onClick = onOpenGraph)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Filled.ShowChart,
-                        contentDescription = "Buka Grafik Matematika (GeoGebra)",
-                        tint = AccentBlue,
-                        modifier = Modifier.size(17.dp)
-                    )
-                }
-            }
+            VerticalDivider(modifier = Modifier.height(18.dp), color = LernspaceBorder)
 
-            // AI Study Assistant Button (Context-Aware Page Assistant)
+            // ── GROUP 2: Mimo AI & Cheat Sheet ──
             Surface(
                 shape = CircleShape,
-                color = if (isAiAssistantOpen) Color(0xFF8B5CF6) else Color(0xFF8B5CF6).copy(alpha = 0.15f),
+                color = if (isAiAssistantOpen) Color(0xFF8B5CF6) else Color(0xFF8B5CF6).copy(alpha = 0.14f),
                 modifier = Modifier
-                    .size(36.dp)
+                    .size(34.dp)
                     .clickable(onClick = onToggleAiAssistant)
             ) {
                 Box(contentAlignment = Alignment.Center) {
@@ -4696,41 +4713,42 @@ private fun NoteActionsCapsule(
                         imageVector = Icons.Filled.AutoAwesome,
                         contentDescription = "Mimo - AI Learning Companion",
                         tint = if (isAiAssistantOpen) Color.White else Color(0xFF8B5CF6),
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(17.dp)
                     )
                 }
             }
 
-            // Quick Cheat Sheet Trigger Pill
             Surface(
-                shape = RoundedCornerShape(18.dp),
-                color = Color(0xFF8B5CF6).copy(alpha = 0.12f),
-                border = BorderStroke(1.dp, Color(0xFF8B5CF6).copy(alpha = 0.35f)),
+                shape = RoundedCornerShape(17.dp),
+                color = Color(0xFF8B5CF6).copy(alpha = 0.11f),
+                border = BorderStroke(1.dp, Color(0xFF8B5CF6).copy(alpha = 0.30f)),
                 modifier = Modifier
-                    .height(36.dp)
+                    .height(34.dp)
                     .clickable(onClick = onTriggerCheatSheet)
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 9.dp),
+                    modifier = Modifier.padding(horizontal = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Text(text = "⚡", fontSize = 12.sp)
+                    Text(text = "⚡", fontSize = 11.5.sp)
                     Text(
                         text = "Cheat Sheet",
                         fontSize = 11.5.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.SemiBold,
                         color = Color(0xFF8B5CF6)
                     )
                 }
             }
 
-            // Dark Paper Toggle Button
+            VerticalDivider(modifier = Modifier.height(18.dp), color = LernspaceBorder)
+
+            // ── GROUP 3: Theme (+ Canvas History when not in Document Mode) ──
             Surface(
                 shape = CircleShape,
                 color = if (isDarkPaper) Color(0xFF1E293B) else LernspaceSurfaceLow,
                 modifier = Modifier
-                    .size(36.dp)
+                    .size(34.dp)
                     .clickable(onClick = onToggleDarkPaper)
             ) {
                 Box(contentAlignment = Alignment.Center) {
@@ -4738,62 +4756,64 @@ private fun NoteActionsCapsule(
                         imageVector = if (isDarkPaper) Icons.Filled.DarkMode else Icons.Filled.LightMode,
                         contentDescription = if (isDarkPaper) "Mode Kertas Gelap (Aktif)" else "Mode Kertas Terang",
                         tint = if (isDarkPaper) Color(0xFFFBBF24) else LernspaceTextSecondary,
-                        modifier = Modifier.size(17.dp)
+                        modifier = Modifier.size(16.dp)
                     )
                 }
             }
 
-            // Undo
-            Surface(
-                shape = CircleShape,
-                color = if (canUndo) LernspaceSurfaceLow else Color.Transparent,
-                modifier = Modifier
-                    .size(36.dp)
-                    .clickable(enabled = canUndo, onClick = onUndo)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Undo,
-                        contentDescription = "Undo",
-                        tint = if (canUndo) LernspaceDark else LernspaceBorder,
-                        modifier = Modifier.size(17.dp)
-                    )
+            if (!isDocMode) {
+                // Undo (Canvas/PDF)
+                Surface(
+                    shape = CircleShape,
+                    color = if (canUndo) LernspaceSurfaceLow else Color.Transparent,
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clickable(enabled = canUndo, onClick = onUndo)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Undo,
+                            contentDescription = "Undo",
+                            tint = if (canUndo) LernspaceDark else LernspaceBorder,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
                 }
-            }
 
-            // Redo
-            Surface(
-                shape = CircleShape,
-                color = if (canRedo) LernspaceSurfaceLow else Color.Transparent,
-                modifier = Modifier
-                    .size(36.dp)
-                    .clickable(enabled = canRedo, onClick = onRedo)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Redo,
-                        contentDescription = "Redo",
-                        tint = if (canRedo) LernspaceDark else LernspaceBorder,
-                        modifier = Modifier.size(17.dp)
-                    )
+                // Redo (Canvas/PDF)
+                Surface(
+                    shape = CircleShape,
+                    color = if (canRedo) LernspaceSurfaceLow else Color.Transparent,
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clickable(enabled = canRedo, onClick = onRedo)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Redo,
+                            contentDescription = "Redo",
+                            tint = if (canRedo) LernspaceDark else LernspaceBorder,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
                 }
-            }
 
-            // Clear Canvas
-            Surface(
-                shape = CircleShape,
-                color = Color(0xFFFEE2E2),
-                modifier = Modifier
-                    .size(36.dp)
-                    .clickable(onClick = onClearAll)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Filled.DeleteSweep,
-                        contentDescription = "Clear all",
-                        tint = Color(0xFFDC2626),
-                        modifier = Modifier.size(17.dp)
-                    )
+                // Clear Canvas
+                Surface(
+                    shape = CircleShape,
+                    color = Color(0xFFFEE2E2),
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clickable(onClick = onClearAll)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Filled.DeleteSweep,
+                            contentDescription = "Clear all",
+                            tint = Color(0xFFDC2626),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
                 }
             }
         }
