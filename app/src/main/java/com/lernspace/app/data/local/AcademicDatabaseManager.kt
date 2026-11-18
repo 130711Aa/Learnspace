@@ -141,6 +141,7 @@ object AcademicDatabaseManager {
                     topicName = entity.topicName,
                     isScratchpad = entity.isScratchpad,
                     canvasType = when {
+                        loaded?.canvasType == NoteCanvasType.DOC_DOCUMENT.name || entity.paperStyle == "DOC_DOCUMENT" -> NoteCanvasType.DOC_DOCUMENT
                         !entity.pdfUri.isNullOrBlank() -> NoteCanvasType.PDF_DOCUMENT
                         entity.isScratchpad -> NoteCanvasType.INFINITE_SCRATCHPAD
                         else -> NoteCanvasType.PAGED_NOTE
@@ -149,7 +150,8 @@ object AcademicDatabaseManager {
                     isDarkPaper = isDark,
                     pdfUri = entity.pdfUri,
                     pdfTotalPages = entity.pdfTotalPages,
-                    pages = loadedPages.toMutableList()
+                    pages = loadedPages.toMutableList(),
+                    documentContent = loaded?.documentContent ?: ""
                 )
             }
         }
@@ -289,13 +291,17 @@ object AcademicDatabaseManager {
         val entity = NoteEntity(
             id = note.id,
             title = note.title,
-            snippet = note.snippet,
+            snippet = if (note.canvasType == NoteCanvasType.DOC_DOCUMENT) {
+                note.documentContent.take(120).replace("\n", " ") + "..."
+            } else {
+                note.snippet
+            },
             subject = note.subject,
             subjectId = note.subjectId,
             topicId = note.topicId,
             topicName = note.topicName,
             isScratchpad = note.isScratchpad,
-            paperStyle = note.paperStyle.name,
+            paperStyle = if (note.canvasType == NoteCanvasType.DOC_DOCUMENT) "DOC_DOCUMENT" else note.paperStyle.name,
             pdfUri = note.pdfUri,
             pdfTotalPages = note.pdfTotalPages,
             updatedAt = System.currentTimeMillis()
@@ -311,7 +317,14 @@ object AcademicDatabaseManager {
                 }
                 mutex.withLock {
                     database.noteDao().insertNote(entity)
-                    storage.saveNotePages(note.id, pagesSnapshot, isDark, note.lastOpenedPageIndex)
+                    storage.saveNotePages(
+                        note.id,
+                        pagesSnapshot,
+                        isDark,
+                        note.lastOpenedPageIndex,
+                        canvasType = note.canvasType.name,
+                        documentContent = note.documentContent
+                    )
                 }
             } finally {
                 pendingNoteSaves.remove(note.id, launchedJob)

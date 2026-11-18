@@ -36,7 +36,8 @@ enum class PaperStyle(val displayName: String) {
 enum class NoteCanvasType(val title: String, val description: String) {
     PAGED_NOTE("Buku Berhalaman", "Halaman berurutan dengan template garis tetap (Page 1 of N)"),
     PDF_DOCUMENT("Dokumen PDF", "Anotasi & coret-coret langsung di atas file PDF yang diimpor"),
-    INFINITE_SCRATCHPAD("Scratchpad Bebas", "Papan kanvas tak terbatas untuk coretan cepat & mind mapping")
+    INFINITE_SCRATCHPAD("Scratchpad Bebas", "Papan kanvas tak terbatas untuk coretan cepat & mind mapping"),
+    DOC_DOCUMENT("Dokumen Teks (.doc)", "Dokumen ketik native dengan toolbar lengkap ala Google Docs / Word")
 }
 
 object CanvasConstants {
@@ -111,5 +112,6 @@ data class NoteUiModel(
     var pdfUri: String? = null,
     var pdfTotalPages: Int = 1,
     var lastOpenedPageIndex: Int = 0,
-    val pages: MutableList<NotePageData> = mutableListOf(NotePageData(pageIndex = 0))
+    val pages: MutableList<NotePageData> = mutableListOf(NotePageData(pageIndex = 0)),
+    var documentContent: String = ""
 )

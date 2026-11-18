@@ -155,6 +155,12 @@ fun CreateTopicNoteDialog(
                                 shape = RoundedCornerShape(8.dp)
                             )
                             FilterChip(
+                                selected = selectedCanvasType == NoteCanvasType.DOC_DOCUMENT,
+                                onClick = { selectedCanvasType = NoteCanvasType.DOC_DOCUMENT },
+                                label = { Text("Dokumen .doc", fontSize = 11.sp) },
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                            FilterChip(
                                 selected = selectedCanvasType == NoteCanvasType.INFINITE_SCRATCHPAD,
                                 onClick = { selectedCanvasType = NoteCanvasType.INFINITE_SCRATCHPAD },
                                 label = { Text("Bebas", fontSize = 11.sp) },

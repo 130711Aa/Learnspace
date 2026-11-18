@@ -32,7 +32,9 @@ import java.util.concurrent.ConcurrentHashMap
 data class LoadedNoteContent(
     val pages: List<NotePageData>,
     val isDarkPaper: Boolean,
-    val lastOpenedPageIndex: Int = 0
+    val lastOpenedPageIndex: Int = 0,
+    val canvasType: String? = null,
+    val documentContent: String? = null
 )
 
 /**
@@ -265,7 +267,14 @@ class NoteStorageManager(private val context: Context) {
     /**
      * Saves all pages of a note into a compact JSON file.
      */
-    fun saveNotePages(noteId: String, pages: List<NotePageData>, isDarkPaper: Boolean = false, lastOpenedPageIndex: Int = 0) {
+    fun saveNotePages(
+        noteId: String,
+        pages: List<NotePageData>,
+        isDarkPaper: Boolean = false,
+        lastOpenedPageIndex: Int = 0,
+        canvasType: String? = null,
+        documentContent: String? = null
+    ) {
         synchronized(lockFor(noteId)) {
         try {
             val rootObj = JSONObject()
@@ -273,6 +282,8 @@ class NoteStorageManager(private val context: Context) {
             rootObj.put("updatedAt", System.currentTimeMillis())
             rootObj.put("isDarkPaper", isDarkPaper)
             rootObj.put("lastOpenedPageIndex", lastOpenedPageIndex)
+            if (canvasType != null) rootObj.put("canvasType", canvasType)
+            if (documentContent != null) rootObj.put("documentContent", documentContent)
 
             val pagesArray = JSONArray()
 
@@ -389,8 +400,16 @@ class NoteStorageManager(private val context: Context) {
                 val rootObj = JSONObject(jsonText)
                 val isDark = rootObj.optBoolean("isDarkPaper", false)
                 val lastOpened = rootObj.optInt("lastOpenedPageIndex", 0)
-                val pages = parsePagesFromRoot(rootObj) ?: return null
-                LoadedNoteContent(pages = pages, isDarkPaper = isDark, lastOpenedPageIndex = lastOpened)
+                val canvasType = if (rootObj.has("canvasType")) rootObj.optString("canvasType") else null
+                val docContent = if (rootObj.has("documentContent")) rootObj.optString("documentContent") else null
+                val pages = parsePagesFromRoot(rootObj) ?: listOf(NotePageData(pageIndex = 0))
+                LoadedNoteContent(
+                    pages = pages,
+                    isDarkPaper = isDark,
+                    lastOpenedPageIndex = lastOpened,
+                    canvasType = canvasType,
+                    documentContent = docContent
+                )
             } catch (e: Exception) {
                 e.printStackTrace()
                 null

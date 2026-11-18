@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -488,7 +489,12 @@ fun WorkspaceScreen(
                         title = title,
                         subject = if (canvasType == NoteCanvasType.INFINITE_SCRATCHPAD) "Quick Scratchpad" else (subject?.name ?: "General Study"),
                         date = timeStr,
-                        snippet = if (canvasType == NoteCanvasType.PDF_DOCUMENT) "Dokumen ($pdfPages Halaman)..." else "Catatan ${paperStyle.displayName}...",
+                        snippet = when (canvasType) {
+                            NoteCanvasType.DOC_DOCUMENT -> "Dokumen Teks (.doc)..."
+                            NoteCanvasType.PDF_DOCUMENT -> "Dokumen ($pdfPages Halaman)..."
+                            NoteCanvasType.INFINITE_SCRATCHPAD -> "Scratchpad Bebas..."
+                            else -> "Catatan ${paperStyle.displayName}..."
+                        },
                         subjectId = if (canvasType == NoteCanvasType.INFINITE_SCRATCHPAD) null else subject?.id,
                         topicId = if (canvasType == NoteCanvasType.INFINITE_SCRATCHPAD) null else topic?.id,
                         topicName = if (canvasType == NoteCanvasType.INFINITE_SCRATCHPAD) null else topic?.title,
@@ -497,7 +503,8 @@ fun WorkspaceScreen(
                         pdfUri = finalPdfUri,
                         pdfTotalPages = pdfPages,
                         pages = mutableListOf(NotePageData(pageIndex = 0)),
-                        isScratchpad = (canvasType == NoteCanvasType.INFINITE_SCRATCHPAD)
+                        isScratchpad = (canvasType == NoteCanvasType.INFINITE_SCRATCHPAD),
+                        documentContent = if (canvasType == NoteCanvasType.DOC_DOCUMENT) "# $title\n\n" else ""
                     )
                     notes.add(0, newNote)
                     AcademicDatabaseManager.persistNote(newNote)
@@ -699,7 +706,12 @@ private fun WorkspaceNoteCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Stylus & Inking Ready",
+                        text = when (note.canvasType) {
+                            NoteCanvasType.DOC_DOCUMENT -> "Dokumen Ketik (.doc)"
+                            NoteCanvasType.PDF_DOCUMENT -> "PDF Dokumen (${note.pdfTotalPages} Hal)"
+                            NoteCanvasType.INFINITE_SCRATCHPAD -> "Scratchpad Bebas"
+                            else -> "Buku Catatan (${note.pages.size} Hal)"
+                        },
                         fontSize = 11.sp,
                         color = LernspaceTextSecondary
                     )
@@ -708,13 +720,13 @@ private fun WorkspaceNoteCard(
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Text(
-                            text = "Open Canvas",
+                            text = if (note.canvasType == NoteCanvasType.DOC_DOCUMENT) "Buka Dokumen" else "Open Canvas",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             color = subjectColor
                         )
                         Icon(
-                            imageVector = Icons.Filled.ArrowForward,
+                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
                             contentDescription = null,
                             tint = subjectColor,
                             modifier = Modifier.size(14.dp)
@@ -909,6 +921,29 @@ private fun CreateNoteDialog(
                             Text("Kanvas Bebas", fontSize = 9.sp, color = LernspaceTextSecondary)
                         }
                     }
+
+                    // Option D: Native Document (.doc / GDocs style)
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (selectedCanvasType == NoteCanvasType.DOC_DOCUMENT) Color(0xFFEFF6FF) else LernspaceSurfaceLow,
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (selectedCanvasType == NoteCanvasType.DOC_DOCUMENT) AccentBlue else Color.Transparent
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { selectedCanvasType = NoteCanvasType.DOC_DOCUMENT }
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(Icons.Filled.Article, null, tint = if (selectedCanvasType == NoteCanvasType.DOC_DOCUMENT) AccentBlue else LernspaceDark, modifier = Modifier.size(20.dp))
+                            Text("Dokumen .doc", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
+                            Text("Ketik ala GDocs", fontSize = 9.sp, color = LernspaceTextSecondary)
+                        }
+                    }
                 }
 
                 // 2. SUB-SELECTOR BASED ON TYPE
@@ -1051,6 +1086,7 @@ private fun CreateNoteDialog(
                         onClick = {
                             val finalTitle = title.ifBlank {
                                 when (selectedCanvasType) {
+                                    NoteCanvasType.DOC_DOCUMENT -> if (selectedTopic != null) "Dokumen · ${selectedTopic?.title}" else "Dokumen Teks Baru"
                                     NoteCanvasType.PDF_DOCUMENT -> selectedPdfName ?: "Dokumen PDF"
                                     NoteCanvasType.INFINITE_SCRATCHPAD -> "Untitled Scratchpad"
                                     NoteCanvasType.PAGED_NOTE -> selectedTopic?.title ?: "Buku Catatan"
@@ -1069,7 +1105,7 @@ private fun CreateNoteDialog(
                         shape = RoundedCornerShape(8.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = LernspaceDark)
                     ) {
-                        Text("Buka Kanvas")
+                        Text(if (selectedCanvasType == NoteCanvasType.DOC_DOCUMENT) "Buka Dokumen" else "Buka Kanvas")
                     }
                 }
             }

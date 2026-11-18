@@ -113,6 +113,7 @@ import com.lernspace.app.ui.workspace.components.InteractiveGraphDialog
 import com.lernspace.app.ui.workspace.components.MarkdownLatexContent
 import com.lernspace.app.ui.workspace.components.NoteFloatingToolbar
 import com.lernspace.app.ui.workspace.components.PaperBackground
+import com.lernspace.app.ui.workspace.document.DocumentEditorViewport
 import com.lernspace.app.ui.workspace.ai.AiAssistantSidePanel
 import com.lernspace.app.ui.workspace.ai.AiQuickAction
 import com.lernspace.app.ui.workspace.ai.PageCaptureHelper
@@ -191,11 +192,19 @@ class NotePaneState(
     var paperStyle by mutableStateOf(note.paperStyle)
     var isDarkPaper by mutableStateOf(note.isDarkPaper)
     var subject by mutableStateOf(note.subject)
+    var documentContent by mutableStateOf(note.documentContent)
+
+    fun updateDocumentContent(newContent: String) {
+        documentContent = newContent
+        note.documentContent = newContent
+        saveActivePageData()
+    }
 
     fun applyUpdatedMeta(updated: NoteUiModel) {
         note = updated
         noteTitle = updated.title
         subject = updated.subject
+        documentContent = updated.documentContent
     }
 
     fun toggleDarkPaper() {
@@ -361,13 +370,19 @@ class NotePaneState(
             val diskContent = withContext(Dispatchers.IO) {
                 AcademicDatabaseManager.loadNoteContent(note.id)
             }
-            if (diskContent != null && diskContent.pages.isNotEmpty()) {
-                note.pages.clear()
-                note.pages.addAll(diskContent.pages)
-                totalPages = if (note.canvasType == NoteCanvasType.PDF_DOCUMENT) maxOf(1, note.pdfTotalPages) else maxOf(1, note.pages.size)
-                if (diskContent.lastOpenedPageIndex in 0 until note.pages.size) {
-                    note.lastOpenedPageIndex = diskContent.lastOpenedPageIndex
-                    currentPageIndex = diskContent.lastOpenedPageIndex
+            if (diskContent != null) {
+                if (diskContent.documentContent != null) {
+                    note.documentContent = diskContent.documentContent
+                    documentContent = diskContent.documentContent
+                }
+                if (diskContent.pages.isNotEmpty()) {
+                    note.pages.clear()
+                    note.pages.addAll(diskContent.pages)
+                    totalPages = if (note.canvasType == NoteCanvasType.PDF_DOCUMENT) maxOf(1, note.pdfTotalPages) else maxOf(1, note.pages.size)
+                    if (diskContent.lastOpenedPageIndex in 0 until note.pages.size) {
+                        note.lastOpenedPageIndex = diskContent.lastOpenedPageIndex
+                        currentPageIndex = diskContent.lastOpenedPageIndex
+                    }
                 }
             }
             loadActivePageData(currentPageIndex.coerceIn(0, (note.pages.size - 1).coerceAtLeast(0)))
@@ -1046,23 +1061,53 @@ fun NoteEditorScreen(
         if (secondaryNote == null || rightState == null) {
             // SINGLE NOTE MODE (Full Width)
             key(primaryState.note.id) {
-                NotePaneViewport(
-                    state = primaryState,
-                    isActive = true,
-                    activeTool = activeTool,
-                    currentBrush = currentBrush,
-                    selectedColor = activeColor,
-                    selectedThickness = activeThickness,
-                    selectedShapeType = selectedShapeType,
-                    onActivate = { activeNoteId = primaryState.note.id },
-                    onOpenGraph = { eq ->
-                        interactiveGraphFunction = eq
-                        showInteractiveGraphDialog = true
-                    },
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .clipToBounds()
-                )
+                if (primaryState.canvasType == NoteCanvasType.DOC_DOCUMENT) {
+                    DocumentEditorViewport(
+                        title = primaryState.noteTitle,
+                        onTitleChange = { newTitle ->
+                            primaryState.noteTitle = newTitle
+                            primaryState.note.title = newTitle
+                            AcademicDatabaseManager.persistNote(primaryState.note)
+                        },
+                        subject = primaryState.subject,
+                        content = primaryState.documentContent,
+                        onContentChange = { newContent ->
+                            primaryState.updateDocumentContent(newContent)
+                        },
+                        isDarkTheme = primaryState.isDarkPaper,
+                        onTriggerCheatSheet = {
+                            showAiAssistantPanel = true
+                            pendingAiAction = AiQuickAction.CHEAT_SHEET
+                        },
+                        onTriggerSummary = {
+                            showAiAssistantPanel = true
+                            pendingAiAction = AiQuickAction.SUMMARIZE
+                        },
+                        onExportPdf = { handleExportPdf() },
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .statusBarsPadding()
+                            .padding(top = 64.dp)
+                    )
+                } else {
+                    NotePaneViewport(
+                        state = primaryState,
+                        isActive = true,
+                        activeTool = activeTool,
+                        currentBrush = currentBrush,
+                        selectedColor = activeColor,
+                        selectedThickness = activeThickness,
+                        selectedShapeType = selectedShapeType,
+                        onActivate = { activeNoteId = primaryState.note.id },
+                        onOpenGraph = { eq ->
+                            interactiveGraphFunction = eq
+                            showInteractiveGraphDialog = true
+                        },
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clipToBounds()
+                    )
+                }
             }
         } else {
             // DUAL-NOTE SPLIT SCREEN MODE (Clean canvas, double-tap divider to swap!)
@@ -1078,23 +1123,53 @@ fun NoteEditorScreen(
                             .clipToBounds()
                     ) {
                         key(leftState.note.id) {
-                            NotePaneViewport(
-                                state = leftState,
-                                isActive = activeNoteId == leftState.note.id,
-                                activeTool = activeTool,
-                                currentBrush = currentBrush,
-                                selectedColor = activeColor,
-                                selectedThickness = activeThickness,
-                                selectedShapeType = selectedShapeType,
-                                onActivate = { activeNoteId = leftState.note.id },
-                                onOpenGraph = { eq ->
-                                    interactiveGraphFunction = eq
-                                    showInteractiveGraphDialog = true
-                                },
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .clipToBounds()
-                            )
+                            if (leftState.canvasType == NoteCanvasType.DOC_DOCUMENT) {
+                                DocumentEditorViewport(
+                                    title = leftState.noteTitle,
+                                    onTitleChange = { newTitle ->
+                                        leftState.noteTitle = newTitle
+                                        leftState.note.title = newTitle
+                                        AcademicDatabaseManager.persistNote(leftState.note)
+                                    },
+                                    subject = leftState.subject,
+                                    content = leftState.documentContent,
+                                    onContentChange = { newContent ->
+                                        leftState.updateDocumentContent(newContent)
+                                    },
+                                    isDarkTheme = leftState.isDarkPaper,
+                                    onTriggerCheatSheet = {
+                                        showAiAssistantPanel = true
+                                        pendingAiAction = AiQuickAction.CHEAT_SHEET
+                                    },
+                                    onTriggerSummary = {
+                                        showAiAssistantPanel = true
+                                        pendingAiAction = AiQuickAction.SUMMARIZE
+                                    },
+                                    onExportPdf = { handleExportPdf() },
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .statusBarsPadding()
+                                        .padding(top = 64.dp)
+                                )
+                            } else {
+                                NotePaneViewport(
+                                    state = leftState,
+                                    isActive = activeNoteId == leftState.note.id,
+                                    activeTool = activeTool,
+                                    currentBrush = currentBrush,
+                                    selectedColor = activeColor,
+                                    selectedThickness = activeThickness,
+                                    selectedShapeType = selectedShapeType,
+                                    onActivate = { activeNoteId = leftState.note.id },
+                                    onOpenGraph = { eq ->
+                                        interactiveGraphFunction = eq
+                                        showInteractiveGraphDialog = true
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .clipToBounds()
+                                )
+                            }
                         }
                     }
 
@@ -1118,23 +1193,53 @@ fun NoteEditorScreen(
                             .clipToBounds()
                     ) {
                         key(rightState.note.id) {
-                            NotePaneViewport(
-                                state = rightState,
-                                isActive = activeNoteId == rightState.note.id,
-                                activeTool = activeTool,
-                                currentBrush = currentBrush,
-                                selectedColor = activeColor,
-                                selectedThickness = activeThickness,
-                                selectedShapeType = selectedShapeType,
-                                onActivate = { activeNoteId = rightState.note.id },
-                                onOpenGraph = { eq ->
-                                    interactiveGraphFunction = eq
-                                    showInteractiveGraphDialog = true
-                                },
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .clipToBounds()
-                            )
+                            if (rightState.canvasType == NoteCanvasType.DOC_DOCUMENT) {
+                                DocumentEditorViewport(
+                                    title = rightState.noteTitle,
+                                    onTitleChange = { newTitle ->
+                                        rightState.noteTitle = newTitle
+                                        rightState.note.title = newTitle
+                                        AcademicDatabaseManager.persistNote(rightState.note)
+                                    },
+                                    subject = rightState.subject,
+                                    content = rightState.documentContent,
+                                    onContentChange = { newContent ->
+                                        rightState.updateDocumentContent(newContent)
+                                    },
+                                    isDarkTheme = rightState.isDarkPaper,
+                                    onTriggerCheatSheet = {
+                                        showAiAssistantPanel = true
+                                        pendingAiAction = AiQuickAction.CHEAT_SHEET
+                                    },
+                                    onTriggerSummary = {
+                                        showAiAssistantPanel = true
+                                        pendingAiAction = AiQuickAction.SUMMARIZE
+                                    },
+                                    onExportPdf = { handleExportPdf() },
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .statusBarsPadding()
+                                        .padding(top = 64.dp)
+                                )
+                            } else {
+                                NotePaneViewport(
+                                    state = rightState,
+                                    isActive = activeNoteId == rightState.note.id,
+                                    activeTool = activeTool,
+                                    currentBrush = currentBrush,
+                                    selectedColor = activeColor,
+                                    selectedThickness = activeThickness,
+                                    selectedShapeType = selectedShapeType,
+                                    onActivate = { activeNoteId = rightState.note.id },
+                                    onOpenGraph = { eq ->
+                                        interactiveGraphFunction = eq
+                                        showInteractiveGraphDialog = true
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .clipToBounds()
+                                )
+                            }
                         }
                     }
                 }
@@ -1222,6 +1327,7 @@ fun NoteEditorScreen(
                 showAiAssistantPanel = true
                 pendingAiAction = AiQuickAction.CHEAT_SHEET
             },
+            isDocMode = activeState.canvasType == NoteCanvasType.DOC_DOCUMENT,
             hasAudioRecording = audioController.hasExistingRecording,
             isAudioBarOpen = showAudioBar,
             onToggleAudioBar = {
@@ -1445,29 +1551,40 @@ fun NoteEditorScreen(
                     }
                 },
                 onExtractPageText = {
-                    PageCaptureHelper.extractPageText(activeState)
+                    if (activeState.canvasType == NoteCanvasType.DOC_DOCUMENT) {
+                        activeState.documentContent.ifBlank { "Dokumen masih kosong." }
+                    } else {
+                        PageCaptureHelper.extractPageText(activeState)
+                    }
                 },
                 onInsertToNote = { content ->
-                    val screenCenterX = (-activeState.panX + 260f) / activeState.scale
-                    val screenCenterY = (-activeState.panY + 220f) / activeState.scale
-                    activeState.deselectAll()
-                    activeState.pushUndoSnapshot()
-                    val lineCount = content.lines().size.coerceAtLeast(content.length / 38)
-                    val calculatedHeight = (lineCount * 36f + 70f).coerceIn(240f, 650f)
-                    activeState.textBoxes.add(
-                        TextBoxElement(
-                            x = maxOf(40f, screenCenterX),
-                            y = maxOf(80f, screenCenterY),
-                            width = 560f,
-                            height = calculatedHeight,
-                            text = content,
-                            fontSize = 24f,
-                            hasBackground = true,
-                            isSelected = false
+                    if (activeState.canvasType == NoteCanvasType.DOC_DOCUMENT) {
+                        val current = activeState.documentContent
+                        val combined = if (current.isBlank()) content else "$current\n\n$content"
+                        activeState.updateDocumentContent(combined)
+                        android.widget.Toast.makeText(context, "Materi AI berhasil dimuat ke Dokumen", android.widget.Toast.LENGTH_SHORT).show()
+                    } else {
+                        val screenCenterX = (-activeState.panX + 260f) / activeState.scale
+                        val screenCenterY = (-activeState.panY + 220f) / activeState.scale
+                        activeState.deselectAll()
+                        activeState.pushUndoSnapshot()
+                        val lineCount = content.lines().size.coerceAtLeast(content.length / 38)
+                        val calculatedHeight = (lineCount * 36f + 70f).coerceIn(240f, 650f)
+                        activeState.textBoxes.add(
+                            TextBoxElement(
+                                x = maxOf(40f, screenCenterX),
+                                y = maxOf(80f, screenCenterY),
+                                width = 560f,
+                                height = calculatedHeight,
+                                text = content,
+                                fontSize = 24f,
+                                hasBackground = true,
+                                isSelected = false
+                            )
                         )
-                    )
-                    activeState.saveActivePageData()
-                    android.widget.Toast.makeText(context, "Materi AI berhasil ditempel ke catatan", android.widget.Toast.LENGTH_SHORT).show()
+                        activeState.saveActivePageData()
+                        android.widget.Toast.makeText(context, "Materi AI berhasil ditempel ke catatan", android.widget.Toast.LENGTH_SHORT).show()
+                    }
                 },
                 onSaveFlashcards = { cards ->
                     val deck = FlashcardDeckUi(
@@ -4052,6 +4169,7 @@ private fun UnifiedNoteTopBar(
     isAiAssistantOpen: Boolean = false,
     onToggleAiAssistant: () -> Unit = {},
     onTriggerCheatSheet: () -> Unit = {},
+    isDocMode: Boolean = false,
     hasAudioRecording: Boolean = false,
     isAudioBarOpen: Boolean = false,
     onToggleAudioBar: () -> Unit = {},
@@ -4110,26 +4228,28 @@ private fun UnifiedNoteTopBar(
             )
         }
 
-        // ── 2. CENTER: Single Unified NoteFloatingToolbar ──
-        NoteFloatingToolbar(
-            activeTool = activeTool,
-            onSelectTool = onSelectTool,
-            selectedShapeType = selectedShapeType,
-            onSelectShapeType = onSelectShapeType,
-            penColor = penColor,
-            onSelectPenColor = onSelectPenColor,
-            penThickness = penThickness,
-            onSelectPenThickness = onSelectPenThickness,
-            highlighterColor = highlighterColor,
-            onSelectHighlighterColor = onSelectHighlighterColor,
-            highlighterThickness = highlighterThickness,
-            onSelectHighlighterThickness = onSelectHighlighterThickness,
-            eraserRadius = AppSettingsManager.eraserRadius,
-            onSelectEraserRadius = { AppSettingsManager.updateEraserRadius(it) },
-            eraserMode = AppSettingsManager.eraserMode,
-            onSelectEraserMode = { AppSettingsManager.updateEraserMode(it) },
-            onPickImage = onPickImage
-        )
+        // ── 2. CENTER: Single Unified NoteFloatingToolbar (Hidden in Document Mode) ──
+        if (!isDocMode) {
+            NoteFloatingToolbar(
+                activeTool = activeTool,
+                onSelectTool = onSelectTool,
+                selectedShapeType = selectedShapeType,
+                onSelectShapeType = onSelectShapeType,
+                penColor = penColor,
+                onSelectPenColor = onSelectPenColor,
+                penThickness = penThickness,
+                onSelectPenThickness = onSelectPenThickness,
+                highlighterColor = highlighterColor,
+                onSelectHighlighterColor = onSelectHighlighterColor,
+                highlighterThickness = highlighterThickness,
+                onSelectHighlighterThickness = onSelectHighlighterThickness,
+                eraserRadius = AppSettingsManager.eraserRadius,
+                onSelectEraserRadius = { AppSettingsManager.updateEraserRadius(it) },
+                eraserMode = AppSettingsManager.eraserMode,
+                onSelectEraserMode = { AppSettingsManager.updateEraserMode(it) },
+                onPickImage = onPickImage
+            )
+        }
 
         if (!isLeftHanded) {
             NoteActionsCapsule(
@@ -4303,6 +4423,7 @@ private fun NoteTitleCapsule(
                         ) {
                             Text(
                                 text = when (leftCanvasType) {
+                                    NoteCanvasType.DOC_DOCUMENT -> "$leftSubject · Dokumen Teks (.doc)"
                                     NoteCanvasType.PDF_DOCUMENT -> "$leftSubject · PDF Document (Hal $leftCurrentPage/$leftTotalPages)"
                                     NoteCanvasType.PAGED_NOTE -> "$leftSubject · ${leftPaperStyle.displayName} (Hal $leftCurrentPage/$leftTotalPages)"
                                     NoteCanvasType.INFINITE_SCRATCHPAD -> "$leftSubject · Scratchpad Bebas"
@@ -5966,6 +6087,7 @@ private fun SplitNotePickerDialog(
                                         Box(contentAlignment = Alignment.Center) {
                                             Icon(
                                                 imageVector = when (item.canvasType) {
+                                                    NoteCanvasType.DOC_DOCUMENT -> Icons.Filled.Article
                                                     NoteCanvasType.PDF_DOCUMENT -> Icons.Filled.PictureAsPdf
                                                     NoteCanvasType.INFINITE_SCRATCHPAD -> Icons.Filled.Draw
                                                     NoteCanvasType.PAGED_NOTE -> Icons.Filled.Description
@@ -5987,6 +6109,7 @@ private fun SplitNotePickerDialog(
                                         )
                                         Text(
                                             text = "${item.subject} · ${when (item.canvasType) {
+                                                NoteCanvasType.DOC_DOCUMENT -> "Dokumen .doc"
                                                 NoteCanvasType.PDF_DOCUMENT -> "PDF"
                                                 NoteCanvasType.INFINITE_SCRATCHPAD -> "Scratchpad"
                                                 NoteCanvasType.PAGED_NOTE -> item.paperStyle.displayName
