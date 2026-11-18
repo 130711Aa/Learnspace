@@ -122,9 +122,8 @@ fun DraggableTextBox(
     val baseFontSize = with(density) { (worldFontSize / density.fontScale.coerceAtLeast(0.5f)).toSp() }
     val baseLineHeight = with(density) { ((worldFontSize * 1.44f) / density.fontScale.coerceAtLeast(0.5f)).toSp() }
     val baseTextPad = with(density) { 8f.toDp() }
-    val viewScrollState = rememberScrollState()
-    val editScrollState = rememberScrollState()
-    val isScrollable = viewScrollState.maxValue > 0
+    val textScrollState = rememberScrollState()
+    val isScrollable = textScrollState.maxValue > 0
     val resolvedTextColor = box.colorArgb?.let { Color(it) } ?: if (isDarkPaper) Color(0xFFF8FAFC) else LernspaceDark
     val resolvedWeight = if (box.isBold) FontWeight.Bold else FontWeight.Normal
     val resolvedStyle = if (box.isItalic) FontStyle.Italic else FontStyle.Normal
@@ -208,7 +207,7 @@ fun DraggableTextBox(
                             cursorBrush = SolidColor(selectionColor),
                             modifier = Modifier
                                 .fillMaxSize()
-                                .verticalScroll(editScrollState)
+                                .verticalScroll(textScrollState)
                                 .focusRequester(focusRequester)
                         )
                     } else {
@@ -217,7 +216,7 @@ fun DraggableTextBox(
                                 Column(
                                     modifier = Modifier
                                         .fillMaxSize()
-                                        .verticalScroll(viewScrollState)
+                                        .verticalScroll(textScrollState)
                                         .pointerInput(box.id) {
                                             detectTapGestures(onTap = { onSelect() })
                                         }
@@ -236,7 +235,7 @@ fun DraggableTextBox(
                                     )
                                 }
                                 if (isScrollable) {
-                                    val thumbAlpha = if (viewScrollState.value < viewScrollState.maxValue) 0.45f else 0.18f
+                                    val thumbAlpha = if (textScrollState.value < textScrollState.maxValue) 0.45f else 0.18f
                                     Box(
                                         modifier = Modifier
                                             .align(Alignment.CenterEnd)
@@ -258,8 +257,9 @@ fun DraggableTextBox(
                 }
             }
 
-            // When unselected: tapping anywhere selects; dragging anywhere moves immediately!
-            if (!box.isSelected) {
+            // When unselected and content doesn't overflow: tap selects or drag anywhere moves immediately.
+            // When scrollable (content overflows): no overlay blocks verticalScroll; tapping Column selects cleanly.
+            if (!box.isSelected && !isScrollable) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()

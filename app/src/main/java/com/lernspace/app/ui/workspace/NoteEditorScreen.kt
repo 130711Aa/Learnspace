@@ -1443,20 +1443,21 @@ fun NoteEditorScreen(
                     val screenCenterY = (-activeState.panY + 220f) / activeState.scale
                     activeState.deselectAll()
                     activeState.pushUndoSnapshot()
+                    val lineCount = content.lines().size.coerceAtLeast(content.length / 38)
+                    val calculatedHeight = (lineCount * 36f + 70f).coerceIn(240f, 650f)
                     activeState.textBoxes.add(
                         TextBoxElement(
                             x = maxOf(40f, screenCenterX),
                             y = maxOf(80f, screenCenterY),
-                            width = 540f,
-                            height = 220f,
+                            width = 560f,
+                            height = calculatedHeight,
                             text = content,
                             fontSize = 24f,
                             hasBackground = true,
-                            isSelected = true
+                            isSelected = false
                         )
                     )
                     activeState.saveActivePageData()
-                    AppSettingsManager.updateActiveTool(NoteTool.TEXT)
                     android.widget.Toast.makeText(context, "Materi AI berhasil ditempel ke catatan", android.widget.Toast.LENGTH_SHORT).show()
                 },
                 onSaveFlashcards = { cards ->
@@ -2011,11 +2012,11 @@ private fun NotePaneViewport(
                 .fillMaxSize()
                 .clipToBounds()
                 .onSizeChanged { viewportSize = it }
-                .pointerInput(state.note.id, isFingerDrawing) {
+                .pointerInput(state.note.id, isFingerDrawing, activeTool) {
                     awaitEachGesture {
                         val down = awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
 
-                        if (!isFingerDrawing) {
+                        if (!isFingerDrawing || activeTool == NoteTool.TEXT || activeTool == NoteTool.IMAGE) {
                             // ── MODE HANYA STYLUS (Palm Rejection Maksimal) ──
                             // 1 Jari = Geser (Pan), 2 Jari = Zoom & Pan, Stylus = Tulis
                             // Pengecualian: sentuhan 1 jari di atas TextBox/Gambar tetap diteruskan agar bisa dipindah pakai tangan!
