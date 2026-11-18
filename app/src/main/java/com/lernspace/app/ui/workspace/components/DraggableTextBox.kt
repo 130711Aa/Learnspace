@@ -107,13 +107,6 @@ fun DraggableTextBox(
     }
 
     val selectionColor = Color(0xFF2563EB) // MS Word Selection Blue
-    val sideMarginDp = 16.dp
-    val topMarginDp = 34.dp
-    val sideMarginPx = with(density) { sideMarginDp.toPx() }
-    val topMarginPx = with(density) { topMarginDp.toPx() }
-
-    val screenWidthDp = with(density) { (worldWidth * scale).toDp() }
-    val screenHeightDp = with(density) { (worldHeight * scale).toDp() }
     val worldWidthDp = with(density) { worldWidth.toDp() }
     val worldHeightDp = with(density) { worldHeight.toDp() }
     val worldFontSize = box.fontSize.coerceIn(12f, 120f)
@@ -133,20 +126,18 @@ fun DraggableTextBox(
         TextBoxAlign.RIGHT -> TextAlign.End
     }
 
-    Box(modifier = modifier) {
-        // Main TextBox Surface laid out in fixed world dimensions and transformed on GPU via graphicsLayer.
-        Box(
-            modifier = Modifier
-                .graphicsLayer {
-                    transformOrigin = TransformOrigin(0f, 0f)
-                    scaleX = scale
-                    scaleY = scale
-                    translationX = worldX * scale + panXProvider()
-                    translationY = worldY * scale + panYProvider()
-                }
-                .width(worldWidthDp)
-                .height(worldHeightDp)
-        ) {
+    Box(
+        modifier = modifier
+            .wrapContentSize(Alignment.TopStart, unbounded = true)
+            .graphicsLayer {
+                transformOrigin = TransformOrigin(0f, 0f)
+                scaleX = scale
+                scaleY = scale
+                translationX = worldX * scale + panXProvider()
+                translationY = worldY * scale + panYProvider()
+            }
+            .requiredSize(width = worldWidthDp, height = worldHeightDp)
+    ) {
             val boxBgColor = when {
                 box.isSelected -> if (isDarkPaper) Color(0xFF1E293B).copy(alpha = 0.95f) else Color.White.copy(alpha = 0.95f)
                 box.hasBackground -> if (isDarkPaper) Color(0xFF1E293B).copy(alpha = 0.88f) else Color(0xFFF8FAFC).copy(alpha = 0.94f)
@@ -291,189 +282,176 @@ fun DraggableTextBox(
                         }
                 )
             }
-        }
 
-        // Floating Small Controls & Edge Resize Handles (Shown only when selected, kept at constant screen size)
-        if (box.isSelected) {
-            Box(
-                modifier = Modifier
-                    .offset {
-                        val screenX = worldX * scale + panXProvider() - sideMarginPx
-                        val screenY = worldY * scale + panYProvider() - topMarginPx
-                        IntOffset(screenX.roundToInt(), screenY.roundToInt())
-                    }
-                    .width(screenWidthDp + sideMarginDp * 2)
-                    .height(screenHeightDp + topMarginDp + sideMarginDp)
-            ) {
-            // Left Border Drag Zone (drag along the left border edge to move)
-            Box(
-                modifier = Modifier
-                    .padding(start = sideMarginDp, top = topMarginDp)
-                    .align(Alignment.TopStart)
-                    .width(14.dp)
-                    .height(screenHeightDp)
-                    .pointerInput(box.id, scale) {
-                        detectDragGestures(
-                            onDragEnd = { onCommitMove(worldX, worldY) },
-                            onDragCancel = { onCommitMove(worldX, worldY) },
-                            onDrag = { change, dragAmount ->
-                                change.consume()
-                                worldX += dragAmount.x / scale
-                                worldY += dragAmount.y / scale
-                            }
-                        )
-                    }
-            )
-
-            // Top Header Bar Drag Zone (covers entire top header area except the delete button)
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(start = sideMarginDp, end = 42.dp)
-                    .fillMaxWidth()
-                    .height(topMarginDp)
-                    .pointerInput(box.id, scale) {
-                        detectDragGestures(
-                            onDragEnd = { onCommitMove(worldX, worldY) },
-                            onDragCancel = { onCommitMove(worldX, worldY) },
-                            onDrag = { change, dragAmount ->
-                                change.consume()
-                                worldX += dragAmount.x / scale
-                                worldY += dragAmount.y / scale
-                            }
-                        )
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                // Word-style circular Drag Button visual indicator centered neatly ABOVE the top border
+            // Controls & Edge Resize Handles (Shown only when selected, strictly attached to this card)
+            if (box.isSelected) {
+                // Drag Button centered above top border
                 Box(
                     modifier = Modifier
-                        .size(22.dp)
-                        .shadow(2.dp, CircleShape)
-                        .clip(CircleShape)
-                        .background(Color.White)
-                        .border(1.5.dp, selectionColor, CircleShape),
+                        .align(Alignment.TopCenter)
+                        .offset(y = (-18).dp)
+                        .size(56.dp, 36.dp)
+                        .pointerInput(box.id) {
+                            detectDragGestures(
+                                onDragEnd = { onCommitMove(worldX, worldY) },
+                                onDragCancel = { onCommitMove(worldX, worldY) },
+                                onDrag = { change, dragAmount ->
+                                    change.consume()
+                                    worldX += dragAmount.x
+                                    worldY += dragAmount.y
+                                }
+                            )
+                        },
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Filled.OpenWith,
-                        contentDescription = "Geser TextBox",
-                        tint = selectionColor,
-                        modifier = Modifier.size(13.dp)
+                    Box(
+                        modifier = Modifier
+                            .size(22.dp)
+                            .shadow(2.dp, CircleShape)
+                            .clip(CircleShape)
+                            .background(Color.White)
+                            .border(1.5.dp, selectionColor, CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.OpenWith,
+                            contentDescription = "Geser TextBox",
+                            tint = selectionColor,
+                            modifier = Modifier.size(13.dp)
+                        )
+                    }
+                }
+
+                // Left Border Drag Zone (drag along the left border edge to move)
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .width(14.dp)
+                        .fillMaxHeight()
+                        .pointerInput(box.id) {
+                            detectDragGestures(
+                                onDragEnd = { onCommitMove(worldX, worldY) },
+                                onDragCancel = { onCommitMove(worldX, worldY) },
+                                onDrag = { change, dragAmount ->
+                                    change.consume()
+                                    worldX += dragAmount.x
+                                    worldY += dragAmount.y
+                                }
+                            )
+                        }
+                )
+
+                // Small Top-Right Delete Circle
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .offset(x = 10.dp, y = (-12).dp)
+                        .size(36.dp, 36.dp)
+                        .clickable { onDelete() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(22.dp)
+                            .shadow(2.dp, CircleShape)
+                            .clip(CircleShape)
+                            .background(Color(0xFFEF4444))
+                            .border(1.5.dp, Color.White, CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Delete",
+                            tint = Color.White,
+                            modifier = Modifier.size(12.dp)
+                        )
+                    }
+                }
+
+                // Right-Edge Horizontal Resize Handle
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .offset(x = 10.dp)
+                        .size(32.dp, 48.dp)
+                        .pointerInput(box.id) {
+                            detectDragGestures(
+                                onDragEnd = { onCommitResize(worldWidth, worldHeight) },
+                                onDragCancel = { onCommitResize(worldWidth, worldHeight) },
+                                onDrag = { change, dragAmount ->
+                                    change.consume()
+                                    worldWidth = maxOf(120f, worldWidth + dragAmount.x)
+                                }
+                            )
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(width = 8.dp, height = 24.dp)
+                            .shadow(2.dp, RoundedCornerShape(4.dp))
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color.White)
+                            .border(1.5.dp, selectionColor, RoundedCornerShape(4.dp))
+                    )
+                }
+
+                // Bottom-Edge Vertical Resize Handle
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .offset(y = 10.dp)
+                        .size(48.dp, 32.dp)
+                        .pointerInput(box.id) {
+                            detectDragGestures(
+                                onDragEnd = { onCommitResize(worldWidth, worldHeight) },
+                                onDragCancel = { onCommitResize(worldWidth, worldHeight) },
+                                onDrag = { change, dragAmount ->
+                                    change.consume()
+                                    worldHeight = maxOf(64f, worldHeight + dragAmount.y)
+                                }
+                            )
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(width = 24.dp, height = 8.dp)
+                            .shadow(2.dp, RoundedCornerShape(4.dp))
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color.White)
+                            .border(1.5.dp, selectionColor, RoundedCornerShape(4.dp))
+                    )
+                }
+
+                // Bottom-Right Corner Resize Handle (Bulatan Resize)
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .offset(x = 12.dp, y = 12.dp)
+                        .size(40.dp)
+                        .pointerInput(box.id) {
+                            detectDragGestures(
+                                onDragEnd = { onCommitResize(worldWidth, worldHeight) },
+                                onDragCancel = { onCommitResize(worldWidth, worldHeight) },
+                                onDrag = { change, dragAmount ->
+                                    change.consume()
+                                    worldWidth = maxOf(120f, worldWidth + dragAmount.x)
+                                    worldHeight = maxOf(64f, worldHeight + dragAmount.y)
+                                }
+                            )
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(18.dp)
+                            .shadow(3.dp, CircleShape)
+                            .clip(CircleShape)
+                            .background(Color.White)
+                            .border(2.5.dp, selectionColor, CircleShape)
                     )
                 }
             }
-
-            // Small Top-Right Delete Circle with generous 36x32dp tap target
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(end = 2.dp)
-                    .size(width = 36.dp, height = 32.dp)
-                    .clickable { onDelete() },
-                contentAlignment = Alignment.Center
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(20.dp)
-                        .shadow(2.dp, CircleShape)
-                        .clip(CircleShape)
-                        .background(Color(0xFFEF4444))
-                        .border(1.2.dp, Color.White, CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Close,
-                        contentDescription = "Delete",
-                        tint = Color.White,
-                        modifier = Modifier.size(11.dp)
-                    )
-                }
-            }
-
-            // Right-Edge Horizontal Resize Handle
-            Box(
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .padding(top = topMarginDp / 2f)
-                    .size(width = 32.dp, height = 48.dp)
-                    .pointerInput(box.id, scale) {
-                        detectDragGestures(
-                            onDragEnd = { onCommitResize(worldWidth, worldHeight) },
-                            onDragCancel = { onCommitResize(worldWidth, worldHeight) },
-                            onDrag = { change, dragAmount ->
-                                change.consume()
-                                worldWidth = maxOf(120f, worldWidth + dragAmount.x / scale)
-                            }
-                        )
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(width = 8.dp, height = 24.dp)
-                        .shadow(2.dp, RoundedCornerShape(4.dp))
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(Color.White)
-                        .border(1.5.dp, selectionColor, RoundedCornerShape(4.dp))
-                )
-            }
-
-            // Bottom-Edge Vertical Resize Handle
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .size(width = 48.dp, height = 32.dp)
-                    .pointerInput(box.id, scale) {
-                        detectDragGestures(
-                            onDragEnd = { onCommitResize(worldWidth, worldHeight) },
-                            onDragCancel = { onCommitResize(worldWidth, worldHeight) },
-                            onDrag = { change, dragAmount ->
-                                change.consume()
-                                worldHeight = maxOf(64f, worldHeight + dragAmount.y / scale)
-                            }
-                        )
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(width = 24.dp, height = 8.dp)
-                        .shadow(2.dp, RoundedCornerShape(4.dp))
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(Color.White)
-                        .border(1.5.dp, selectionColor, RoundedCornerShape(4.dp))
-                )
-            }
-
-            // Bottom-Right Corner Resize Handle
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .size(34.dp)
-                    .pointerInput(box.id, scale) {
-                        detectDragGestures(
-                            onDragEnd = { onCommitResize(worldWidth, worldHeight) },
-                            onDragCancel = { onCommitResize(worldWidth, worldHeight) },
-                            onDrag = { change, dragAmount ->
-                                change.consume()
-                                worldWidth = maxOf(120f, worldWidth + dragAmount.x / scale)
-                                worldHeight = maxOf(64f, worldHeight + dragAmount.y / scale)
-                            }
-                        )
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(16.dp)
-                        .shadow(3.dp, CircleShape)
-                        .clip(CircleShape)
-                        .background(Color.White)
-                        .border(2.5.dp, selectionColor, CircleShape)
-                )
-            }
-            }
         }
-    }
 }
