@@ -258,9 +258,8 @@ fun DraggableTextBox(
                 }
             }
 
-            // When unselected and content doesn't overflow: tap selects or drag anywhere moves immediately.
-            // When scrollable (content overflows): no overlay blocks verticalScroll; tapping Column selects cleanly.
-            if (!box.isSelected && !isScrollable) {
+            // When unselected: tapping anywhere selects; dragging anywhere moves immediately!
+            if (!box.isSelected) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -326,12 +325,13 @@ fun DraggableTextBox(
                     }
             )
 
-            // Small Word-style circular Drag Button centered neatly ABOVE the top border
-            // Visual circle stays tiny (22.dp) with clean gap above border, while touch target is generous (56x34.dp)!
+            // Top Header Bar Drag Zone (covers entire top header area except the delete button)
             Box(
                 modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .size(width = 56.dp, height = 34.dp)
+                    .align(Alignment.TopStart)
+                    .padding(start = sideMarginDp, end = 42.dp)
+                    .fillMaxWidth()
+                    .height(topMarginDp)
                     .pointerInput(box.id, scale) {
                         detectDragGestures(
                             onDragEnd = { onCommitMove(worldX, worldY) },
@@ -345,6 +345,7 @@ fun DraggableTextBox(
                     },
                 contentAlignment = Alignment.Center
             ) {
+                // Word-style circular Drag Button visual indicator centered neatly ABOVE the top border
                 Box(
                     modifier = Modifier
                         .size(22.dp)

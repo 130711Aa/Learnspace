@@ -1448,7 +1448,7 @@ fun NoteEditorScreen(
                             x = maxOf(40f, screenCenterX),
                             y = maxOf(80f, screenCenterY),
                             width = 540f,
-                            height = 190f,
+                            height = 220f,
                             text = content,
                             fontSize = 24f,
                             hasBackground = true,
@@ -1456,6 +1456,7 @@ fun NoteEditorScreen(
                         )
                     )
                     activeState.saveActivePageData()
+                    AppSettingsManager.updateActiveTool(NoteTool.TEXT)
                     android.widget.Toast.makeText(context, "Materi AI berhasil ditempel ke catatan", android.widget.Toast.LENGTH_SHORT).show()
                 },
                 onSaveFlashcards = { cards ->
@@ -2300,7 +2301,7 @@ private fun NotePaneViewport(
                                 state.saveActivePageData()
                             },
                             isSelectionEnabled = activeTool == NoteTool.IMAGE,
-                            modifier = Modifier.zIndex(if (img.isSelected) 5f else 0f)
+                            modifier = Modifier.zIndex(if (img.isSelected) 5f else if (activeTool == NoteTool.IMAGE) 2f else 0f)
                         )
                     }
                 }
@@ -2519,12 +2520,14 @@ private fun NotePaneViewport(
                             if (index < state.textBoxes.size) {
                                 state.textBoxes[index] = state.textBoxes[index].copy(isSelected = true)
                             }
+                            AppSettingsManager.updateActiveTool(NoteTool.TEXT)
                         },
                         onDelete = {
                             state.pushUndoSnapshot()
                             state.textBoxes.remove(boxElement)
                             state.saveActivePageData()
-                        }
+                        },
+                        modifier = Modifier.zIndex(if (boxElement.isSelected) 10f else 3f)
                     )
                 }
             }
