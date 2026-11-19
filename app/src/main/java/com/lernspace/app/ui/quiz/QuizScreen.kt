@@ -637,18 +637,26 @@ fun QuizScreen() {
                                         return@launch
                                     }
 
-                                    generationStatusText = "Merangkai soal kuis AI..."
+                                    generationStatusText = "Mengecek taksonomi database & merangkai kuis AI..."
+                                    val existingTaxonomies = SupabaseBankSoalClient.fetchExistingTaxonomies()
                                     val res = GeminiApiClient.generateQuizQuestions(
                                         sourceText = finalText,
                                         topicTitle = effectiveTopicTitle,
-                                        maxQuestions = questionCount
+                                        maxQuestions = questionCount,
+                                        existingTaxonomy = existingTaxonomies
                                     )
                                     res.onSuccess { quizResult ->
+                                        val (normSubj, normTopic, normSubtopic) = SupabaseBankSoalClient.normalizeTaxonomy(
+                                            rawSubject = quizResult.canonicalSubject,
+                                            rawTopic = quizResult.canonicalTopic,
+                                            rawSubtopic = quizResult.canonicalSubtopic
+                                        )
+
                                         quizQuestions = quizResult.questions
-                                        detectedCanonicalSubject = quizResult.canonicalSubject
-                                        detectedCanonicalTopic = quizResult.canonicalTopic
-                                        detectedCanonicalSubtopic = quizResult.canonicalSubtopic
-                                        activeQuizTitle = "${quizResult.canonicalSubject} • ${quizResult.canonicalTopic}"
+                                        detectedCanonicalSubject = normSubj
+                                        detectedCanonicalTopic = normTopic
+                                        detectedCanonicalSubtopic = normSubtopic
+                                        activeQuizTitle = "$normSubj • $normTopic"
                                         currentIndex = 0
                                         selectedOptionIdx = null
                                         correctCount = 0
@@ -659,15 +667,15 @@ fun QuizScreen() {
                                             coroutineScope.launch {
                                                 val upRes = SupabaseBankSoalClient.uploadGeneratedQuestions(
                                                     questions = quizResult.questions,
-                                                    subjectName = quizResult.canonicalSubject,
-                                                    topicTitle = quizResult.canonicalTopic,
-                                                    subtopicTitle = quizResult.canonicalSubtopic,
+                                                    subjectName = normSubj,
+                                                    topicTitle = normTopic,
+                                                    subtopicTitle = normSubtopic,
                                                     difficulty = quizResult.difficulty
                                                 )
                                                 upRes.onSuccess { count ->
                                                     isUploadingToBankSoal = false
                                                     uploadSuccess = true
-                                                    uploadStatusText = "Tersimpan ke Bank Soal: ${quizResult.canonicalSubject} › ${quizResult.canonicalTopic} ($count soal)"
+                                                    uploadStatusText = "Tersimpan ke Bank Soal: $normSubj › $normTopic › $normSubtopic ($count soal)"
                                                 }.onFailure { upErr ->
                                                     isUploadingToBankSoal = false
                                                     uploadSuccess = false

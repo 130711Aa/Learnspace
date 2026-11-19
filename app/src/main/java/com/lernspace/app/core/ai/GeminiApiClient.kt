@@ -128,7 +128,8 @@ object GeminiApiClient {
     suspend fun generateQuizQuestions(
         sourceText: String,
         topicTitle: String,
-        maxQuestions: Int
+        maxQuestions: Int,
+        existingTaxonomy: List<String> = emptyList()
     ): Result<GeneratedQuizResult> = withContext(Dispatchers.IO) {
         if (apiKey.isBlank()) {
             return@withContext Result.failure(IllegalStateException("Gemini API Key belum diatur."))
@@ -139,6 +140,19 @@ object GeminiApiClient {
             return@withContext Result.failure(IllegalArgumentException("Teks materi terlalu pendek untuk dijadikan kuis."))
         }
 
+        val taxonomyContext = if (existingTaxonomy.isNotEmpty()) {
+            """
+            
+            DAFTAR TAKSONOMI RESMI DI DATABASE SAAT INI (Gunakan Sebagai Rujukan Utama):
+            ${existingTaxonomy.take(50).joinToString("\n") { "- $it" }}
+            
+            ATURAN KONSISTENSI TAKSONOMI (MUTLAK):
+            - Jika konsep atau materi ini cocok dengan salah satu Subtopic yang ada di atas, KAMU WAJIB MENGGUNAKAN PERSIS nama 'canonicalSubject', 'canonicalTopic', dan 'canonicalSubtopic' dari daftar tersebut.
+            - DILARANG MEMBUAT SINONIM, VARIASI KATA, SINGKATAN, ATAU TYPO (contoh: JANGAN buat "Sel Volta dan Elektrolisis" jika di database sudah terdaftar "Sel Volta dan Sel Elektrolisis").
+            - HANYA JIKA materi benar-benar baru dan belum tercakup pada daftar di atas, kamu boleh membuat nama baru yang baku, rapi, dan Title Case.
+            """.trimIndent()
+        } else ""
+
         val systemPrompt = """
             Kamu adalah AI pembuat kuis sekaligus Kurator Taksonomi Akademik Bahasa Indonesia.
             TUGAS UTAMA:
@@ -147,6 +161,7 @@ object GeminiApiClient {
                - canonicalTopic: Bab / Materi Pokok baku resmi (contoh: "Turunan & Aturan Rantai", "Hukum Gerak Newton", "Struktur Data Tree", "Stoikiometri Larutan", dll).
                - canonicalSubtopic: Sub-bab spesifik dari materi ini (contoh: "Aturan Rantai Fungsi Trigonometri", "Hukum II Newton & Gaya Gesek", "Binary Tree Depth", dll).
                - difficulty: "EASY", "MEDIUM", atau "HARD" sesuai tingkat kedalaman soal.
+            $taxonomyContext
             2. Buat TEPAT $maxQuestions soal pilihan ganda (4 opsi: index 0..3) yang menguji pemahaman konsep HANYA berdasarkan materi yang diberikan.
                Gunakan LaTeX standar (${'$'}...${'$'}) jika ada rumus matematika atau simbol sains.
             3. Balas dalam JSON valid sesuai format skema yang diminta.

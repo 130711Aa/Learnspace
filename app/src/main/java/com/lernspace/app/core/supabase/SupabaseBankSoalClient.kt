@@ -264,7 +264,7 @@ object SupabaseBankSoalClient {
         }
     }
 
-    private fun loadQuestionsFromCache(): List<BankQuestion> {
+    fun loadQuestionsFromCache(): List<BankQuestion> {
         val ctx = appContext ?: return emptyList()
         return try {
             val cacheFile = File(ctx.filesDir, CACHE_FILE_NAME)
@@ -276,6 +276,171 @@ object SupabaseBankSoalClient {
             Log.e(TAG, "loadQuestionsFromCache error: ${e.message}")
             emptyList()
         }
+    }
+
+    /**
+     * Fetches distinct academic taxonomies (Subject > Topic > Subtopic) currently in Supabase or local cache.
+     * Used as grounding reference for Gemini to prevent duplicate or divergent concept labels.
+     */
+    suspend fun fetchExistingTaxonomies(): List<String> = withContext(Dispatchers.IO) {
+        val results = linkedSetOf<String>()
+        try {
+            val urlString = "$SUPABASE_URL/rest/v1/questions?select=subject_name,topic_title,subtopic_title&limit=300"
+            val url = URL(urlString)
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                setRequestProperty("apikey", SUPABASE_ANON_KEY)
+                setRequestProperty("Authorization", "Bearer $SUPABASE_ANON_KEY")
+                setRequestProperty("Accept", "application/json")
+                connectTimeout = 6000
+                readTimeout = 8000
+            }
+            if (conn.responseCode in 200..299) {
+                val body = conn.inputStream.bufferedReader().use { it.readText() }
+                val arr = JSONArray(body)
+                for (i in 0 until arr.length()) {
+                    val obj = arr.getJSONObject(i)
+                    val s = obj.optString("subject_name", "").trim()
+                    val t = obj.optString("topic_title", "").trim()
+                    val sub = obj.optString("subtopic_title", "").trim()
+                    if (s.isNotBlank() && t.isNotBlank()) {
+                        if (sub.isNotBlank()) {
+                            results.add("$s > $t > $sub")
+                        } else {
+                            results.add("$s > $t")
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "fetchExistingTaxonomies network error: ${e.message}")
+        }
+
+        // Fallback to local cache if offline or network returned empty
+        if (results.isEmpty()) {
+            val cached = loadQuestionsFromCache()
+            for (q in cached) {
+                val s = q.subjectName.trim()
+                val t = q.topicTitle.trim()
+                val sub = q.subtopicTitle?.trim().orEmpty()
+                if (s.isNotBlank() && t.isNotBlank()) {
+                    if (sub.isNotBlank()) results.add("$s > $t > $sub") else results.add("$s > $t")
+                }
+            }
+        }
+        results.toList()
+    }
+
+    /**
+     * Normalizes Subject, Topic, and Subtopic names against existing questions in database or cache.
+     * Uses fuzzy token overlap and Levenshtein similarity to snap typos, slight synonyms, or
+     * missing words (e.g. "Sel Volta dan Elektrolisi" -> "Sel Volta dan Sel Elektrolisis").
+     */
+    fun normalizeTaxonomy(
+        rawSubject: String,
+        rawTopic: String,
+        rawSubtopic: String,
+        referenceQuestions: List<BankQuestion> = loadQuestionsFromCache()
+    ): Triple<String, String, String> {
+        var finalSubject = rawSubject.trim()
+        var finalTopic = rawTopic.trim()
+        var finalSubtopic = rawSubtopic.trim()
+
+        if (referenceQuestions.isEmpty()) {
+            return Triple(finalSubject, finalTopic, finalSubtopic)
+        }
+
+        // 1. Normalize Subject
+        val existingSubjects = referenceQuestions.map { it.subjectName.trim() }.filter { it.isNotBlank() }.distinct()
+        findCloseMatch(finalSubject, existingSubjects)?.let { finalSubject = it }
+
+        // 2. Normalize Topic within matching Subject
+        val subjectQuestions = referenceQuestions.filter { it.subjectName.equals(finalSubject, ignoreCase = true) }
+        val candidateTopics = if (subjectQuestions.isNotEmpty()) {
+            subjectQuestions.map { it.topicTitle.trim() }.filter { it.isNotBlank() }.distinct()
+        } else {
+            referenceQuestions.map { it.topicTitle.trim() }.filter { it.isNotBlank() }.distinct()
+        }
+        findCloseMatch(finalTopic, candidateTopics)?.let { finalTopic = it }
+
+        // 3. Normalize Subtopic within matching Subject & Topic
+        if (finalSubtopic.isNotBlank()) {
+            val topicQuestions = subjectQuestions.filter { it.topicTitle.equals(finalTopic, ignoreCase = true) }
+            val candidateSubtopics = if (topicQuestions.isNotEmpty()) {
+                topicQuestions.mapNotNull { it.subtopicTitle?.trim() }.filter { it.isNotBlank() }.distinct()
+            } else {
+                referenceQuestions.mapNotNull { it.subtopicTitle?.trim() }.filter { it.isNotBlank() }.distinct()
+            }
+            findCloseMatch(finalSubtopic, candidateSubtopics)?.let { finalSubtopic = it }
+        }
+
+        return Triple(finalSubject, finalTopic, finalSubtopic)
+    }
+
+    private fun findCloseMatch(target: String, candidates: List<String>): String? {
+        if (target.isBlank() || candidates.isEmpty()) return null
+
+        // Exact match case-insensitive
+        candidates.firstOrNull { it.equals(target, ignoreCase = true) }?.let { return it }
+
+        val targetTokens = tokenize(target)
+        if (targetTokens.isEmpty()) return null
+
+        var bestMatch: String? = null
+        var highestScore = 0.0
+
+        for (cand in candidates) {
+            val candTokens = tokenize(cand)
+            if (candTokens.isEmpty()) continue
+
+            // Token overlap (stem/prefix matching of 4+ chars)
+            val matchedTokens = targetTokens.count { t ->
+                candTokens.any { c ->
+                    t == c || (t.length >= 4 && c.length >= 4 && (t.startsWith(c.take(4)) || c.startsWith(t.take(4))))
+                }
+            }
+            val unionCount = (targetTokens + candTokens).distinct().size
+            val jaccard = if (unionCount > 0) matchedTokens.toDouble() / unionCount else 0.0
+
+            val dist = levenshteinDistance(target.lowercase(), cand.lowercase())
+            val maxLen = maxOf(target.length, cand.length)
+            val levSim = if (maxLen > 0) 1.0 - (dist.toDouble() / maxLen) else 0.0
+
+            val combined = maxOf(jaccard, levSim)
+            if (combined > highestScore) {
+                highestScore = combined
+                bestMatch = cand
+            }
+        }
+
+        // If >= 65% match, consider it a variation/typo of the existing canonical taxonomy
+        return if (highestScore >= 0.65) bestMatch else null
+    }
+
+    private fun tokenize(text: String): Set<String> {
+        val stopWords = setOf("dan", "di", "ke", "dari", "yang", "pada", "untuk", "dengan", "atau", "tentang")
+        return text.lowercase()
+            .replace(Regex("[^a-z0-9\\s]"), " ")
+            .split(Regex("\\s+"))
+            .filter { it.length > 1 && it !in stopWords }
+            .toSet()
+    }
+
+    private fun levenshteinDistance(s1: String, s2: String): Int {
+        val dp = Array(s1.length + 1) { IntArray(s2.length + 1) }
+        for (i in 0..s1.length) dp[i][0] = i
+        for (j in 0..s2.length) dp[0][j] = j
+        for (i in 1..s1.length) {
+            for (j in 1..s2.length) {
+                val cost = if (s1[i - 1] == s2[j - 1]) 0 else 1
+                dp[i][j] = minOf(
+                    dp[i - 1][j] + 1,
+                    dp[i][j - 1] + 1,
+                    dp[i - 1][j - 1] + cost
+                )
+            }
+        }
+        return dp[s1.length][s2.length]
     }
 
     /**
@@ -292,6 +457,13 @@ object SupabaseBankSoalClient {
     ): Result<Int> = withContext(Dispatchers.IO) {
         if (questions.isEmpty()) return@withContext Result.success(0)
 
+        // Automatically normalize taxonomy against existing database rows before inserting
+        val (normSubject, normTopic, normSubtopic) = normalizeTaxonomy(
+            rawSubject = subjectName,
+            rawTopic = topicTitle,
+            rawSubtopic = subtopicTitle
+        )
+
         try {
             var uploadedCount = 0
 
@@ -302,17 +474,17 @@ object SupabaseBankSoalClient {
                 val questionJson = JSONObject().apply {
                     put("id", questionId)
                     if (!subjectCode.isNullOrBlank()) put("subject_code", subjectCode)
-                    put("subject_name", subjectName.ifBlank { "Umum" })
-                    put("topic_title", topicTitle.ifBlank { "Materi Umum" })
-                    put("subtopic_title", subtopicTitle.ifBlank { "Latihan Mandiri" })
+                    put("subject_name", normSubject.ifBlank { "Umum" })
+                    put("topic_title", normTopic.ifBlank { "Materi Umum" })
+                    put("subtopic_title", normSubtopic.ifBlank { "Latihan Mandiri" })
                     put("question_text", q.question)
                     put("question_type", "MULTIPLE_CHOICE")
                     put("difficulty", difficulty)
                     put("explanation", q.explanation)
                     put("tags", JSONArray().apply {
-                        put(subjectName.ifBlank { "Umum" })
-                        put(topicTitle.ifBlank { "Materi" })
-                        if (subtopicTitle.isNotBlank()) put(subtopicTitle)
+                        put(normSubject.ifBlank { "Umum" })
+                        put(normTopic.ifBlank { "Materi" })
+                        if (normSubtopic.isNotBlank()) put(normSubtopic)
                     })
                 }
 

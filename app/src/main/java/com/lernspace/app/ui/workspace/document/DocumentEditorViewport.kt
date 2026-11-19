@@ -1715,11 +1715,46 @@ function getCleanHtml() {
   for (var p = 0; p < parked.length; p++) {
     parked[p].parentNode.removeChild(parked[p]);
   }
+  var isBlankElem = function(el) {
+    if (!el) return false;
+    if (el.tagName !== 'P' && el.tagName !== 'DIV') return false;
+    if (el.classList.contains('doc-page-break')) return false;
+    if (el.querySelector('img, table, iframe')) return false;
+    return !(el.textContent || '').replace(/\u200B/g, '').trim();
+  };
+
   var pushed = clone.querySelectorAll('[data-page-push]');
   for (var k = 0; k < pushed.length; k++) {
     pushed[k].style.marginTop = pushed[k].dataset.spaceBefore ? (pushed[k].dataset.spaceBefore + 'px') : '';
     pushed[k].removeAttribute('data-page-push');
     if (!pushed[k].getAttribute('style')) pushed[k].removeAttribute('style');
+  }
+
+  // Collapse excessive consecutive blank paragraphs (e.g. repeated Enters typed to reach next page)
+  var rootChildren = Array.prototype.slice.call(clone.children);
+  var blankStreak = [];
+  for (var ci = 0; ci < rootChildren.length; ci++) {
+    var cNode = rootChildren[ci];
+    if (isBlankElem(cNode)) {
+      blankStreak.push(cNode);
+    } else {
+      if (blankStreak.length >= 4) {
+        var pb = document.createElement('div');
+        pb.className = 'doc-page-break';
+        cNode.parentNode.insertBefore(pb, cNode);
+        for (var bi = 0; bi < blankStreak.length; bi++) {
+          if (blankStreak[bi].parentNode) {
+            blankStreak[bi].parentNode.removeChild(blankStreak[bi]);
+          }
+        }
+      }
+      blankStreak = [];
+    }
+  }
+
+  var pbs = clone.querySelectorAll('.doc-page-break');
+  for (var b = 0; b < pbs.length; b++) {
+    pbs[b].innerHTML = '';
   }
   var anchors = clone.querySelectorAll('[data-typing-anchor]');
   for (var a = 0; a < anchors.length; a++) {
@@ -1735,6 +1770,14 @@ function getCleanHtml() {
     if (!bqs[j].textContent.trim() && !bqs[j].querySelector('img, table')) {
       bqs[j].parentNode.removeChild(bqs[j]);
     }
+  }
+  // Trim excessive trailing empty paragraphs so they don't pollute saved HTML or exports
+  while (clone.lastElementChild &&
+         (clone.lastElementChild.tagName === 'P' || clone.lastElementChild.tagName === 'DIV') &&
+         !clone.lastElementChild.classList.contains('doc-page-break') &&
+         !clone.lastElementChild.querySelector('img, table, iframe') &&
+         !(clone.lastElementChild.textContent || '').replace(/\u200B/g, '').trim()) {
+    clone.removeChild(clone.lastElementChild);
   }
   return clone.innerHTML.replace(/\u200B/g, '');
 }
@@ -2680,6 +2723,14 @@ function applyDarkTheme(dark) {
 }
 
 editor.addEventListener('keydown', function(e) {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    e.preventDefault();
+    insertPageBreak();
+    paginateDocument();
+    notifyChange();
+    scheduleScrollIntoView();
+    return;
+  }
   if (e.key === 'Tab') {
     e.preventDefault();
     var selTab = window.getSelection();
@@ -2830,6 +2881,8 @@ fun DocumentEditorViewport(
     onTriggerCheatSheet: () -> Unit = {},
     onTriggerSummary: () -> Unit = {},
     onExportPdf: () -> Unit = {},
+    onOpenGraph: () -> Unit = {},
+    onRegisterInsertImage: (((Bitmap) -> Unit) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -2891,6 +2944,26 @@ fun DocumentEditorViewport(
 
     fun js(script: String) {
         webViewRef?.evaluateJavascript(script, null)
+    }
+
+    DisposableEffect(Unit) {
+        val handler: (Bitmap) -> Unit = { bitmap ->
+            scope.launch {
+                val dataUri = withContext(Dispatchers.IO) {
+                    val stream = ByteArrayOutputStream()
+                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+                    val base64 = Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
+                    "data:image/png;base64,$base64"
+                }
+                val quoted = JSONObject.quote(dataUri)
+                js("insertImage($quoted);")
+                Toast.makeText(context, "Grafik kartesius disisipkan ke dokumen", Toast.LENGTH_SHORT).show()
+            }
+        }
+        onRegisterInsertImage?.invoke(handler)
+        onDispose {
+            onRegisterInsertImage?.invoke { }
+        }
     }
 
     fun applyAndPersistPageSetup(newSetup: DocPageSetup) {
@@ -3441,6 +3514,11 @@ fun DocumentEditorViewport(
                             leadingIcon = { Icon(Icons.Filled.Functions, null, Modifier.size(18.dp), tint = Color(0xFF7C3AED)) },
                             text = { Text("Rumus Matematika", fontSize = 13.sp) },
                             onClick = { showInsertDropdown = false; showMathDialog = true }
+                        )
+                        DropdownMenuItem(
+                            leadingIcon = { Icon(Icons.Filled.ShowChart, null, Modifier.size(18.dp), tint = Color(0xFF0284C7)) },
+                            text = { Text("Grafik Kartesius", fontSize = 13.sp) },
+                            onClick = { showInsertDropdown = false; onOpenGraph() }
                         )
                         HorizontalDivider()
                         DropdownMenuItem(

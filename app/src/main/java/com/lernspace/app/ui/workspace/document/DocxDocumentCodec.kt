@@ -883,28 +883,61 @@ $bodyHtml
             return id
         }
 
-        fun registerDataUriImage(dataUri: String, styleAttr: String): ExportImage? {
-            if (!dataUri.startsWith("data:image/")) return null
-            val comma = dataUri.indexOf(',')
-            if (comma < 0) return null
-            val header = dataUri.substring(5, comma)
-            val isPng = header.contains("png", ignoreCase = true)
-            val bytes = try { Base64.decode(dataUri.substring(comma + 1), Base64.DEFAULT) } catch (_: Exception) { return null }
+        fun registerImage(src: String, styleAttr: String): ExportImage? {
+            if (src.isBlank()) return null
+            var bytes: ByteArray? = null
+            var isPng = false
+            var isWebp = false
+            var isGif = false
+
+            if (src.startsWith("data:image/")) {
+                val comma = src.indexOf(',')
+                if (comma < 0) return null
+                val header = src.substring(5, comma).lowercase(Locale.ROOT)
+                isPng = header.contains("png")
+                isWebp = header.contains("webp")
+                isGif = header.contains("gif")
+                val cleanB64 = src.substring(comma + 1).replace(Regex("\\s+"), "")
+                bytes = try { Base64.decode(cleanB64, Base64.DEFAULT) } catch (_: Exception) { null }
+            } else if (src.startsWith("file://") || src.startsWith("/")) {
+                val filePath = if (src.startsWith("file://")) src.removePrefix("file://") else src
+                val f = java.io.File(filePath)
+                if (f.exists() && f.canRead()) {
+                    bytes = try { f.readBytes() } catch (_: Exception) { null }
+                    val lower = filePath.lowercase(Locale.ROOT)
+                    isPng = lower.endsWith(".png")
+                    isWebp = lower.endsWith(".webp")
+                    isGif = lower.endsWith(".gif")
+                }
+            }
+
+            if (bytes == null || bytes.isEmpty()) return null
+
             val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
             val natW = opts.outWidth.coerceAtLeast(1)
             val natH = opts.outHeight.coerceAtLeast(1)
 
             val cssWidthPx = Regex("width\\s*:\\s*(\\d+)px").find(styleAttr)?.groupValues?.get(1)?.toIntOrNull()
-            val targetPxW = (cssWidthPx ?: natW.coerceAtMost(480)).coerceIn(60, 560)
+            val targetPxW = (cssWidthPx ?: natW.coerceAtMost(520)).coerceIn(60, 580)
             val targetPxH = ((targetPxW.toDouble() / natW) * natH).toInt().coerceAtLeast(30)
 
-            val ext = if (isPng) "png" else "jpeg"
+            val ext = when {
+                isPng -> "png"
+                isWebp -> "png"
+                isGif -> "gif"
+                else -> "jpeg"
+            }
+            val mime = when {
+                isPng -> "image/png"
+                isGif -> "image/gif"
+                else -> "image/jpeg"
+            }
             val id = "rId${nextRelNum++}"
             val img = ExportImage(
                 relId = id,
                 fileName = "image${images.size + 1}.$ext",
-                mime = if (isPng) "image/png" else "image/jpeg",
+                mime = mime,
                 bytes = bytes,
                 widthEmu = targetPxW * 9525L,
                 heightEmu = targetPxH * 9525L
@@ -943,7 +976,7 @@ $bodyHtml
 
         fun buildDrawingXml(img: ExportImage): String {
             val docId = nextDocPrId++
-            return """<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${img.widthEmu}" cy="${img.heightEmu}"/><wp:docPr id="$docId" name="${img.fileName}"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="$docId" name="${img.fileName}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="${img.relId}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${img.widthEmu}" cy="${img.heightEmu}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"""
+            return """<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${img.widthEmu}" cy="${img.heightEmu}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="$docId" name="${img.fileName}"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="$docId" name="${img.fileName}"/><pic:cNvPicPr><a:picLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1" noChangeArrowheads="1"/></pic:cNvPicPr></pic:nvPicPr><pic:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="${img.relId}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${img.widthEmu}" cy="${img.heightEmu}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"""
         }
 
         fun collectInlineRuns(node: HtmlNode, inherited: RunStyle, outRuns: StringBuilder) {
@@ -975,7 +1008,7 @@ $bodyHtml
                 }
                 "img" -> {
                     val src = node.attrs["src"].orEmpty()
-                    val img = registerDataUriImage(src, styleAttr)
+                    val img = registerImage(src, styleAttr)
                     if (img != null) outRuns.append(buildDrawingXml(img))
                     return
                 }
@@ -1007,6 +1040,14 @@ $bodyHtml
             }
         }
 
+        fun isNodeBlank(node: HtmlNode): Boolean {
+            if (node.children.any { it.tag != null && it.tag in setOf("img", "table", "hr", "input") }) return false
+            if (node.tag == "img" || node.tag == "table") return false
+            val text = unescapeHtml(node.text).replace("\u200B", "").trim()
+            if (text.isNotEmpty()) return false
+            return node.children.all { isNodeBlank(it) }
+        }
+
         fun emitParagraph(
             node: HtmlNode,
             pStyle: String? = null,
@@ -1014,6 +1055,11 @@ $bodyHtml
             isQuote: Boolean = false,
             baseStyle: RunStyle = RunStyle()
         ) {
+            if (isNodeBlank(node)) {
+                bodyXml.append("<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"276\" w:lineRule=\"auto\"/></w:pPr></w:p>")
+                return
+            }
+
             val pPr = StringBuilder()
             if (pStyle != null) pPr.append("<w:pStyle w:val=\"$pStyle\"/>")
             if (numId != null) pPr.append("<w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"$numId\"/></w:numPr>")
@@ -1030,14 +1076,27 @@ $bodyHtml
                 "justify" -> pPr.append("<w:jc w:val=\"both\"/>")
             }
 
-            // Line spacing (CSS line-height -> OOXML w:spacing w:line in 240ths)
-            Regex("line-height\\s*:\\s*(\\d+(?:\\.\\d+)?)", RegexOption.IGNORE_CASE).find(styleAttr)?.let { m ->
-                val mult = m.groupValues[1].toDoubleOrNull()
-                if (mult != null && mult in 0.8..3.5) {
-                    val lineVal = (mult * 240.0).toInt()
-                    pPr.append("<w:spacing w:line=\"$lineVal\" w:lineRule=\"auto\"/>")
-                }
+            // Paragraph spacing (margin-top/margin-bottom & line-height)
+            val mtPx = Regex("margin-top\\s*:\\s*(\\d+(?:\\.\\d+)?)px", RegexOption.IGNORE_CASE)
+                .find(styleAttr)?.groupValues?.get(1)?.toDoubleOrNull()
+            val mbPx = Regex("margin-bottom\\s*:\\s*(\\d+(?:\\.\\d+)?)px", RegexOption.IGNORE_CASE)
+                .find(styleAttr)?.groupValues?.get(1)?.toDoubleOrNull()
+            val spaceBeforeTw = mtPx?.let { (it * 15.0).toInt().coerceIn(0, 4000) }
+            val spaceAfterTw = mbPx?.let { (it * 15.0).toInt().coerceIn(0, 4000) }
+
+            val lineMult = Regex("line-height\\s*:\\s*(\\d+(?:\\.\\d+)?)", RegexOption.IGNORE_CASE)
+                .find(styleAttr)?.groupValues?.get(1)?.toDoubleOrNull()
+            val lineVal = if (lineMult != null && lineMult in 0.8..3.5) (lineMult * 240.0).toInt() else 276
+
+            val spacingSb = StringBuilder()
+            if (spaceBeforeTw != null && spaceBeforeTw > 0) spacingSb.append(" w:before=\"$spaceBeforeTw\"")
+            if (spaceAfterTw != null) {
+                spacingSb.append(" w:after=\"$spaceAfterTw\"")
+            } else if (pStyle == null) {
+                spacingSb.append(" w:after=\"0\"")
             }
+            spacingSb.append(" w:line=\"$lineVal\" w:lineRule=\"auto\"")
+            pPr.append("<w:spacing$spacingSb/>")
 
             // Indentation (margin-left px & text-indent cm/px -> OOXML twips)
             if (!isQuote) {
@@ -1067,15 +1126,75 @@ $bodyHtml
         }
 
         fun emitBlocks(nodes: List<HtmlNode>) {
-            for (node in nodes) {
+            // Trim trailing empty paragraphs/whitespace to prevent ghost blank pages
+            val trimmedNodes = nodes.toMutableList()
+            while (trimmedNodes.isNotEmpty() && isNodeBlank(trimmedNodes.last())) {
+                trimmedNodes.removeAt(trimmedNodes.lastIndex)
+            }
+
+            var skipNextIfEmpty = false
+            var idx = 0
+            while (idx < trimmedNodes.size) {
+                val node = trimmedNodes[idx]
+
                 if (node.tag == null) {
-                    val txt = unescapeHtml(node.text).trim()
+                    val txt = unescapeHtml(node.text).replace("\u200B", "").trim()
                     if (txt.isNotEmpty()) {
                         bodyXml.append("<w:p>").append(buildRunXml(txt, RunStyle())).append("</w:p>")
+                        skipNextIfEmpty = false
                     }
+                    idx++
                     continue
                 }
-                when (val tag = node.tag.lowercase(Locale.ROOT)) {
+
+                val tag = node.tag.lowercase(Locale.ROOT)
+                val isPb = (tag == "p" || tag == "div") && node.attrs["class"]?.contains("doc-page-break") == true
+
+                if (isPb) {
+                    bodyXml.append("<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>")
+                    skipNextIfEmpty = true // Skip any placeholder <p><br></p> right after a page break
+                    idx++
+                    continue
+                }
+
+                if (skipNextIfEmpty) {
+                    if (isNodeBlank(node)) {
+                        // Skip placeholder paragraph so content starts directly at top of new page
+                        idx++
+                        continue
+                    }
+                    skipNextIfEmpty = false
+                }
+
+                // Check for a run of blank paragraphs (e.g. repeated Enters to reach the next page)
+                if (isNodeBlank(node)) {
+                    var blankCount = 0
+                    var lookAhead = idx
+                    while (lookAhead < trimmedNodes.size && isNodeBlank(trimmedNodes[lookAhead])) {
+                        blankCount++
+                        lookAhead++
+                    }
+                    if (idx == 0 && blankCount >= 4) {
+                        // Leading run of blank paragraphs at start of document: skip them
+                        idx = lookAhead
+                        continue
+                    }
+                    if (blankCount >= 4) {
+                        // 4 or more consecutive blank lines indicate a user manually pushing to the next page
+                        bodyXml.append("<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>")
+                        skipNextIfEmpty = true
+                        idx = lookAhead
+                        continue
+                    } else {
+                        for (b in 0 until blankCount) {
+                            emitParagraph(trimmedNodes[idx + b])
+                        }
+                        idx = lookAhead
+                        continue
+                    }
+                }
+
+                when (tag) {
                     "h1" -> emitParagraph(node, pStyle = "Title")
                     "h2" -> emitParagraph(node, pStyle = "Heading1")
                     "h3" -> emitParagraph(node, pStyle = "Heading2")
@@ -1119,25 +1238,22 @@ $bodyHtml
                         bodyXml.append("</w:tbl>")
                     }
                     "img" -> {
-                        val img = registerDataUriImage(node.attrs["src"].orEmpty(), node.attrs["style"].orEmpty())
+                        val img = registerImage(node.attrs["src"].orEmpty(), node.attrs["style"].orEmpty())
                         if (img != null) {
                             bodyXml.append("<w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr>").append(buildDrawingXml(img)).append("</w:p>")
                         }
                     }
                     "p", "div" -> {
-                        if (node.attrs["class"]?.contains("doc-page-break") == true) {
-                            bodyXml.append("<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>")
-                        } else {
-                            val hasNestedBlocks = node.children.any { it.tag?.lowercase(Locale.ROOT) in setOf("p", "div", "table", "ul", "ol", "h1", "h2", "h3", "h4") }
-                            if (hasNestedBlocks) emitBlocks(node.children)
-                            else emitParagraph(node)
-                        }
+                        val hasNestedBlocks = node.children.any { it.tag?.lowercase(Locale.ROOT) in setOf("p", "div", "table", "ul", "ol", "h1", "h2", "h3", "h4") }
+                        if (hasNestedBlocks) emitBlocks(node.children)
+                        else emitParagraph(node)
                     }
                     else -> {
                         val wrapper = HtmlNode("p", children = mutableListOf(node))
                         emitParagraph(wrapper)
                     }
                 }
+                idx++
             }
         }
 
@@ -1165,6 +1281,8 @@ $bodyHtml
   <Default Extension="png" ContentType="image/png"/>
   <Default Extension="jpeg" ContentType="image/jpeg"/>
   <Default Extension="jpg" ContentType="image/jpeg"/>
+  <Default Extension="gif" ContentType="image/gif"/>
+  <Default Extension="webp" ContentType="image/webp"/>
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
   <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
   <Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>
@@ -1205,7 +1323,7 @@ $extraOverrides</Types>"""
                 "word/styles.xml",
                 """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-  <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:pPr><w:spacing w:after="120" w:line="276" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="22"/><w:color w:val="1E293B"/></w:rPr></w:style>
+  <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:pPr><w:spacing w:after="0" w:line="276" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="22"/><w:color w:val="1E293B"/></w:rPr></w:style>
   <w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="200" w:after="140"/></w:pPr><w:rPr><w:b/><w:sz w:val="44"/></w:rPr></w:style>
   <w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="220" w:after="100"/></w:pPr><w:rPr><w:b/><w:sz w:val="34"/></w:rPr></w:style>
   <w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="180" w:after="80"/></w:pPr><w:rPr><w:b/><w:sz w:val="28"/></w:rPr></w:style>
@@ -1284,14 +1402,15 @@ $extraOverrides</Types>"""
     private val VOID_TAGS = setOf("br", "hr", "img", "input", "meta", "link")
 
     private fun parseHtmlFragment(html: String): HtmlNode {
+        val cleanHtml = html.replace(Regex("<!--.*?-->", RegexOption.DOT_MATCHES_ALL), "")
         val root = HtmlNode("root")
         val stack = ArrayDeque<HtmlNode>().apply { addLast(root) }
         val tagRegex = Regex("<(/?)([a-zA-Z0-9]+)([^>]*)>")
         var pos = 0
 
-        for (m in tagRegex.findAll(html)) {
+        for (m in tagRegex.findAll(cleanHtml)) {
             if (m.range.first > pos) {
-                val txt = html.substring(pos, m.range.first)
+                val txt = cleanHtml.substring(pos, m.range.first)
                 if (txt.isNotEmpty()) stack.last().children.add(HtmlNode(null, text = txt))
             }
             val isClosing = m.groupValues[1] == "/"
@@ -1313,8 +1432,8 @@ $extraOverrides</Types>"""
             }
             pos = m.range.last + 1
         }
-        if (pos < html.length) {
-            val tail = html.substring(pos)
+        if (pos < cleanHtml.length) {
+            val tail = cleanHtml.substring(pos)
             if (tail.isNotEmpty()) stack.last().children.add(HtmlNode(null, text = tail))
         }
         return root

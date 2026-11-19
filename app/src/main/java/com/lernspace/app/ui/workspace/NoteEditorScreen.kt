@@ -1,13 +1,17 @@
 package com.lernspace.app.ui.workspace
 
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.util.Base64
 import android.widget.Toast
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
+import com.lernspace.app.ui.workspace.document.DocPageSetup
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -193,6 +197,7 @@ class NotePaneState(
     var isDarkPaper by mutableStateOf(note.isDarkPaper)
     var subject by mutableStateOf(note.subject)
     var documentContent by mutableStateOf(note.documentContent)
+    var onInsertImageToDocument: ((Bitmap) -> Unit)? = null
 
     fun updateDocumentContent(newContent: String) {
         documentContent = newContent
@@ -1084,6 +1089,13 @@ fun NoteEditorScreen(
                             pendingAiAction = AiQuickAction.SUMMARIZE
                         },
                         onExportPdf = { handleExportPdf() },
+                        onOpenGraph = {
+                            showInteractiveGraphDialog = true
+                            interactiveGraphFunction = ""
+                        },
+                        onRegisterInsertImage = { handler ->
+                            primaryState.onInsertImageToDocument = handler
+                        },
                         modifier = Modifier
                             .fillMaxSize()
                             .statusBarsPadding()
@@ -1146,6 +1158,13 @@ fun NoteEditorScreen(
                                         pendingAiAction = AiQuickAction.SUMMARIZE
                                     },
                                     onExportPdf = { handleExportPdf() },
+                                    onOpenGraph = {
+                                        showInteractiveGraphDialog = true
+                                        interactiveGraphFunction = ""
+                                    },
+                                    onRegisterInsertImage = { handler ->
+                                        leftState.onInsertImageToDocument = handler
+                                    },
                                     modifier = Modifier
                                         .fillMaxSize()
                                         .statusBarsPadding()
@@ -1216,6 +1235,13 @@ fun NoteEditorScreen(
                                         pendingAiAction = AiQuickAction.SUMMARIZE
                                     },
                                     onExportPdf = { handleExportPdf() },
+                                    onOpenGraph = {
+                                        showInteractiveGraphDialog = true
+                                        interactiveGraphFunction = ""
+                                    },
+                                    onRegisterInsertImage = { handler ->
+                                        rightState.onInsertImageToDocument = handler
+                                    },
                                     modifier = Modifier
                                         .fillMaxSize()
                                         .statusBarsPadding()
@@ -1367,54 +1393,49 @@ fun NoteEditorScreen(
                     interactiveGraphFunction = null
                 },
                 onInsertGraphToNote = { bitmap, equations ->
-                    val sel = activeState.lassoSelection
-                    val curScale = activeState.scale.coerceAtLeast(0.05f)
-                    val spawnX = (-activeState.panX + 160f) / curScale
-                    val spawnY = (-activeState.panY + 140f) / curScale
-                    val insertX = sel?.bounds?.left?.coerceAtLeast(32f) ?: spawnX.coerceAtLeast(32f)
-                    var currentY = (sel?.bounds?.bottom?.plus(20f))?.coerceAtLeast(32f) ?: spawnY.coerceAtLeast(32f)
-                    activeState.pushUndoSnapshot()
-                    activeState.deselectAll()
-
-                    // If equations are present, insert a clean LaTeX formula card above the graph
-                    if (equations.isNotEmpty()) {
-                        val latexLines = equations.joinToString("\n") { eq ->
-                            val clean = cleanLatexFormula(eq).removePrefix("$$").removeSuffix("$$").removePrefix("$").removeSuffix("$").trim()
-                            "$$ $clean $$"
+                    if (activeState.canvasType == NoteCanvasType.DOC_DOCUMENT) {
+                        val handler = activeState.onInsertImageToDocument
+                        if (handler != null) {
+                            handler(bitmap)
+                        } else {
+                            coroutineScope.launch(Dispatchers.IO) {
+                                val stream = ByteArrayOutputStream()
+                                bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+                                val base64 = Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
+                                val dataUri = "data:image/png;base64,$base64"
+                                withContext(Dispatchers.Main) {
+                                    val (setup, cleanBody) = DocPageSetup.extractFromContent(activeState.documentContent)
+                                    val imgTag = "<p><img data-wrap=\"break\" src=\"$dataUri\" style=\"width: 360px; max-width: 100%;\"></p>"
+                                    activeState.updateDocumentContent(DocPageSetup.packWithContent(setup, cleanBody + imgTag))
+                                    Toast.makeText(context, "Grafik kartesius disisipkan ke dokumen", Toast.LENGTH_SHORT).show()
+                                }
+                            }
                         }
-                        val approxH = (equations.size * 54f + 20f).coerceIn(64f, 240f)
-                        activeState.textBoxes.add(
-                            TextBoxElement(
+                    } else {
+                        val sel = activeState.lassoSelection
+                        val curScale = activeState.scale.coerceAtLeast(0.05f)
+                        val spawnX = (-activeState.panX + 160f) / curScale
+                        val spawnY = (-activeState.panY + 140f) / curScale
+                        val insertX = sel?.bounds?.left?.coerceAtLeast(32f) ?: spawnX.coerceAtLeast(32f)
+                        val insertY = (sel?.bounds?.bottom?.plus(20f))?.coerceAtLeast(32f) ?: spawnY.coerceAtLeast(32f)
+                        activeState.pushUndoSnapshot()
+                        activeState.deselectAll()
+
+                        // Insert only the graph image directly without LaTeX formula text box
+                        activeState.imageElements.add(
+                            ImageElement(
                                 x = insertX,
-                                y = currentY,
+                                y = insertY,
+                                bitmap = bitmap.asImageBitmap(),
                                 width = 560f,
-                                height = approxH,
-                                text = latexLines,
-                                isSelected = false,
-                                fontSize = 30f,
-                                hasBackground = true
+                                height = 420f,
+                                isSelected = true
                             )
                         )
-                        currentY += approxH + 16f
+                        activeState.saveActivePageData()
+                        activeState.lassoSelection = null
+                        Toast.makeText(context, "Grafik kartesius disisipkan ke catatan", Toast.LENGTH_SHORT).show()
                     }
-
-                    activeState.imageElements.add(
-                        ImageElement(
-                            x = insertX,
-                            y = currentY,
-                            bitmap = bitmap.asImageBitmap(),
-                            width = 560f,
-                            height = 420f,
-                            isSelected = true
-                        )
-                    )
-                    activeState.saveActivePageData()
-                    activeState.lassoSelection = null
-                    val hasIntegral = equations.any { it.contains("\\int") }
-                    val msg = if (hasIntegral) "Grafik dan hasil integral disisipkan ke catatan"
-                        else if (equations.isNotEmpty()) "Grafik dan rumus LaTeX disisipkan ke catatan"
-                        else "Grafik kartesius disisipkan ke catatan"
-                    android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
                 },
                 modifier = Modifier.zIndex(20f)
             )
