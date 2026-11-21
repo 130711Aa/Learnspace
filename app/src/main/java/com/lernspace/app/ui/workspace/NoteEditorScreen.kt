@@ -12,6 +12,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.UUID
 import com.lernspace.app.ui.workspace.document.DocPageSetup
+import com.lernspace.app.ui.workspace.document.DocxDocumentCodec
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -198,10 +199,13 @@ class NotePaneState(
     var subject by mutableStateOf(note.subject)
     var documentContent by mutableStateOf(note.documentContent)
     var onInsertImageToDocument: ((Bitmap) -> Unit)? = null
+    var onExportDocumentPdf: (() -> Unit)? = null
 
     fun updateDocumentContent(newContent: String) {
         documentContent = newContent
         note.documentContent = newContent
+        val clean = DocxDocumentCodec.exportToPlainText(newContent).replace("\n", " ").trim()
+        note.snippet = if (clean.isNotBlank()) clean.take(120) + (if (clean.length > 120) "..." else "") else "Dokumen Teks Kosong..."
         saveActivePageData()
     }
 
@@ -1027,6 +1031,15 @@ fun NoteEditorScreen(
     }
 
     fun handleExportPdf() {
+        if (activeState.canvasType == NoteCanvasType.DOC_DOCUMENT) {
+            val docPdfHandler = activeState.onExportDocumentPdf
+            if (docPdfHandler != null) {
+                docPdfHandler()
+            } else {
+                android.widget.Toast.makeText(context, "Gunakan menu Alat (⋮) > Cetak / Simpan PDF di toolbar dokumen", android.widget.Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
         activeState.saveActivePageData()
         isExporting = true
         coroutineScope.launch(Dispatchers.IO) {
@@ -1090,11 +1103,15 @@ fun NoteEditorScreen(
                         },
                         onExportPdf = { handleExportPdf() },
                         onOpenGraph = {
+                            activeNoteId = primaryState.note.id
                             showInteractiveGraphDialog = true
                             interactiveGraphFunction = ""
                         },
                         onRegisterInsertImage = { handler ->
                             primaryState.onInsertImageToDocument = handler
+                        },
+                        onRegisterExportPdf = { handler ->
+                            primaryState.onExportDocumentPdf = handler
                         },
                         modifier = Modifier
                             .fillMaxSize()
@@ -1159,11 +1176,15 @@ fun NoteEditorScreen(
                                     },
                                     onExportPdf = { handleExportPdf() },
                                     onOpenGraph = {
+                                        activeNoteId = leftState.note.id
                                         showInteractiveGraphDialog = true
                                         interactiveGraphFunction = ""
                                     },
                                     onRegisterInsertImage = { handler ->
                                         leftState.onInsertImageToDocument = handler
+                                    },
+                                    onRegisterExportPdf = { handler ->
+                                        leftState.onExportDocumentPdf = handler
                                     },
                                     modifier = Modifier
                                         .fillMaxSize()
@@ -1236,11 +1257,15 @@ fun NoteEditorScreen(
                                     },
                                     onExportPdf = { handleExportPdf() },
                                     onOpenGraph = {
+                                        activeNoteId = rightState.note.id
                                         showInteractiveGraphDialog = true
                                         interactiveGraphFunction = ""
                                     },
                                     onRegisterInsertImage = { handler ->
                                         rightState.onInsertImageToDocument = handler
+                                    },
+                                    onRegisterExportPdf = { handler ->
+                                        rightState.onExportDocumentPdf = handler
                                     },
                                     modifier = Modifier
                                         .fillMaxSize()
@@ -1573,7 +1598,7 @@ fun NoteEditorScreen(
                 },
                 onExtractPageText = {
                     if (activeState.canvasType == NoteCanvasType.DOC_DOCUMENT) {
-                        activeState.documentContent.ifBlank { "Dokumen masih kosong." }
+                        DocxDocumentCodec.exportToPlainText(activeState.documentContent).ifBlank { "Dokumen masih kosong." }
                     } else {
                         PageCaptureHelper.extractPageText(activeState)
                     }
@@ -1581,8 +1606,15 @@ fun NoteEditorScreen(
                 onInsertToNote = { content ->
                     if (activeState.canvasType == NoteCanvasType.DOC_DOCUMENT) {
                         val current = activeState.documentContent
-                        val combined = if (current.isBlank()) content else "$current\n\n$content"
-                        activeState.updateDocumentContent(combined)
+                        val (setup, cleanBody) = DocPageSetup.extractFromContent(current)
+                        val contentHtml = DocxDocumentCodec.markdownToHtml(content)
+                        val updatedBody = if (cleanBody.isBlank() || cleanBody == "<p><br></p>") {
+                            contentHtml
+                        } else {
+                            "$cleanBody$contentHtml"
+                        }
+                        val packed = DocPageSetup.packWithContent(setup, updatedBody)
+                        activeState.updateDocumentContent(packed)
                         android.widget.Toast.makeText(context, "Materi AI berhasil dimuat ke Dokumen", android.widget.Toast.LENGTH_SHORT).show()
                     } else {
                         val screenCenterX = (-activeState.panX + 260f) / activeState.scale

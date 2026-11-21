@@ -649,7 +649,8 @@ fun QuizScreen() {
                                         val (normSubj, normTopic, normSubtopic) = SupabaseBankSoalClient.normalizeTaxonomy(
                                             rawSubject = quizResult.canonicalSubject,
                                             rawTopic = quizResult.canonicalTopic,
-                                            rawSubtopic = quizResult.canonicalSubtopic
+                                            rawSubtopic = quizResult.canonicalSubtopic,
+                                            taxonomyList = existingTaxonomies
                                         )
 
                                         quizQuestions = quizResult.questions

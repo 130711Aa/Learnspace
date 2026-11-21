@@ -976,7 +976,7 @@ fun HomeScreen(
                                                             overflow = TextOverflow.Ellipsis
                                                         )
                                                         Text(
-                                                            text = note.snippet,
+                                                            text = note.displaySnippet,
                                                             fontSize = 10.sp,
                                                             color = LernspaceTextSecondary,
                                                             maxLines = 1,

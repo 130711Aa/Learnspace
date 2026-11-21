@@ -154,7 +154,10 @@ object DocxDocumentCodec {
                         "word/_rels/document.xml.rels" -> relsXml = data
                         "word/numbering.xml" -> numberingXml = data
                         else -> if (name.startsWith("word/media/", ignoreCase = true)) {
-                            mediaMap[name.substringAfter("word/").lowercase(Locale.ROOT)] = data
+                            val afterWord = name.substringAfter("word/").lowercase(Locale.ROOT)
+                            val justName = name.substringAfterLast('/').lowercase(Locale.ROOT)
+                            mediaMap[afterWord] = data
+                            mediaMap[justName] = data
                         }
                     }
                 }
@@ -171,11 +174,23 @@ object DocxDocumentCodec {
         val encodedMediaCache = mutableMapOf<String, String>()
         fun resolveImageDataUri(relId: String): String? {
             val rel = rels[relId] ?: return null
-            val normalizedTarget = rel.target.removePrefix("/").removePrefix("word/").lowercase(Locale.ROOT)
+            val rawTarget = rel.target.replace('\\', '/').trim()
+            val normalizedTarget = rawTarget
+                .removePrefix("/")
+                .removePrefix("word/")
+                .removePrefix("./")
+                .replace("../", "")
+                .removePrefix("word/")
+                .lowercase(Locale.ROOT)
+            val fileNameOnly = rawTarget.substringAfterLast('/').lowercase(Locale.ROOT)
+
             encodedMediaCache[normalizedTarget]?.let { return it }
-            val raw = mediaMap[normalizedTarget] ?: return null
-            val dataUri = compressImageBytesToDataUri(raw, normalizedTarget) ?: return null
+            encodedMediaCache[fileNameOnly]?.let { return it }
+
+            val raw = mediaMap[normalizedTarget] ?: mediaMap[fileNameOnly] ?: return null
+            val dataUri = compressImageBytesToDataUri(raw, fileNameOnly) ?: return null
             encodedMediaCache[normalizedTarget] = dataUri
+            encodedMediaCache[fileNameOnly] = dataUri
             return dataUri
         }
 
@@ -202,7 +217,10 @@ object DocxDocumentCodec {
                 when (localName(parser.name)) {
                     "p" -> {
                         val pHtml = parseParagraph(parser, rels, orderedNumIds, ::resolveImageDataUri)
-                        if (pHtml.listTag != null) {
+                        if (pHtml.innerHtml.contains("doc-page-break") && pHtml.innerHtml.replace(Regex("<[^>]+>"), "").isBlank()) {
+                            closeListIfOpen()
+                            out.append("<div class=\"doc-page-break\" contenteditable=\"false\"></div>")
+                        } else if (pHtml.listTag != null) {
                             if (activeListTag != pHtml.listTag) {
                                 closeListIfOpen()
                                 activeListTag = pHtml.listTag
@@ -330,6 +348,13 @@ object DocxDocumentCodec {
                     "r" -> {
                         inner.append(parseRun(parser, resolveImage))
                         depth-- // parseRun consumes up to </r>
+                    }
+                    "oMath", "oMathPara" -> {
+                        val latex = LatexMathCodec.parseOmmlToLatex(parser)
+                        depth-- // parseOmmlToLatex consumes up to </oMath>
+                        if (latex.isNotBlank()) {
+                            inner.append(LatexMathCodec.toHtmlSpan(latex))
+                        }
                     }
                 }
             } else if (ev == XmlPullParser.END_TAG) {
@@ -555,6 +580,7 @@ object DocxDocumentCodec {
         resolveImage: (String) -> String?
     ): String {
         var colSpan = 1
+        var cellBg: String? = null
         val cellParts = mutableListOf<String>()
         var depth = 1
         while (depth > 0) {
@@ -565,6 +591,12 @@ object DocxDocumentCodec {
                 depth++
                 when (name) {
                     "gridSpan" -> colSpan = attr(parser, "val").toIntOrNull() ?: 1
+                    "shd" -> {
+                        val fill = attr(parser, "fill")
+                        if (cellBg == null && fill.length == 6 && !fill.equals("auto", true) && !fill.equals("ffffff", true)) {
+                            cellBg = "#$fill"
+                        }
+                    }
                     "p" -> {
                         val p = parseParagraph(parser, rels, orderedNumIds, resolveImage)
                         cellParts.add(p.innerHtml)
@@ -577,8 +609,9 @@ object DocxDocumentCodec {
         }
         val tag = if (isHeaderRow) "th" else "td"
         val spanAttr = if (colSpan > 1) " colspan=\"$colSpan\"" else ""
+        val bgStyle = if (cellBg != null) " style=\"background-color:$cellBg;\"" else ""
         val joined = cellParts.filter { it.isNotBlank() }.joinToString("<br>").ifBlank { "<br>" }
-        return "<$tag$spanAttr>$joined</$tag>"
+        return "<$tag$spanAttr$bgStyle>$joined</$tag>"
     }
 
     private fun parseRelationships(relsBytes: ByteArray): Map<String, RelInfo> {
@@ -659,7 +692,6 @@ object DocxDocumentCodec {
 
     private fun compressImageBytesToDataUri(raw: ByteArray, path: String): String? {
         return try {
-            val isPng = path.endsWith(".png")
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(raw, 0, raw.size, bounds)
             if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
@@ -673,6 +705,7 @@ object DocxDocumentCodec {
                 Bitmap.createScaledBitmap(bmp, (bmp.width * r).toInt().coerceAtLeast(1), (bmp.height * r).toInt().coerceAtLeast(1), true)
                     .also { if (it !== bmp) bmp.recycle() }
             } else bmp
+            val isPng = path.endsWith(".png", ignoreCase = true) || path.endsWith(".webp", ignoreCase = true) || scaled.hasAlpha()
             val out = ByteArrayOutputStream()
             if (isPng) scaled.compress(Bitmap.CompressFormat.PNG, 92, out)
             else scaled.compress(Bitmap.CompressFormat.JPEG, 84, out)
@@ -696,7 +729,7 @@ object DocxDocumentCodec {
             .ifBlank { "<p><br></p>" }
     }
 
-    private fun markdownToHtml(md: String): String {
+    fun markdownToHtml(md: String): String {
         val lines = md.replace("\r\n", "\n").split("\n")
         val sb = StringBuilder()
         var activeList: String? = null
@@ -922,14 +955,32 @@ $bodyHtml
             val targetPxW = (cssWidthPx ?: natW.coerceAtMost(520)).coerceIn(60, 580)
             val targetPxH = ((targetPxW.toDouble() / natW) * natH).toInt().coerceAtLeast(30)
 
+            // Convert WebP images to standard PNG format for 100% universal compatibility across Microsoft Word, Google Docs, and LibreOffice
+            if (isWebp) {
+                try {
+                    val decodedBmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    if (decodedBmp != null) {
+                        val stream = ByteArrayOutputStream()
+                        decodedBmp.compress(Bitmap.CompressFormat.PNG, 100, stream)
+                        bytes = stream.toByteArray()
+                        isPng = true
+                        isWebp = false
+                        decodedBmp.recycle()
+                    }
+                } catch (_: Exception) {
+                    // Fallback to original bytes if decoding fails
+                }
+            }
+
             val ext = when {
                 isPng -> "png"
-                isWebp -> "png"
+                isWebp -> "webp"
                 isGif -> "gif"
                 else -> "jpeg"
             }
             val mime = when {
                 isPng -> "image/png"
+                isWebp -> "image/webp"
                 isGif -> "image/gif"
                 else -> "image/jpeg"
             }
@@ -979,15 +1030,54 @@ $bodyHtml
             return """<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${img.widthEmu}" cy="${img.heightEmu}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="$docId" name="${img.fileName}"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="$docId" name="${img.fileName}"/><pic:cNvPicPr><a:picLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1" noChangeArrowheads="1"/></pic:cNvPicPr></pic:nvPicPr><pic:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="${img.relId}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${img.widthEmu}" cy="${img.heightEmu}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"""
         }
 
+        fun extractAllText(node: HtmlNode): String {
+            val sb = StringBuilder(unescapeHtml(node.text))
+            for (c in node.children) sb.append(extractAllText(c))
+            return sb.toString()
+        }
+
         fun collectInlineRuns(node: HtmlNode, inherited: RunStyle, outRuns: StringBuilder) {
             if (node.tag == null) {
                 val decoded = unescapeHtml(node.text)
-                if (decoded.isNotEmpty()) outRuns.append(buildRunXml(decoded, inherited))
+                if (decoded.isNotEmpty()) {
+                    if (decoded.contains("$$")) {
+                        var lastIdx = 0
+                        val regex = Regex("""\$\$(.+?)\$\$""", RegexOption.DOT_MATCHES_ALL)
+                        val matches = regex.findAll(decoded).toList()
+                        if (matches.isNotEmpty()) {
+                            for (m in matches) {
+                                if (m.range.first > lastIdx) {
+                                    val prefix = decoded.substring(lastIdx, m.range.first)
+                                    if (prefix.isNotEmpty()) outRuns.append(buildRunXml(prefix, inherited))
+                                }
+                                val latex = m.groupValues[1]
+                                outRuns.append(LatexMathCodec.toOmml(latex))
+                                lastIdx = m.range.last + 1
+                            }
+                            if (lastIdx < decoded.length) {
+                                val suffix = decoded.substring(lastIdx)
+                                if (suffix.isNotEmpty()) outRuns.append(buildRunXml(suffix, inherited))
+                            }
+                            return
+                        }
+                    }
+                    outRuns.append(buildRunXml(decoded, inherited))
+                }
                 return
             }
             val tag = node.tag.lowercase(Locale.ROOT)
             val styleAttr = node.attrs["style"].orEmpty()
             var next = inherited
+
+            // ── NATIVE FORMULA / LATEX RENDERING ──
+            if ((tag == "span" && (node.attrs.containsKey("data-latex") || node.attrs["class"]?.contains("math") == true)) || tag == "math") {
+                val latex = node.attrs["data-latex"]
+                    ?: extractAllText(node).takeIf { it.isNotBlank() }
+                if (!latex.isNullOrBlank()) {
+                    outRuns.append(LatexMathCodec.toOmml(latex))
+                    return
+                }
+            }
             when (tag) {
                 "strong", "b" -> next = next.copy(bold = true)
                 "em", "i" -> next = next.copy(italic = true)
@@ -1041,8 +1131,9 @@ $bodyHtml
         }
 
         fun isNodeBlank(node: HtmlNode): Boolean {
-            if (node.children.any { it.tag != null && it.tag in setOf("img", "table", "hr", "input") }) return false
-            if (node.tag == "img" || node.tag == "table") return false
+            if (node.children.any { it.tag != null && it.tag in setOf("img", "table", "hr", "input", "math") }) return false
+            if (node.tag == "img" || node.tag == "table" || node.tag == "math") return false
+            if (node.attrs.containsKey("data-latex") || node.attrs["class"]?.contains("math") == true) return false
             val text = unescapeHtml(node.text).replace("\u200B", "").trim()
             if (text.isNotEmpty()) return false
             return node.children.all { isNodeBlank(it) }
@@ -1070,10 +1161,32 @@ $bodyHtml
             val alignAttr = node.attrs["align"]?.lowercase(Locale.ROOT)
                 ?: Regex("text-align\\s*:\\s*(left|center|right|justify)", RegexOption.IGNORE_CASE)
                     .find(styleAttr)?.groupValues?.get(1)?.lowercase(Locale.ROOT)
-            when (alignAttr) {
+
+            fun findOnlyImg(n: HtmlNode): HtmlNode? {
+                if (n.tag.equals("img", true)) return n
+                val realChildren = n.children.filter { !(it.tag == null && unescapeHtml(it.text).isBlank()) && !it.tag.equals("br", true) }
+                if (realChildren.size == 1) return findOnlyImg(realChildren[0])
+                return null
+            }
+            val singleImg = findOnlyImg(node)
+
+            val effectiveAlign = if (alignAttr != null) {
+                alignAttr
+            } else if (singleImg != null) {
+                val wrap = singleImg.attrs["data-wrap"]?.lowercase(Locale.ROOT)
+                val imgStyle = singleImg.attrs["style"]?.lowercase(Locale.ROOT).orEmpty()
+                when {
+                    wrap == "right" || imgStyle.contains("float: right") || imgStyle.contains("float:right") -> "right"
+                    wrap == "left" || imgStyle.contains("float: left") || imgStyle.contains("float:left") -> "left"
+                    else -> "center" // Default in Learnspace: break/block images are centered horizontally
+                }
+            } else null
+
+            when (effectiveAlign) {
                 "center" -> pPr.append("<w:jc w:val=\"center\"/>")
                 "right" -> pPr.append("<w:jc w:val=\"right\"/>")
                 "justify" -> pPr.append("<w:jc w:val=\"both\"/>")
+                "left" -> pPr.append("<w:jc w:val=\"left\"/>")
             }
 
             // Paragraph spacing (margin-top/margin-bottom & line-height)
@@ -1089,9 +1202,15 @@ $bodyHtml
             val lineVal = if (lineMult != null && lineMult in 0.8..3.5) (lineMult * 240.0).toInt() else 276
 
             val spacingSb = StringBuilder()
-            if (spaceBeforeTw != null && spaceBeforeTw > 0) spacingSb.append(" w:before=\"$spaceBeforeTw\"")
+            if (spaceBeforeTw != null && spaceBeforeTw > 0) {
+                spacingSb.append(" w:before=\"$spaceBeforeTw\"")
+            } else if (singleImg != null) {
+                spacingSb.append(" w:before=\"120\"")
+            }
             if (spaceAfterTw != null) {
                 spacingSb.append(" w:after=\"$spaceAfterTw\"")
+            } else if (singleImg != null) {
+                spacingSb.append(" w:after=\"160\"")
             } else if (pStyle == null) {
                 spacingSb.append(" w:after=\"0\"")
             }
@@ -1174,18 +1293,15 @@ $bodyHtml
                         blankCount++
                         lookAhead++
                     }
-                    if (idx == 0 && blankCount >= 4) {
-                        // Leading run of blank paragraphs at start of document: skip them
-                        idx = lookAhead
-                        continue
-                    }
-                    if (blankCount >= 4) {
-                        // 4 or more consecutive blank lines indicate a user manually pushing to the next page
+                    if (idx > 0 && blankCount >= 25) {
+                        // 25 or more consecutive blank lines in the body indicate a user holding Enter to push to the next page
                         bodyXml.append("<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>")
                         skipNextIfEmpty = true
                         idx = lookAhead
                         continue
                     } else {
+                        // Normal intentional blank lines (vertical spacing for titles, dates, signatures, letters, etc.):
+                        // faithfully preserve every single blank paragraph so text position matches exactly!
                         for (b in 0 until blankCount) {
                             emitParagraph(trimmedNodes[idx + b])
                         }
@@ -1215,22 +1331,51 @@ $bodyHtml
                         }
                     }
                     "table" -> {
-                        bodyXml.append("""<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="pct"/><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="CBD5E1"/><w:left w:val="single" w:sz="4" w:space="0" w:color="CBD5E1"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="CBD5E1"/><w:right w:val="single" w:sz="4" w:space="0" w:color="CBD5E1"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="CBD5E1"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="CBD5E1"/></w:tblBorders></w:tblPr>""")
+                        val printableWidthTwips = (pageSetup.widthTwips - pageSetup.marginLeftTwips - pageSetup.marginRightTwips).coerceIn(2000, 25000)
                         val rows = mutableListOf<HtmlNode>()
                         fun collectRows(n: HtmlNode) {
                             for (c in n.children) {
                                 if (c.tag.equals("tr", true)) rows.add(c)
-                                else if (c.tag.equals("tbody", true) || c.tag.equals("thead", true)) collectRows(c)
+                                else if (c.tag.equals("tbody", true) || c.tag.equals("thead", true) || c.tag.equals("tfoot", true)) collectRows(c)
                             }
                         }
                         collectRows(node)
+
+                        val numCols = rows.maxOfOrNull { r ->
+                            r.children.filter { it.tag.equals("td", true) || it.tag.equals("th", true) }
+                                .sumOf { it.attrs["colspan"]?.toIntOrNull()?.coerceAtLeast(1) ?: 1 }
+                        }?.coerceAtLeast(1) ?: 1
+                        val colWidthTwips = printableWidthTwips / numCols
+                        val gridColsXml = (0 until numCols).joinToString("") { "<w:gridCol w:w=\"$colWidthTwips\"/>" }
+
+                        bodyXml.append("""<w:tbl><w:tblPr><w:tblW w:w="$printableWidthTwips" w:type="dxa"/><w:jc w:val="center"/><w:tblLayout w:type="fixed"/><w:tblCellMar><w:top w:w="120" w:type="dxa"/><w:bottom w:w="120" w:type="dxa"/><w:left w:w="160" w:type="dxa"/><w:right w:w="160" w:type="dxa"/></w:tblCellMar><w:tblBorders><w:top w:val="single" w:sz="6" w:space="0" w:color="CBD5E1"/><w:left w:val="single" w:sz="6" w:space="0" w:color="CBD5E1"/><w:bottom w:val="single" w:sz="6" w:space="0" w:color="CBD5E1"/><w:right w:val="single" w:sz="6" w:space="0" w:color="CBD5E1"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="E2E8F0"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="E2E8F0"/></w:tblBorders></w:tblPr><w:tblGrid>$gridColsXml</w:tblGrid>""")
+
                         for (tr in rows) {
                             bodyXml.append("<w:tr>")
-                            for (cell in tr.children.filter { it.tag.equals("td", true) || it.tag.equals("th", true) }) {
+                            val cells = tr.children.filter { it.tag.equals("td", true) || it.tag.equals("th", true) }
+                            for (cell in cells) {
                                 val isTh = cell.tag.equals("th", true)
-                                val shd = if (isTh) """<w:shd w:val="clear" w:color="auto" w:fill="F1F5F9"/>""" else ""
-                                bodyXml.append("<w:tc><w:tcPr>$shd</w:tcPr>")
-                                emitParagraph(cell, baseStyle = RunStyle(bold = isTh))
+                                val colSpan = cell.attrs["colspan"]?.toIntOrNull()?.coerceAtLeast(1) ?: 1
+                                val spanTwips = colWidthTwips * colSpan
+                                val gridSpanXml = if (colSpan > 1) "<w:gridSpan w:val=\"$colSpan\"/>" else ""
+                                val customBg = extractCssColor(cell.attrs["style"].orEmpty(), "background-color")
+                                    ?: parseHex6(cell.attrs["bgcolor"].orEmpty())
+                                val shd = when {
+                                    customBg != null -> """<w:shd w:val="clear" w:color="auto" w:fill="$customBg"/>"""
+                                    isTh -> """<w:shd w:val="clear" w:color="auto" w:fill="F1F5F9"/>"""
+                                    else -> ""
+                                }
+                                bodyXml.append("<w:tc><w:tcPr><w:tcW w:w=\"$spanTwips\" w:type=\"dxa\"/>$gridSpanXml$shd</w:tcPr>")
+                                val hasNestedBlocks = cell.children.any { it.tag?.lowercase(Locale.ROOT) in setOf("p", "div", "ul", "ol") }
+                                val beforeLen = bodyXml.length
+                                if (hasNestedBlocks) {
+                                    emitBlocks(cell.children)
+                                } else {
+                                    emitParagraph(cell, baseStyle = RunStyle(bold = isTh))
+                                }
+                                if (bodyXml.length == beforeLen) {
+                                    bodyXml.append("<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"276\" w:lineRule=\"auto\"/></w:pPr></w:p>")
+                                }
                                 bodyXml.append("</w:tc>")
                             }
                             bodyXml.append("</w:tr>")
@@ -1240,7 +1385,14 @@ $bodyHtml
                     "img" -> {
                         val img = registerImage(node.attrs["src"].orEmpty(), node.attrs["style"].orEmpty())
                         if (img != null) {
-                            bodyXml.append("<w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr>").append(buildDrawingXml(img)).append("</w:p>")
+                            val wrap = node.attrs["data-wrap"]?.lowercase(Locale.ROOT)
+                            val imgStyle = node.attrs["style"]?.lowercase(Locale.ROOT).orEmpty()
+                            val jcVal = when {
+                                wrap == "right" || imgStyle.contains("float: right") || imgStyle.contains("float:right") -> "right"
+                                wrap == "left" || imgStyle.contains("float: left") || imgStyle.contains("float:left") -> "left"
+                                else -> "center"
+                            }
+                            bodyXml.append("<w:p><w:pPr><w:jc w:val=\"$jcVal\"/><w:spacing w:before=\"120\" w:after=\"160\" w:line=\"276\" w:lineRule=\"auto\"/></w:pPr>").append(buildDrawingXml(img)).append("</w:p>")
                         }
                     }
                     "p", "div" -> {
@@ -1499,8 +1651,12 @@ $extraOverrides</Types>"""
     }
 
     private fun stripHtmlToPlainText(html: String): String {
+        val withMath = html.replace(Regex("""<span[^>]*data-latex="([^"]+)"[^>]*>.*?</span>""", RegexOption.IGNORE_CASE)) {
+            val raw = unescapeHtml(it.groupValues[1])
+            " " + LatexMathCodec.toPlainText(raw) + " "
+        }
         return unescapeHtml(
-            html.replace(Regex("<br\\s*/?>", RegexOption.IGNORE_CASE), "\n")
+            withMath.replace(Regex("<br\\s*/?>", RegexOption.IGNORE_CASE), "\n")
                 .replace(Regex("</(p|div|h[1-6]|li|tr|blockquote)>", RegexOption.IGNORE_CASE), "\n")
                 .replace(Regex("<[^>]+>"), "")
         ).replace(Regex("\n{3,}"), "\n\n").trim()

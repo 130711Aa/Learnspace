@@ -3,6 +3,7 @@ package com.lernspace.app.ui.workspace.model
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.ink.strokes.Stroke
+import com.lernspace.app.ui.workspace.document.DocxDocumentCodec
 import java.util.UUID
 
 enum class NoteTool {
@@ -101,7 +102,7 @@ data class NoteUiModel(
     var title: String,
     var subject: String,
     val date: String,
-    val snippet: String,
+    var snippet: String,
     var subjectId: String? = null,
     var topicId: String? = null,
     var topicName: String? = null,
@@ -114,4 +115,25 @@ data class NoteUiModel(
     var lastOpenedPageIndex: Int = 0,
     val pages: MutableList<NotePageData> = mutableListOf(NotePageData(pageIndex = 0)),
     var documentContent: String = ""
-)
+) {
+    val displaySnippet: String
+        get() {
+            val raw = if (canvasType == NoteCanvasType.DOC_DOCUMENT) {
+                documentContent.ifBlank { snippet }
+            } else {
+                snippet
+            }
+            val clean = if (raw.contains('<') || raw.contains("<!--LSPAGE")) {
+                DocxDocumentCodec.exportToPlainText(raw)
+            } else {
+                raw
+            }.replace("\n", " ").trim()
+            return if (clean.isNotBlank()) {
+                clean.take(120) + (if (clean.length > 120) "..." else "")
+            } else if (canvasType == NoteCanvasType.DOC_DOCUMENT) {
+                "Dokumen Teks Kosong..."
+            } else {
+                "Catatan kosong..."
+            }
+        }
+}

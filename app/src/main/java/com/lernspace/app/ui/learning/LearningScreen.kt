@@ -1087,7 +1087,7 @@ private fun TopicCardInteractive(
                                             maxLines = 1
                                         )
                                         Text(
-                                            text = attachedNote.snippet,
+                                            text = attachedNote.displaySnippet,
                                             fontSize = 11.sp,
                                             color = LernspaceTextSecondary,
                                             maxLines = 1

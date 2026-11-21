@@ -29,6 +29,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -65,6 +73,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -88,16 +97,30 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.lernspace.app.ui.workspace.document.GeoGebraKeypad123
+import com.lernspace.app.ui.workspace.document.GeoGebraKeypadFunctions
+import com.lernspace.app.ui.workspace.document.GeoGebraKeypadAbc
+import com.lernspace.app.ui.workspace.document.GeoGebraKeypadGreek
+import com.lernspace.app.ui.workspace.document.MathExpr
+import com.lernspace.app.ui.workspace.document.MathExprView
+import com.lernspace.app.ui.workspace.document.findSequence
+import com.lernspace.app.ui.workspace.document.replaceSequence
+import com.lernspace.app.ui.workspace.document.findContainerInfo
+import com.lernspace.app.ui.workspace.document.latexToMathExpr
+import com.lernspace.app.ui.workspace.document.toLatex
+import com.lernspace.app.ui.workspace.document.EditorSnapshot
 import com.lernspace.app.core.math.CircleData
 import com.lernspace.app.core.math.CurvePlotDefinition
 import com.lernspace.app.core.math.IntersectionPoint
@@ -177,7 +200,7 @@ fun cleanEquationInput(raw: String): String {
         changed = text != prev
     }
 
-    return text.trim()
+    return text.replace("·", "*").trim()
 }
 
 /**
@@ -234,9 +257,547 @@ fun FloatingGraphWindow(
     // ── Multi-Graph Equation List State ──
     val graphItems = remember { mutableStateListOf<GraphPlotItem>() }
     var selectedItemId by remember { mutableStateOf<String?>(null) }
-    var inputEquationText by remember { mutableStateOf("") }
     var editingItemId by remember { mutableStateOf<String?>(null) }
     var showMathKeypad by remember { mutableStateOf(false) }
+    var keyboardTab by remember { mutableIntStateOf(0) }
+
+    // ── Visual RetEX Math Model State ──
+    var mathRoot by remember { mutableStateOf(MathExpr.Sequence()) }
+    var mathActiveSeqId by remember { mutableStateOf(mathRoot.id) }
+    var mathCursorOffset by remember { mutableIntStateOf(0) }
+    val mathUndoStack = remember { mutableStateListOf<EditorSnapshot>() }
+    val mathRedoStack = remember { mutableStateListOf<EditorSnapshot>() }
+
+    fun saveMathSnapshot() {
+        if (mathUndoStack.size >= 50) {
+            mathUndoStack.removeAt(0)
+        }
+        mathUndoStack.add(EditorSnapshot(mathRoot, mathActiveSeqId, mathCursorOffset))
+        mathRedoStack.clear()
+    }
+
+    val infiniteTransition = rememberInfiniteTransition(label = "graphMathCursorAnim")
+    val mathCursorAlpha by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 500, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "graphMathCursorAlpha"
+    )
+
+    fun insertMathText(char: String) {
+        saveMathSnapshot()
+        val mappedChar = if (char == "·") "*" else char
+        if (mappedChar == "/" || mappedChar == " / ") {
+            val currentSeq = findSequence(mathRoot, mathActiveSeqId) ?: return
+            val items = currentSeq.items.toMutableList()
+
+            if (mathCursorOffset > 0) {
+                val lastIdx = mathCursorOffset - 1
+                val lastItem = items[lastIdx]
+
+                if (lastItem is MathExpr.Parens) {
+                    val numSeq = lastItem.body
+                    val frac = MathExpr.Fraction(num = numSeq, den = MathExpr.Sequence(emptyList()))
+                    items[lastIdx] = frac
+                    mathRoot = replaceSequence(mathRoot, mathActiveSeqId, currentSeq.copy(items = items)) as MathExpr.Sequence
+                    mathActiveSeqId = frac.den.id
+                    mathCursorOffset = 0
+                    return
+                }
+
+                var startIdx = lastIdx
+                while (startIdx >= 0) {
+                    val itm = items[startIdx]
+                    if (itm is MathExpr.Atom && itm.text.all { it.isLetterOrDigit() || it == '.' }) {
+                        startIdx--
+                    } else {
+                        break
+                    }
+                }
+                val stolenStart = startIdx + 1
+                if (stolenStart <= lastIdx) {
+                    val stolenList = items.subList(stolenStart, lastIdx + 1).toList()
+                    val numSeq = MathExpr.Sequence(stolenList)
+                    val frac = MathExpr.Fraction(num = numSeq, den = MathExpr.Sequence(emptyList()))
+                    val newItems = items.toMutableList()
+                    for (k in lastIdx downTo stolenStart) {
+                        newItems.removeAt(k)
+                    }
+                    newItems.add(stolenStart, frac)
+                    mathRoot = replaceSequence(mathRoot, mathActiveSeqId, currentSeq.copy(items = newItems)) as MathExpr.Sequence
+                    mathActiveSeqId = frac.den.id
+                    mathCursorOffset = 0
+                    return
+                }
+            }
+
+            val frac = MathExpr.Fraction(num = MathExpr.Sequence(emptyList()), den = MathExpr.Sequence(emptyList()))
+            items.add(mathCursorOffset, frac)
+            mathRoot = replaceSequence(mathRoot, mathActiveSeqId, currentSeq.copy(items = items)) as MathExpr.Sequence
+            mathActiveSeqId = frac.num.id
+            mathCursorOffset = 0
+            return
+        }
+
+        if (mappedChar == "^") {
+            val currentSeq = findSequence(mathRoot, mathActiveSeqId) ?: return
+            val items = currentSeq.items.toMutableList()
+
+            if (mathCursorOffset > 0) {
+                val lastIdx = mathCursorOffset - 1
+                val lastItem = items[lastIdx]
+                val pow = MathExpr.Power(base = lastItem, exp = MathExpr.Sequence(emptyList()))
+                items[lastIdx] = pow
+                mathRoot = replaceSequence(mathRoot, mathActiveSeqId, currentSeq.copy(items = items)) as MathExpr.Sequence
+                mathActiveSeqId = pow.exp.id
+                mathCursorOffset = 0
+                return
+            }
+
+            val pow = MathExpr.Power(base = MathExpr.Sequence(emptyList()), exp = MathExpr.Sequence(emptyList()))
+            items.add(mathCursorOffset, pow)
+            mathRoot = replaceSequence(mathRoot, mathActiveSeqId, currentSeq.copy(items = items)) as MathExpr.Sequence
+            mathActiveSeqId = pow.exp.id
+            mathCursorOffset = 0
+            return
+        }
+
+        val currentSeq = findSequence(mathRoot, mathActiveSeqId) ?: return
+        val items = currentSeq.items.toMutableList()
+        val newAtom = MathExpr.Atom(mappedChar)
+        items.add(mathCursorOffset, newAtom)
+        mathRoot = replaceSequence(mathRoot, mathActiveSeqId, currentSeq.copy(items = items)) as MathExpr.Sequence
+        mathCursorOffset++
+    }
+
+    fun interceptMathPowerSquare() {
+        saveMathSnapshot()
+        val currentSeq = findSequence(mathRoot, mathActiveSeqId) ?: return
+        val items = currentSeq.items.toMutableList()
+
+        if (mathCursorOffset > 0) {
+            val lastIdx = mathCursorOffset - 1
+            val lastItem = items[lastIdx]
+            val pow = MathExpr.Power(base = lastItem, exp = MathExpr.Sequence(listOf(MathExpr.Atom("2"))))
+            items[lastIdx] = pow
+            mathRoot = replaceSequence(mathRoot, mathActiveSeqId, currentSeq.copy(items = items)) as MathExpr.Sequence
+            mathCursorOffset = lastIdx + 1
+            return
+        }
+
+        val pow = MathExpr.Power(base = MathExpr.Atom("x"), exp = MathExpr.Sequence(listOf(MathExpr.Atom("2"))))
+        items.add(mathCursorOffset, pow)
+        mathRoot = replaceSequence(mathRoot, mathActiveSeqId, currentSeq.copy(items = items)) as MathExpr.Sequence
+        mathCursorOffset = 1
+    }
+
+    fun insertMathFunctionWithParens(funcName: String) {
+        saveMathSnapshot()
+        val currentSeq = findSequence(mathRoot, mathActiveSeqId) ?: return
+        val items = currentSeq.items.toMutableList()
+        val fnAtom = MathExpr.Atom(funcName)
+        val parens = MathExpr.Parens(body = MathExpr.Sequence(emptyList()))
+        items.add(mathCursorOffset, fnAtom)
+        items.add(mathCursorOffset + 1, parens)
+        mathRoot = replaceSequence(mathRoot, mathActiveSeqId, currentSeq.copy(items = items)) as MathExpr.Sequence
+        mathActiveSeqId = parens.body.id
+        mathCursorOffset = 0
+    }
+
+    fun insertMathDerivativeWithParens() {
+        saveMathSnapshot()
+        val currentSeq = findSequence(mathRoot, mathActiveSeqId) ?: return
+        val items = currentSeq.items.toMutableList()
+        val ddx = MathExpr.Fraction(
+            num = MathExpr.Sequence(listOf(MathExpr.Atom("d"))),
+            den = MathExpr.Sequence(listOf(MathExpr.Atom("d"), MathExpr.Atom("x")))
+        )
+        val parens = MathExpr.Parens(body = MathExpr.Sequence(emptyList()))
+        items.add(mathCursorOffset, ddx)
+        items.add(mathCursorOffset + 1, parens)
+        mathRoot = replaceSequence(mathRoot, mathActiveSeqId, currentSeq.copy(items = items)) as MathExpr.Sequence
+        mathActiveSeqId = parens.body.id
+        mathCursorOffset = 0
+    }
+
+    fun insertMathStructure(builder: () -> MathExpr) {
+        saveMathSnapshot()
+        val template = builder()
+        if (template is MathExpr.Fraction) {
+            insertMathText("/")
+            return
+        }
+        if (template is MathExpr.Power) {
+            insertMathText("^")
+            return
+        }
+
+        val currentSeq = findSequence(mathRoot, mathActiveSeqId) ?: return
+        val items = currentSeq.items.toMutableList()
+
+        when (template) {
+            is MathExpr.Root -> {
+                if (mathCursorOffset > 0) {
+                    val lastItem = items[mathCursorOffset - 1]
+                    val radicandSeq = when (lastItem) {
+                        is MathExpr.Sequence -> lastItem
+                        else -> MathExpr.Sequence(listOf(lastItem))
+                    }
+                    val rootNode = MathExpr.Root(degree = template.degree, radicand = radicandSeq)
+                    items[mathCursorOffset - 1] = rootNode
+                    mathRoot = replaceSequence(mathRoot, mathActiveSeqId, currentSeq.copy(items = items)) as MathExpr.Sequence
+                } else {
+                    items.add(mathCursorOffset, template)
+                    mathRoot = replaceSequence(mathRoot, mathActiveSeqId, currentSeq.copy(items = items)) as MathExpr.Sequence
+                    mathActiveSeqId = template.radicand.id
+                    mathCursorOffset = 0
+                }
+            }
+            is MathExpr.Parens -> {
+                items.add(mathCursorOffset, template)
+                mathRoot = replaceSequence(mathRoot, mathActiveSeqId, currentSeq.copy(items = items)) as MathExpr.Sequence
+                mathActiveSeqId = template.body.id
+                mathCursorOffset = 0
+            }
+            is MathExpr.Integral -> {
+                items.add(mathCursorOffset, template)
+                mathRoot = replaceSequence(mathRoot, mathActiveSeqId, currentSeq.copy(items = items)) as MathExpr.Sequence
+                mathActiveSeqId = if (template.upper.items.isEmpty()) template.upper.id else template.integrand.id
+                mathCursorOffset = 0
+            }
+            is MathExpr.Summation -> {
+                items.add(mathCursorOffset, template)
+                mathRoot = replaceSequence(mathRoot, mathActiveSeqId, currentSeq.copy(items = items)) as MathExpr.Sequence
+                mathActiveSeqId = if (template.upper.items.isEmpty()) template.upper.id else template.body.id
+                mathCursorOffset = 0
+            }
+            is MathExpr.Limit -> {
+                items.add(mathCursorOffset, template)
+                mathRoot = replaceSequence(mathRoot, mathActiveSeqId, currentSeq.copy(items = items)) as MathExpr.Sequence
+                mathActiveSeqId = if (template.target.items.isEmpty()) template.target.id else template.body.id
+                mathCursorOffset = 0
+            }
+            else -> {
+                items.add(mathCursorOffset, template)
+                mathRoot = replaceSequence(mathRoot, mathActiveSeqId, currentSeq.copy(items = items)) as MathExpr.Sequence
+                mathCursorOffset++
+            }
+        }
+    }
+
+    fun handleMathNavLeft() {
+        val currentSeq = findSequence(mathRoot, mathActiveSeqId) ?: return
+        if (mathCursorOffset > 0) {
+            val prevItem = currentSeq.items[mathCursorOffset - 1]
+            when (prevItem) {
+                is MathExpr.Fraction -> {
+                    mathActiveSeqId = prevItem.den.id
+                    mathCursorOffset = prevItem.den.items.size
+                }
+                is MathExpr.Power -> {
+                    mathActiveSeqId = prevItem.exp.id
+                    mathCursorOffset = prevItem.exp.items.size
+                }
+                is MathExpr.Root -> {
+                    mathActiveSeqId = prevItem.radicand.id
+                    mathCursorOffset = prevItem.radicand.items.size
+                }
+                is MathExpr.Integral -> {
+                    mathActiveSeqId = prevItem.variable.id
+                    mathCursorOffset = prevItem.variable.items.size
+                }
+                is MathExpr.Summation -> {
+                    mathActiveSeqId = prevItem.body.id
+                    mathCursorOffset = prevItem.body.items.size
+                }
+                is MathExpr.Limit -> {
+                    mathActiveSeqId = prevItem.body.id
+                    mathCursorOffset = prevItem.body.items.size
+                }
+                is MathExpr.Parens -> {
+                    mathActiveSeqId = prevItem.body.id
+                    mathCursorOffset = prevItem.body.items.size
+                }
+                else -> {
+                    mathCursorOffset--
+                }
+            }
+        } else {
+            val info = findContainerInfo(mathRoot, mathActiveSeqId)
+            if (info != null) {
+                when (info.container) {
+                    is MathExpr.Power -> {
+                        mathActiveSeqId = info.parentSeq.id
+                        mathCursorOffset = info.indexInParentSeq
+                    }
+                    is MathExpr.Fraction -> {
+                        if (mathActiveSeqId == info.container.den.id) {
+                            mathActiveSeqId = info.container.num.id
+                            mathCursorOffset = info.container.num.items.size
+                        } else {
+                            mathActiveSeqId = info.parentSeq.id
+                            mathCursorOffset = info.indexInParentSeq
+                        }
+                    }
+                    is MathExpr.Integral -> {
+                        if (mathActiveSeqId == info.container.variable.id) {
+                            mathActiveSeqId = info.container.integrand.id
+                            mathCursorOffset = info.container.integrand.items.size
+                        } else if (mathActiveSeqId == info.container.integrand.id) {
+                            mathActiveSeqId = info.container.lower.id
+                            mathCursorOffset = info.container.lower.items.size
+                        } else if (mathActiveSeqId == info.container.lower.id) {
+                            mathActiveSeqId = info.container.upper.id
+                            mathCursorOffset = info.container.upper.items.size
+                        } else {
+                            mathActiveSeqId = info.parentSeq.id
+                            mathCursorOffset = info.indexInParentSeq
+                        }
+                    }
+                    is MathExpr.Summation -> {
+                        if (mathActiveSeqId == info.container.body.id) {
+                            mathActiveSeqId = info.container.lower.id
+                            mathCursorOffset = info.container.lower.items.size
+                        } else if (mathActiveSeqId == info.container.lower.id) {
+                            mathActiveSeqId = info.container.upper.id
+                            mathCursorOffset = info.container.upper.items.size
+                        } else {
+                            mathActiveSeqId = info.parentSeq.id
+                            mathCursorOffset = info.indexInParentSeq
+                        }
+                    }
+                    is MathExpr.Limit -> {
+                        if (mathActiveSeqId == info.container.body.id) {
+                            mathActiveSeqId = info.container.target.id
+                            mathCursorOffset = info.container.target.items.size
+                        } else if (mathActiveSeqId == info.container.target.id) {
+                            mathActiveSeqId = info.container.variable.id
+                            mathCursorOffset = info.container.variable.items.size
+                        } else {
+                            mathActiveSeqId = info.parentSeq.id
+                            mathCursorOffset = info.indexInParentSeq
+                        }
+                    }
+                    is MathExpr.Root -> {
+                        if (info.container.degree != null && mathActiveSeqId == info.container.radicand.id) {
+                            mathActiveSeqId = info.container.degree.id
+                            mathCursorOffset = info.container.degree.items.size
+                        } else {
+                            mathActiveSeqId = info.parentSeq.id
+                            mathCursorOffset = info.indexInParentSeq
+                        }
+                    }
+                    is MathExpr.Parens -> {
+                        mathActiveSeqId = info.parentSeq.id
+                        mathCursorOffset = info.indexInParentSeq
+                    }
+                    else -> {
+                        mathActiveSeqId = info.parentSeq.id
+                        mathCursorOffset = info.indexInParentSeq
+                    }
+                }
+            }
+        }
+    }
+
+    fun handleMathNavRight() {
+        val currentSeq = findSequence(mathRoot, mathActiveSeqId) ?: return
+        if (mathCursorOffset < currentSeq.items.size) {
+            val nextItem = currentSeq.items[mathCursorOffset]
+            when (nextItem) {
+                is MathExpr.Fraction -> {
+                    mathActiveSeqId = nextItem.num.id
+                    mathCursorOffset = 0
+                }
+                is MathExpr.Power -> {
+                    mathActiveSeqId = nextItem.exp.id
+                    mathCursorOffset = 0
+                }
+                is MathExpr.Root -> {
+                    if (nextItem.degree != null) {
+                        mathActiveSeqId = nextItem.degree.id
+                        mathCursorOffset = 0
+                    } else {
+                        mathActiveSeqId = nextItem.radicand.id
+                        mathCursorOffset = 0
+                    }
+                }
+                is MathExpr.Integral -> {
+                    mathActiveSeqId = nextItem.upper.id
+                    mathCursorOffset = 0
+                }
+                is MathExpr.Summation -> {
+                    mathActiveSeqId = nextItem.upper.id
+                    mathCursorOffset = 0
+                }
+                is MathExpr.Limit -> {
+                    mathActiveSeqId = nextItem.variable.id
+                    mathCursorOffset = 0
+                }
+                is MathExpr.Parens -> {
+                    mathActiveSeqId = nextItem.body.id
+                    mathCursorOffset = 0
+                }
+                else -> {
+                    mathCursorOffset++
+                }
+            }
+        } else {
+            val info = findContainerInfo(mathRoot, mathActiveSeqId)
+            if (info != null) {
+                when (info.container) {
+                    is MathExpr.Power -> {
+                        mathActiveSeqId = info.parentSeq.id
+                        mathCursorOffset = info.indexInParentSeq + 1
+                    }
+                    is MathExpr.Fraction -> {
+                        if (mathActiveSeqId == info.container.num.id) {
+                            mathActiveSeqId = info.container.den.id
+                            mathCursorOffset = 0
+                        } else {
+                            mathActiveSeqId = info.parentSeq.id
+                            mathCursorOffset = info.indexInParentSeq + 1
+                        }
+                    }
+                    is MathExpr.Integral -> {
+                        if (mathActiveSeqId == info.container.upper.id) {
+                            mathActiveSeqId = info.container.lower.id
+                            mathCursorOffset = 0
+                        } else if (mathActiveSeqId == info.container.lower.id) {
+                            mathActiveSeqId = info.container.integrand.id
+                            mathCursorOffset = 0
+                        } else if (mathActiveSeqId == info.container.integrand.id) {
+                            mathActiveSeqId = info.container.variable.id
+                            mathCursorOffset = 0
+                        } else {
+                            mathActiveSeqId = info.parentSeq.id
+                            mathCursorOffset = info.indexInParentSeq + 1
+                        }
+                    }
+                    is MathExpr.Summation -> {
+                        if (mathActiveSeqId == info.container.upper.id) {
+                            mathActiveSeqId = info.container.lower.id
+                            mathCursorOffset = 0
+                        } else if (mathActiveSeqId == info.container.lower.id) {
+                            mathActiveSeqId = info.container.body.id
+                            mathCursorOffset = 0
+                        } else {
+                            mathActiveSeqId = info.parentSeq.id
+                            mathCursorOffset = info.indexInParentSeq + 1
+                        }
+                    }
+                    is MathExpr.Limit -> {
+                        if (mathActiveSeqId == info.container.variable.id) {
+                            mathActiveSeqId = info.container.target.id
+                            mathCursorOffset = 0
+                        } else if (mathActiveSeqId == info.container.target.id) {
+                            mathActiveSeqId = info.container.body.id
+                            mathCursorOffset = 0
+                        } else {
+                            mathActiveSeqId = info.parentSeq.id
+                            mathCursorOffset = info.indexInParentSeq + 1
+                        }
+                    }
+                    is MathExpr.Root -> {
+                        if (info.container.degree != null && mathActiveSeqId == info.container.degree.id) {
+                            mathActiveSeqId = info.container.radicand.id
+                            mathCursorOffset = 0
+                        } else {
+                            mathActiveSeqId = info.parentSeq.id
+                            mathCursorOffset = info.indexInParentSeq + 1
+                        }
+                    }
+                    is MathExpr.Parens -> {
+                        mathActiveSeqId = info.parentSeq.id
+                        mathCursorOffset = info.indexInParentSeq + 1
+                    }
+                    else -> {
+                        mathActiveSeqId = info.parentSeq.id
+                        mathCursorOffset = info.indexInParentSeq + 1
+                    }
+                }
+            }
+        }
+    }
+
+    fun handleMathBackspace() {
+        saveMathSnapshot()
+        val currentSeq = findSequence(mathRoot, mathActiveSeqId) ?: return
+        if (mathCursorOffset > 0) {
+            val items = currentSeq.items.toMutableList()
+            val item = items[mathCursorOffset - 1]
+            if (item is MathExpr.Atom) {
+                items.removeAt(mathCursorOffset - 1)
+                mathRoot = replaceSequence(mathRoot, mathActiveSeqId, currentSeq.copy(items = items)) as MathExpr.Sequence
+                mathCursorOffset--
+            } else if (item is MathExpr.Power) {
+                if (item.exp.items.isEmpty()) {
+                    items[mathCursorOffset - 1] = item.base
+                    mathRoot = replaceSequence(mathRoot, mathActiveSeqId, currentSeq.copy(items = items)) as MathExpr.Sequence
+                } else {
+                    mathActiveSeqId = item.exp.id
+                    mathCursorOffset = item.exp.items.size
+                }
+            } else if (item is MathExpr.Fraction) {
+                mathActiveSeqId = item.den.id
+                mathCursorOffset = item.den.items.size
+            } else {
+                items.removeAt(mathCursorOffset - 1)
+                mathRoot = replaceSequence(mathRoot, mathActiveSeqId, currentSeq.copy(items = items)) as MathExpr.Sequence
+                mathCursorOffset--
+            }
+        } else {
+            val info = findContainerInfo(mathRoot, mathActiveSeqId)
+            if (info != null) {
+                when (info.container) {
+                    is MathExpr.Fraction -> {
+                        if (mathActiveSeqId == info.container.den.id && info.container.den.items.isEmpty()) {
+                            val pItems = info.parentSeq.items.toMutableList()
+                            pItems.removeAt(info.indexInParentSeq)
+                            pItems.addAll(info.indexInParentSeq, info.container.num.items)
+                            mathRoot = replaceSequence(mathRoot, info.parentSeq.id, info.parentSeq.copy(items = pItems)) as MathExpr.Sequence
+                            mathActiveSeqId = info.parentSeq.id
+                            mathCursorOffset = info.indexInParentSeq + info.container.num.items.size
+                        } else if (mathActiveSeqId == info.container.num.id && info.container.num.items.isEmpty()) {
+                            mathActiveSeqId = info.parentSeq.id
+                            mathCursorOffset = info.indexInParentSeq
+                        }
+                    }
+                    is MathExpr.Power -> {
+                        if (mathActiveSeqId == info.container.exp.id && info.container.exp.items.isEmpty()) {
+                            val pItems = info.parentSeq.items.toMutableList()
+                            pItems[info.indexInParentSeq] = info.container.base
+                            mathRoot = replaceSequence(mathRoot, info.parentSeq.id, info.parentSeq.copy(items = pItems)) as MathExpr.Sequence
+                            mathActiveSeqId = info.parentSeq.id
+                            mathCursorOffset = info.indexInParentSeq + 1
+                        }
+                    }
+                    is MathExpr.Root -> {
+                        if (mathActiveSeqId == info.container.radicand.id && info.container.radicand.items.isEmpty()) {
+                            val pItems = info.parentSeq.items.toMutableList()
+                            pItems.removeAt(info.indexInParentSeq)
+                            mathRoot = replaceSequence(mathRoot, info.parentSeq.id, info.parentSeq.copy(items = pItems)) as MathExpr.Sequence
+                            mathActiveSeqId = info.parentSeq.id
+                            mathCursorOffset = info.indexInParentSeq
+                        }
+                    }
+                    is MathExpr.Parens -> {
+                        if (mathActiveSeqId == info.container.body.id && info.container.body.items.isEmpty()) {
+                            val pItems = info.parentSeq.items.toMutableList()
+                            pItems.removeAt(info.indexInParentSeq)
+                            mathRoot = replaceSequence(mathRoot, info.parentSeq.id, info.parentSeq.copy(items = pItems)) as MathExpr.Sequence
+                            mathActiveSeqId = info.parentSeq.id
+                            mathCursorOffset = info.indexInParentSeq
+                        }
+                    }
+                    else -> {}
+                }
+            }
+        }
+    }
 
     // ── Definite Integral State ──
     var showIntegral by remember { mutableStateOf(false) }
@@ -266,10 +827,25 @@ fun FloatingGraphWindow(
 
         val parsedInt = MathPlotHelper.parseDefiniteIntegral(trimmed)
         if (parsedInt != null) {
-            val clean = parsedInt.functionExpr
+            val clean = MathPlotHelper.denormalizeImplicitMultiplication(parsedInt.functionExpr)
+            val hasBounds = trimmed.contains("_") || trimmed.contains("[") || trimmed.contains("..") || trimmed.contains("^")
+            val lowStr = MathPlotHelper.formatNumber(parsedInt.lowerBound)
+            val upStr = MathPlotHelper.formatNumber(parsedInt.upperBound)
+            val rawEq = if (trimmed.contains("\\int")) {
+                MathPlotHelper.denormalizeImplicitMultiplication(trimmed)
+            } else if (hasBounds) {
+                "\\int_{$lowStr}^{$upStr} $clean \\, dx"
+            } else {
+                "\\int $clean \\, dx"
+            }
+            val dispLabel = if (hasBounds) {
+                "∫_{$lowStr}^{$upStr} $clean dx"
+            } else {
+                "∫ $clean dx"
+            }
             return GraphPlotItem(
-                rawEquation = "∫ $clean dx",
-                displayLabel = if (clean.startsWith("y=") || clean.startsWith("f(x)")) clean else "y = $clean",
+                rawEquation = rawEq,
+                displayLabel = dispLabel,
                 color = color,
                 isCircle = false,
                 isVerticalLine = false,
@@ -283,14 +859,15 @@ fun FloatingGraphWindow(
 
         val circle = MathPlotHelper.parseCircle(trimmed)
         if (circle != null) {
+            val cleanCircle = MathPlotHelper.denormalizeImplicitMultiplication(circle.standardEquation)
             return GraphPlotItem(
-                rawEquation = trimmed,
-                displayLabel = trimmed,
+                rawEquation = MathPlotHelper.denormalizeImplicitMultiplication(trimmed),
+                displayLabel = cleanCircle,
                 color = color,
                 isCircle = true,
                 circleData = circle,
                 isVerticalLine = false,
-                cleanExpr = circle.standardEquation,
+                cleanExpr = cleanCircle,
                 keyPoints = MathPlotHelper.getCircleKeyPoints(circle)
             )
         }
@@ -317,22 +894,25 @@ fun FloatingGraphWindow(
                     )
                 )
             } else {
+                val cleanLinear = MathPlotHelper.denormalizeImplicitMultiplication(linear.functionExpr)
+                val rawLinear = MathPlotHelper.denormalizeImplicitMultiplication(trimmed)
                 GraphPlotItem(
-                    rawEquation = trimmed,
-                    displayLabel = if (trimmed.contains("=")) trimmed else linear.standardEquation,
+                    rawEquation = rawLinear,
+                    displayLabel = if (trimmed.contains("=")) rawLinear else linear.standardEquation,
                     color = color,
                     isCircle = false,
                     isVerticalLine = false,
-                    cleanExpr = linear.functionExpr,
-                    keyPoints = MathPlotHelper.findKeyPoints(linear.functionExpr, -50f, 50f)
+                    cleanExpr = cleanLinear,
+                    keyPoints = MathPlotHelper.findKeyPoints(cleanLinear, -50f, 50f)
                 )
             }
         }
 
-        val clean = MathPlotHelper.extractFunctionBody(trimmed)
+        val clean = MathPlotHelper.denormalizeImplicitMultiplication(MathPlotHelper.extractFunctionBody(trimmed))
+        val rawClean = MathPlotHelper.denormalizeImplicitMultiplication(trimmed)
         return GraphPlotItem(
-            rawEquation = trimmed,
-            displayLabel = if (trimmed.contains("=") || trimmed.startsWith("f(x)")) trimmed else "y = $clean",
+            rawEquation = rawClean,
+            displayLabel = if (trimmed.contains("=") || trimmed.startsWith("f(x)")) rawClean else "y = $clean",
             color = color,
             isCircle = false,
             isVerticalLine = false,
@@ -342,7 +922,8 @@ fun FloatingGraphWindow(
     }
 
     val saveEquation: () -> Unit = {
-        val cleanInput = cleanEquationInput(inputEquationText)
+        val currentLatex = mathRoot.toLatex().trim()
+        val cleanInput = cleanEquationInput(currentLatex)
         if (cleanInput.isNotBlank()) {
             val currentEditId = editingItemId
             if (currentEditId != null) {
@@ -356,32 +937,51 @@ fun FloatingGraphWindow(
                     graphItems[idx] = updated
                 }
                 editingItemId = null
-                inputEquationText = ""
+                mathRoot = MathExpr.Sequence()
+                mathActiveSeqId = mathRoot.id
+                mathCursorOffset = 0
             } else {
                 val color = GEOGEBRA_PALETTE[graphItems.size % GEOGEBRA_PALETTE.size]
                 val newItem = parseToItem(cleanInput, color)
                 graphItems.add(newItem)
                 selectedItemId = newItem.id
-                inputEquationText = ""
+                mathRoot = MathExpr.Sequence()
+                mathActiveSeqId = mathRoot.id
+                mathCursorOffset = 0
             }
         }
     }
 
     val startEdit: (GraphPlotItem) -> Unit = { item ->
         editingItemId = item.id
-        inputEquationText = item.rawEquation
+        val parsed = latexToMathExpr(item.rawEquation)
+        mathRoot = parsed
+        val singleExpr = parsed.items.singleOrNull()
+        if (singleExpr is MathExpr.Integral) {
+            mathActiveSeqId = singleExpr.integrand.id
+            mathCursorOffset = singleExpr.integrand.items.size
+        } else {
+            mathActiveSeqId = parsed.id
+            mathCursorOffset = parsed.items.size
+        }
         selectedItemId = item.id
+        showMathKeypad = true
     }
 
     val cancelEdit: () -> Unit = {
         editingItemId = null
-        inputEquationText = ""
+        mathRoot = MathExpr.Sequence()
+        mathActiveSeqId = mathRoot.id
+        mathCursorOffset = 0
     }
 
     // ── Parameter Sliders State (Ala Desmos) ──
     val paramValues = remember { mutableStateMapOf<Char, Float>() }
     val detectedParams = remember(graphItems.toList()) {
-        graphItems.flatMap { MathPlotHelper.extractParameters(it.rawEquation) }.distinct().sorted()
+        graphItems.flatMap { item ->
+            val target = if (item.cleanExpr.isNotBlank()) item.cleanExpr else item.rawEquation
+            MathPlotHelper.extractParameters(target)
+        }.distinct().sorted()
     }
 
     LaunchedEffect(detectedParams) {
@@ -525,6 +1125,13 @@ fun FloatingGraphWindow(
         val parentH = constraints.maxHeight.toFloat().coerceAtLeast(100f)
         val parentWDp = parentW / density
         val parentHDp = parentH / density
+
+        // Automatically expand window height if needed when docked keypad opens
+        LaunchedEffect(showMathKeypad) {
+            if (showMathKeypad && windowHeightDp < 520f) {
+                windowHeightDp = 520f.coerceAtMost(parentHDp - 24f)
+            }
+        }
 
         // Note: Floating window lets touches outside fall through to the canvas so user can pan/zoom note freely.
 
@@ -932,44 +1539,60 @@ fun FloatingGraphWindow(
                                                 }
                                             }
 
-                                            // Main Input Row
+                                            // Visual RetEX Math Input Row (Auto-scrollable formula stage)
+                                            val mathCanvasScroll = rememberScrollState()
+                                            LaunchedEffect(mathActiveSeqId, mathCursorOffset, mathRoot) {
+                                                if (mathActiveSeqId == mathRoot.id && mathCursorOffset >= mathRoot.items.size) {
+                                                    mathCanvasScroll.animateScrollTo(mathCanvasScroll.maxValue)
+                                                }
+                                            }
+
                                             Row(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
-                                                    .clip(RoundedCornerShape(6.dp))
-                                                    .background(inputBg)
+                                                    .heightIn(min = 52.dp, max = 96.dp)
+                                                    .background(inputBg, RoundedCornerShape(8.dp))
                                                     .border(
                                                         if (editingItemId != null) 1.5.dp else 1.dp,
                                                         if (editingItemId != null) Color(0xFF2563EB) else borderColor,
-                                                        RoundedCornerShape(6.dp)
+                                                        RoundedCornerShape(8.dp)
                                                     )
-                                                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                                                    .padding(horizontal = 8.dp, vertical = 6.dp),
                                                 verticalAlignment = Alignment.CenterVertically,
                                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                                             ) {
-                                                Box(modifier = Modifier.weight(1f)) {
-                                                    if (inputEquationText.isEmpty()) {
-                                                        Text(
-                                                            text = if (editingItemId != null) "Edit persamaan..." else "+ Persamaan (y=2x+1)...",
-                                                            color = textSecondary.copy(alpha = 0.7f),
-                                                            fontSize = 11.sp
+                                                Box(
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .clickable(
+                                                            indication = null,
+                                                            interactionSource = remember { MutableInteractionSource() }
+                                                        ) {
+                                                            mathActiveSeqId = mathRoot.id
+                                                            mathCursorOffset = mathRoot.items.size
+                                                            showMathKeypad = true
+                                                        }
+                                                ) {
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .horizontalScroll(mathCanvasScroll)
+                                                    ) {
+                                                        MathExprView(
+                                                            expr = mathRoot,
+                                                            activeSeqId = mathActiveSeqId,
+                                                            cursorOffset = mathCursorOffset,
+                                                            cursorAlpha = mathCursorAlpha,
+                                                            fontSize = 15.sp,
+                                                            textColor = textPrimary,
+                                                            onSelectCursor = { seqId, offset ->
+                                                                mathActiveSeqId = seqId
+                                                                mathCursorOffset = offset
+                                                                showMathKeypad = true
+                                                            }
                                                         )
                                                     }
-                                                    BasicTextField(
-                                                        value = inputEquationText,
-                                                        onValueChange = { inputEquationText = it },
-                                                        singleLine = true,
-                                                        textStyle = TextStyle(
-                                                            color = textPrimary,
-                                                            fontSize = 11.5.sp,
-                                                            fontFamily = FontFamily.Monospace,
-                                                            fontWeight = FontWeight.Medium
-                                                        ),
-                                                        cursorBrush = SolidColor(Color(0xFF2563EB)),
-                                                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                                        keyboardActions = KeyboardActions(onDone = { saveEquation() }),
-                                                        modifier = Modifier.fillMaxWidth()
-                                                    )
                                                 }
 
                                                 // Keypad toggle button (Clean Keyboard Vector Icon)
@@ -997,11 +1620,12 @@ fun FloatingGraphWindow(
                                                 }
 
                                                 // Action Button (Check for Save, Add for New)
+                                                val hasContent = mathRoot.items.isNotEmpty()
                                                 if (editingItemId != null) {
                                                     Surface(
                                                         shape = RoundedCornerShape(5.dp),
                                                         color = Color(0xFF059669),
-                                                        modifier = Modifier.clickable(enabled = inputEquationText.isNotBlank()) {
+                                                        modifier = Modifier.clickable(enabled = hasContent) {
                                                             saveEquation()
                                                         }
                                                     ) {
@@ -1027,19 +1651,19 @@ fun FloatingGraphWindow(
                                                 } else {
                                                     Surface(
                                                         shape = RoundedCornerShape(5.dp),
-                                                        color = if (inputEquationText.isNotBlank()) Color(0xFF2563EB) else cardBg,
+                                                        color = if (hasContent) Color(0xFF2563EB) else cardBg,
                                                         border = androidx.compose.foundation.BorderStroke(
                                                             0.8.dp,
-                                                            if (inputEquationText.isNotBlank()) Color(0xFF2563EB) else borderColor
+                                                            if (hasContent) Color(0xFF2563EB) else borderColor
                                                         ),
-                                                        modifier = Modifier.clickable(enabled = inputEquationText.isNotBlank()) {
+                                                        modifier = Modifier.clickable(enabled = hasContent) {
                                                             saveEquation()
                                                         }
                                                     ) {
                                                         Icon(
                                                             Icons.Filled.Add,
                                                             contentDescription = "Tambah",
-                                                            tint = if (inputEquationText.isNotBlank()) Color.White else textSecondary,
+                                                            tint = if (hasContent) Color.White else textSecondary,
                                                             modifier = Modifier.padding(3.dp).size(14.dp)
                                                         )
                                                     }
@@ -1072,7 +1696,10 @@ fun FloatingGraphWindow(
                                                         color = inputBg,
                                                         border = androidx.compose.foundation.BorderStroke(0.6.dp, borderColor),
                                                         modifier = Modifier.clickable {
-                                                            inputEquationText = presetEq
+                                                            val parsed = latexToMathExpr(presetEq)
+                                                            mathRoot = parsed
+                                                            mathActiveSeqId = parsed.id
+                                                            mathCursorOffset = parsed.items.size
                                                         }
                                                     ) {
                                                         Text(
@@ -1082,93 +1709,6 @@ fun FloatingGraphWindow(
                                                             color = textSecondary,
                                                             modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
                                                         )
-                                                    }
-                                                }
-                                            }
-
-                                            // Built-in Desmos-Style Math Keypad
-                                            AnimatedVisibility(
-                                                visible = showMathKeypad,
-                                                enter = expandVertically(),
-                                                exit = shrinkVertically()
-                                            ) {
-                                                Column(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .padding(top = 6.dp),
-                                                    verticalArrangement = Arrangement.spacedBy(3.dp)
-                                                ) {
-                                                    val keypadRows = remember {
-                                                        listOf(
-                                                            listOf("x", "y", "7", "8", "9", "/", "^2"),
-                                                            listOf("m", "c", "4", "5", "6", "*", "√"),
-                                                            listOf("(", ")", "1", "2", "3", "-", "π"),
-                                                            listOf("AC", "0", ".", "=", "+", "⌫")
-                                                        )
-                                                    }
-
-                                                    keypadRows.forEach { rowKeys ->
-                                                        Row(
-                                                            modifier = Modifier.fillMaxWidth(),
-                                                            horizontalArrangement = Arrangement.spacedBy(3.dp)
-                                                        ) {
-                                                            rowKeys.forEach { key ->
-                                                                val isAction = key == "AC" || key == "⌫"
-                                                                val isVar = key in listOf("x", "y", "m", "c", "π")
-                                                                val isNumber = key in listOf("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ".")
-                                                                val isOperator = key in listOf("+", "-", "*", "/", "=", "^2", "√", "(", ")")
-
-                                                                // Calm, matte, eye-friendly neutral color palette
-                                                                val btnBg = when {
-                                                                    isNumber -> if (isDarkTheme) Color(0xFF1E293B) else Color(0xFFFFFFFF)
-                                                                    isVar -> if (isDarkTheme) Color(0xFF1E293B).copy(alpha = 0.6f) else Color(0xFFF1F5F9)
-                                                                    isOperator -> if (isDarkTheme) Color(0xFF0F172A) else Color(0xFFF8FAFC)
-                                                                    isAction -> if (isDarkTheme) Color(0xFF1E293B).copy(alpha = 0.8f) else Color(0xFFF1F5F9)
-                                                                    else -> cardBg
-                                                                }
-                                                                val btnBorder = if (isDarkTheme) Color(0xFF334155) else Color(0xFFE2E8F0)
-                                                                val btnText = when {
-                                                                    key == "AC" -> if (isDarkTheme) Color(0xFFF87171) else Color(0xFFDC2626).copy(alpha = 0.85f)
-                                                                    key == "⌫" -> textSecondary
-                                                                    isNumber -> textPrimary
-                                                                    isVar -> if (isDarkTheme) Color(0xFFE2E8F0) else Color(0xFF1E293B)
-                                                                    isOperator -> textSecondary
-                                                                    else -> textPrimary
-                                                                }
-
-                                                                Surface(
-                                                                    shape = RoundedCornerShape(4.dp),
-                                                                    color = btnBg,
-                                                                    border = androidx.compose.foundation.BorderStroke(0.6.dp, btnBorder),
-                                                                    modifier = Modifier
-                                                                        .weight(1f)
-                                                                        .height(28.dp)
-                                                                        .clickable {
-                                                                            when (key) {
-                                                                                "AC" -> inputEquationText = ""
-                                                                                "⌫" -> if (inputEquationText.isNotEmpty()) inputEquationText = inputEquationText.dropLast(1)
-                                                                                "^2" -> inputEquationText += "^2"
-                                                                                "√" -> inputEquationText += "sqrt("
-                                                                                "π" -> inputEquationText += "pi"
-                                                                                else -> inputEquationText += key
-                                                                            }
-                                                                        }
-                                                                ) {
-                                                                    Box(
-                                                                        contentAlignment = Alignment.Center,
-                                                                        modifier = Modifier.fillMaxSize()
-                                                                    ) {
-                                                                        Text(
-                                                                            text = key,
-                                                                            fontSize = 11.5.sp,
-                                                                            fontWeight = if (isNumber) FontWeight.SemiBold else if (isAction) FontWeight.Bold else FontWeight.Medium,
-                                                                            fontStyle = if (isVar && key != "π") FontStyle.Italic else FontStyle.Normal,
-                                                                            color = btnText
-                                                                        )
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
                                                     }
                                                 }
                                             }
@@ -1311,23 +1851,60 @@ fun FloatingGraphWindow(
                                                                     }
                                                             ) {}
 
-                                                            // Formula Text & Badge
+                                                            // Formula Visual Math Node & Badge (GeoGebra High-Fidelity Style)
                                                             Column(modifier = Modifier.weight(1f)) {
-                                                                Text(
-                                                                    text = MathPlotHelper.formatFormulaForDisplay(item.displayLabel),
-                                                                    fontSize = 12.sp,
-                                                                    fontWeight = FontWeight.Bold,
-                                                                    fontFamily = FontFamily.Monospace,
-                                                                    color = if (item.isVisible) item.color else textSecondary,
-                                                                    maxLines = 2,
-                                                                    overflow = TextOverflow.Ellipsis
-                                                                )
+                                                                val itemExpr = remember(item.rawEquation, item.displayLabel) {
+                                                                    val source = if (item.rawEquation.isNotBlank()) item.rawEquation else item.displayLabel
+                                                                    latexToMathExpr(source)
+                                                                }
+                                                                val isSimpleFunc = !item.rawEquation.contains("=") &&
+                                                                        !item.hasIntegral && !item.isCircle && !item.isVerticalLine
+
+                                                                if (itemExpr.items.isNotEmpty()) {
+                                                                    Row(
+                                                                        verticalAlignment = Alignment.CenterVertically,
+                                                                        modifier = Modifier.horizontalScroll(rememberScrollState())
+                                                                    ) {
+                                                                        if (isSimpleFunc) {
+                                                                            Text(
+                                                                                text = "f(x) = ",
+                                                                                fontSize = 13.sp,
+                                                                                fontWeight = FontWeight.Bold,
+                                                                                fontFamily = FontFamily.Serif,
+                                                                                fontStyle = FontStyle.Italic,
+                                                                                color = if (item.isVisible) item.color else textSecondary
+                                                                            )
+                                                                        }
+                                                                        MathExprView(
+                                                                            expr = itemExpr,
+                                                                            activeSeqId = "",
+                                                                            cursorOffset = -1,
+                                                                            cursorAlpha = 0f,
+                                                                            fontSize = 13.sp,
+                                                                            textColor = if (item.isVisible) item.color else textSecondary,
+                                                                            onSelectCursor = { _, _ ->
+                                                                                startEdit(item)
+                                                                            }
+                                                                        )
+                                                                    }
+                                                                } else {
+                                                                    Text(
+                                                                        text = MathPlotHelper.formatFormulaForDisplay(item.displayLabel),
+                                                                        fontSize = 12.sp,
+                                                                        fontWeight = FontWeight.Bold,
+                                                                        fontFamily = FontFamily.Monospace,
+                                                                        color = if (item.isVisible) item.color else textSecondary,
+                                                                        maxLines = 2,
+                                                                        overflow = TextOverflow.Ellipsis
+                                                                    )
+                                                                }
                                                                 if (isEditingThis) {
                                                                     Text(
                                                                         text = "✏️ Sedang diedit...",
                                                                         fontSize = 9.sp,
                                                                         fontWeight = FontWeight.Bold,
-                                                                        color = Color(0xFF2563EB)
+                                                                        color = Color(0xFF2563EB),
+                                                                        modifier = Modifier.padding(top = 2.dp)
                                                                     )
                                                                 }
                                                             }
@@ -1356,28 +1933,6 @@ fun FloatingGraphWindow(
                                                                     tint = if (isEditingThis) Color(0xFF2563EB) else textSecondary,
                                                                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp).size(13.dp)
                                                                 )
-                                                            }
-
-                                                            if (!item.isCircle && !item.isVerticalLine) {
-                                                                Surface(
-                                                                    shape = RoundedCornerShape(4.dp),
-                                                                    color = if (item.hasIntegral) item.color.copy(alpha = 0.15f) else cardBg,
-                                                                    border = androidx.compose.foundation.BorderStroke(
-                                                                        0.8.dp,
-                                                                        if (item.hasIntegral) item.color else borderColor
-                                                                    ),
-                                                                    modifier = Modifier.clickable {
-                                                                        graphItems[index] = item.copy(hasIntegral = !item.hasIntegral)
-                                                                    }
-                                                                ) {
-                                                                    Text(
-                                                                        text = "∫",
-                                                                        fontSize = 11.5.sp,
-                                                                        fontWeight = FontWeight.Bold,
-                                                                        color = if (item.hasIntegral) item.color else textSecondary,
-                                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
-                                                                    )
-                                                                }
                                                             }
 
                                                             // Delete ✕
@@ -1437,6 +1992,21 @@ fun FloatingGraphWindow(
                                                                 Spacer(Modifier.height(4.dp))
 
                                                                 // Bounds Row: a and b manual input + steppers
+                                                                val isIntegralItem = item.rawEquation.contains("int") || item.rawEquation.contains("∫")
+                                                                fun updateItemBounds(newA: Float, newB: Float) {
+                                                                    val lowStr = MathPlotHelper.formatNumber(newA)
+                                                                    val upStr = MathPlotHelper.formatNumber(newB)
+                                                                    val cleanFunction = MathPlotHelper.denormalizeImplicitMultiplication(item.cleanExpr)
+                                                                    val updatedRaw = if (isIntegralItem) "\\int_{$lowStr}^{$upStr} $cleanFunction \\, dx" else item.rawEquation
+                                                                    val updatedDisp = if (isIntegralItem) "∫_{$lowStr}^{$upStr} $cleanFunction dx" else item.displayLabel
+                                                                    graphItems[index] = item.copy(
+                                                                        integralLowerA = newA,
+                                                                        integralUpperB = newB,
+                                                                        rawEquation = updatedRaw,
+                                                                        displayLabel = updatedDisp
+                                                                    )
+                                                                }
+
                                                                 Row(
                                                                     modifier = Modifier.fillMaxWidth(),
                                                                     horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -1464,7 +2034,7 @@ fun FloatingGraphWindow(
                                                                                     if (clean.isEmpty() || clean == "-" || clean.matches(Regex("""^-?\d*\.?\d*$"""))) {
                                                                                         rawAText = clean
                                                                                         clean.toFloatOrNull()?.let { newA ->
-                                                                                            graphItems[index] = item.copy(integralLowerA = newA)
+                                                                                            updateItemBounds(newA, item.integralUpperB)
                                                                                         }
                                                                                     }
                                                                                 },
@@ -1482,7 +2052,7 @@ fun FloatingGraphWindow(
                                                                                     modifier = Modifier.clickable {
                                                                                         val newA = ((item.integralLowerA - 0.5f) * 10f).roundToInt() / 10f
                                                                                         rawAText = MathPlotHelper.formatNumber(newA)
-                                                                                        graphItems[index] = item.copy(integralLowerA = newA)
+                                                                                        updateItemBounds(newA, item.integralUpperB)
                                                                                     }.padding(horizontal = 3.dp)
                                                                                 )
                                                                                 Text(
@@ -1493,7 +2063,7 @@ fun FloatingGraphWindow(
                                                                                     modifier = Modifier.clickable {
                                                                                         val newA = ((item.integralLowerA + 0.5f) * 10f).roundToInt() / 10f
                                                                                         rawAText = MathPlotHelper.formatNumber(newA)
-                                                                                        graphItems[index] = item.copy(integralLowerA = newA)
+                                                                                        updateItemBounds(newA, item.integralUpperB)
                                                                                     }.padding(horizontal = 3.dp)
                                                                                 )
                                                                             }
@@ -1522,7 +2092,7 @@ fun FloatingGraphWindow(
                                                                                     if (clean.isEmpty() || clean == "-" || clean.matches(Regex("""^-?\d*\.?\d*$"""))) {
                                                                                         rawBText = clean
                                                                                         clean.toFloatOrNull()?.let { newB ->
-                                                                                            graphItems[index] = item.copy(integralUpperB = newB)
+                                                                                            updateItemBounds(item.integralLowerA, newB)
                                                                                         }
                                                                                     }
                                                                                 },
@@ -1540,7 +2110,7 @@ fun FloatingGraphWindow(
                                                                                     modifier = Modifier.clickable {
                                                                                         val newB = ((item.integralUpperB - 0.5f) * 10f).roundToInt() / 10f
                                                                                         rawBText = MathPlotHelper.formatNumber(newB)
-                                                                                        graphItems[index] = item.copy(integralUpperB = newB)
+                                                                                        updateItemBounds(item.integralLowerA, newB)
                                                                                     }.padding(horizontal = 3.dp)
                                                                                 )
                                                                                 Text(
@@ -1551,7 +2121,7 @@ fun FloatingGraphWindow(
                                                                                     modifier = Modifier.clickable {
                                                                                         val newB = ((item.integralUpperB + 0.5f) * 10f).roundToInt() / 10f
                                                                                         rawBText = MathPlotHelper.formatNumber(newB)
-                                                                                        graphItems[index] = item.copy(integralUpperB = newB)
+                                                                                        updateItemBounds(item.integralLowerA, newB)
                                                                                     }.padding(horizontal = 3.dp)
                                                                                 )
                                                                             }
@@ -1578,7 +2148,7 @@ fun FloatingGraphWindow(
                                                                             color = if (isCur) item.color.copy(alpha = 0.25f) else cardBg,
                                                                             border = androidx.compose.foundation.BorderStroke(0.5.dp, borderColor),
                                                                             modifier = Modifier.clickable {
-                                                                                graphItems[index] = item.copy(integralLowerA = pa, integralUpperB = pb)
+                                                                                updateItemBounds(pa, pb)
                                                                             }
                                                                         ) {
                                                                             Text(
@@ -2090,6 +2660,125 @@ fun FloatingGraphWindow(
                         }
                     }
                 }
+
+                    // ── GeoGebra RetEX Full-Width Bottom-Docked Keypad ──
+                    AnimatedVisibility(
+                        visible = showMathKeypad,
+                        enter = expandVertically(),
+                        exit = shrinkVertically()
+                    ) {
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(220.dp),
+                            color = cardBg,
+                            border = androidx.compose.foundation.BorderStroke(0.8.dp, borderColor)
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                                verticalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                // ── Keypad Tab Header (123, f(x), abc, αβγ) + Close Keypad Action ──
+                                val keyboardTabs = listOf("123", "f(x)", "abc", "αβγ")
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(30.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    keyboardTabs.forEachIndexed { idx, label ->
+                                        val isSelected = keyboardTab == idx
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = if (isSelected) {
+                                                if (isDarkTheme) Color(0xFF334155) else Color(0xFFE2E8F0)
+                                            } else inputBg,
+                                            border = androidx.compose.foundation.BorderStroke(
+                                                0.8.dp,
+                                                if (isSelected) Color(0xFF2563EB) else borderColor
+                                            ),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .fillMaxHeight()
+                                                .clickable { keyboardTab = idx }
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Text(
+                                                    text = label,
+                                                    fontSize = 11.5.sp,
+                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                    color = if (isSelected) {
+                                                        if (isDarkTheme) Color(0xFF93C5FD) else Color(0xFF2563EB)
+                                                    } else textSecondary
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    IconButton(
+                                        onClick = { showMathKeypad = false },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.Close,
+                                            contentDescription = "Tutup Keypad",
+                                            tint = textSecondary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+
+                                // ── Keypad Body: Tab Contents ──
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .weight(1f)
+                                ) {
+                                    when (keyboardTab) {
+                                        0 -> GeoGebraKeypad123(
+                                            onChar = { insertMathText(it) },
+                                            onStructure = { insertMathStructure(it) },
+                                            onFraction = { insertMathText("/") },
+                                            onPower = { insertMathText("^") },
+                                            onPowerSquare = { interceptMathPowerSquare() },
+                                            onBackspace = { handleMathBackspace() },
+                                            onNavLeft = { handleMathNavLeft() },
+                                            onNavRight = { handleMathNavRight() },
+                                            onEnter = { saveEquation() }
+                                        )
+                                        1 -> GeoGebraKeypadFunctions(
+                                            onChar = { insertMathText(it) },
+                                            onFunction = { insertMathFunctionWithParens(it) },
+                                            onDerivative = { insertMathDerivativeWithParens() },
+                                            onStructure = { insertMathStructure(it) },
+                                            onFraction = { insertMathText("/") },
+                                            onBackspace = { handleMathBackspace() },
+                                            onNavLeft = { handleMathNavLeft() },
+                                            onNavRight = { handleMathNavRight() },
+                                            onEnter = { saveEquation() }
+                                        )
+                                        2 -> GeoGebraKeypadAbc(
+                                            onChar = { insertMathText(it) },
+                                            onBackspace = { handleMathBackspace() },
+                                            onNavLeft = { handleMathNavLeft() },
+                                            onNavRight = { handleMathNavRight() },
+                                            onEnter = { saveEquation() }
+                                        )
+                                        else -> GeoGebraKeypadGreek(
+                                            onChar = { insertMathText(it) },
+                                            onBackspace = { handleMathBackspace() },
+                                            onNavLeft = { handleMathNavLeft() },
+                                            onNavRight = { handleMathNavRight() },
+                                            onEnter = { saveEquation() }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
             }
 
                 // ── 3. Freeform Continuous Corner Drag-Resize Handle (Bottom-Right) ──

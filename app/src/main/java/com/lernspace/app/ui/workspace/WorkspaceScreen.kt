@@ -727,7 +727,7 @@ private fun WorkspaceNoteCard(
 
                     // Note Snippet preview
                     Text(
-                        text = note.snippet,
+                        text = note.displaySnippet,
                         style = MaterialTheme.typography.bodySmall,
                         color = LernspaceTextSecondary,
                         maxLines = 2

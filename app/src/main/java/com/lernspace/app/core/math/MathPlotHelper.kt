@@ -1553,11 +1553,37 @@ object MathPlotHelper {
     }
 
     /**
+     * Converts machine/evaluator explicit multiplication syntax (e.g. "2*x", "a*x", "2*(x+1)")
+     * back into natural algebraic implicit notation (e.g. "2x", "ax", "2(x+1)") for display and editing.
+     */
+    fun denormalizeImplicitMultiplication(expr: String): String {
+        if (expr.isBlank()) return expr
+        var res = expr
+        // 1. Angka diikuti * diikuti huruf: 2*x -> 2x, 4*x^2 -> 4x^2
+        res = res.replace(Regex("""(\d+)\s*[\*·]\s*([a-zA-Z])"""), "$1$2")
+        // 2. Huruf diikuti * diikuti huruf: a*x -> ax, m*x -> mx
+        res = res.replace(Regex("""([a-zA-Z])\s*[\*·]\s*([a-zA-Z])"""), "$1$2")
+        // 3. Angka / huruf diikuti * diikuti kurung buka: 2*(x+1) -> 2(x+1)
+        res = res.replace(Regex("""(\d+|[a-zA-Z])\s*[\*·]\s*\("""), "$1(")
+        // 4. Kurung tutup diikuti * diikuti kurung buka / huruf: (x+1)*(x-1) -> (x+1)(x-1)
+        res = res.replace(Regex("""\)\s*[\*·]\s*(\(|[a-zA-Z])"""), ")$1")
+        return res
+    }
+
+    /**
      * Extracts all single-letter parameter symbols (e.g. 'a', 'b', 'c', 'k', 'm', 'r') from an equation.
-     * Excludes independent variable 'x', dependent 'y', and base 'e'.
+     * Excludes independent variable 'x', dependent 'y', base 'e', and calculus keywords / differentials (int, dx, etc.).
      */
     fun extractParameters(expr: String): List<Char> {
-        val normalized = normalizeMathExpression(expr)
+        if (expr.isBlank()) return emptyList()
+
+        // 1. Jika merupakan integral, ambil fungsi integrannya saja (jangan sertakan notasi \int atau dx)
+        val parsedInt = parseDefiniteIntegral(expr)
+        val source = if (parsedInt != null) parsedInt.functionExpr else expr
+
+        // 2. Bersihkan sintaks LaTeX dan normalisasi ekspresi matematika
+        val cleanLatex = cleanLatexForPlot(source)
+        val normalized = normalizeMathExpression(cleanLatex)
         var clean = normalized.trim()
         if (clean.contains("=")) {
             val parts = clean.split("=")
@@ -1567,7 +1593,7 @@ object MathPlotHelper {
                 clean
             }
         }
-        val stripped = clean.lowercase()
+        var stripped = clean.lowercase()
             .replace("sqrt", " ")
             .replace("cbrt", " ")
             .replace("asin", " ")
@@ -1589,6 +1615,21 @@ object MathPlotHelper {
             .replace("max", " ")
             .replace("min", " ")
             .replace("pi", " ")
+            .replace("integral", " ")
+            .replace("iiint", " ")
+            .replace("iint", " ")
+            .replace("oint", " ")
+            .replace("int", " ")
+            .replace("sum", " ")
+            .replace("prod", " ")
+            .replace("lim", " ")
+            .replace("frac", " ")
+            .replace("left", " ")
+            .replace("right", " ")
+
+        // Hapus diferensial seperti dx, dy, dt, du, dv, dz, dr
+        stripped = stripped.replace(Regex("""\bd[xyzuvtr]\b"""), " ")
+            .replace(Regex("""(?<=[^a-zA-Z]|^)d[xyzuvtr](?=[^a-zA-Z]|$)"""), " ")
 
         val allowedParams = ('a'..'z').toSet() - setOf('x', 'y', 'e')
         val found = mutableListOf<Char>()
@@ -2528,21 +2569,36 @@ object MathPlotHelper {
      * into clean, readable textbook mathematical format for graph titles, legends, and UI badges.
      */
     fun formatFormulaForDisplay(formula: String): String {
-        return formula
+        var res = formula
             .replace("\\cdot", "·")
             .replace("\\times", "×")
             .replace("\\pm", "±")
             .replace("\\pi", "π")
-            .replace("^2", "²")
-            .replace("^3", "³")
-            .replace("^4", "⁴")
-            .replace("^5", "⁵")
-            .replace("^6", "⁶")
-            .replace("^7", "⁷")
-            .replace("^8", "⁸")
-            .replace("^9", "⁹")
-            .replace("^0", "⁰")
-            .replace("^1", "¹")
+            .replace("\\,", " ")
+            .replace("\\quad", " ")
+            .replace("\\qquad", " ")
+            .replace("\\sin", "sin")
+            .replace("\\cos", "cos")
+            .replace("\\tan", "tan")
+            .replace("\\ln", "ln")
+            .replace("\\log", "log")
+            .replace("\\sum", "∑")
+            .replace("\\prod", "∏")
+            .replace("\\lim", "lim")
+
+        // Konversi \frac{a}{b} -> (a)/(b)
+        val fracRegex = Regex("""\\(?:d|t)?frac\s*\{([^{}]+)\}\s*\{([^{}]+)\}""")
+        res = fracRegex.replace(res) { "(${it.groupValues[1]})/(${it.groupValues[2]})" }
+
+        // Konversi \sqrt{a} -> √(a)
+        val sqrtRegex = Regex("""\\sqrt\s*\{([^{}]+)\}""")
+        res = sqrtRegex.replace(res) { "√(${it.groupValues[1]})" }
+
+        // Konversi \int_{a}^{b} -> ∫_{a}^{b} atau \int -> ∫
+        res = res.replace("\\int", "∫")
+
+        // Superscript exponents
+        res = res
             .replace("^{2}", "²")
             .replace("^{3}", "³")
             .replace("^{4}", "⁴")
@@ -2553,8 +2609,20 @@ object MathPlotHelper {
             .replace("^{9}", "⁹")
             .replace("^{0}", "⁰")
             .replace("^{1}", "¹")
+            .replace("^2", "²")
+            .replace("^3", "³")
+            .replace("^4", "⁴")
+            .replace("^5", "⁵")
+            .replace("^6", "⁶")
+            .replace("^7", "⁷")
+            .replace("^8", "⁸")
+            .replace("^9", "⁹")
+            .replace("^0", "⁰")
+            .replace("^1", "¹")
             .replace("^{*}", "*")
             .replace("*", "·")
+
+        return res.trim()
     }
 
     // ─────────────────────────────────────────────────────────────────────────

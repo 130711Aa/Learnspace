@@ -278,12 +278,21 @@ object SupabaseBankSoalClient {
         }
     }
 
+    data class TaxonomyEntry(
+        val subject: String,
+        val topic: String,
+        val subtopic: String? = null
+    )
+
+    private val inMemoryTaxonomies = mutableListOf<TaxonomyEntry>()
+
     /**
      * Fetches distinct academic taxonomies (Subject > Topic > Subtopic) currently in Supabase or local cache.
      * Used as grounding reference for Gemini to prevent duplicate or divergent concept labels.
      */
     suspend fun fetchExistingTaxonomies(): List<String> = withContext(Dispatchers.IO) {
         val results = linkedSetOf<String>()
+        val parsedEntries = mutableListOf<TaxonomyEntry>()
         try {
             val urlString = "$SUPABASE_URL/rest/v1/questions?select=subject_name,topic_title,subtopic_title&limit=300"
             val url = URL(urlString)
@@ -304,8 +313,10 @@ object SupabaseBankSoalClient {
                     val t = obj.optString("topic_title", "").trim()
                     val sub = obj.optString("subtopic_title", "").trim()
                     if (s.isNotBlank() && t.isNotBlank()) {
-                        if (sub.isNotBlank()) {
-                            results.add("$s > $t > $sub")
+                        val subOrNull = if (sub.isNotBlank()) sub else null
+                        parsedEntries.add(TaxonomyEntry(s, t, subOrNull))
+                        if (subOrNull != null) {
+                            results.add("$s > $t > $subOrNull")
                         } else {
                             results.add("$s > $t")
                         }
@@ -324,8 +335,17 @@ object SupabaseBankSoalClient {
                 val t = q.topicTitle.trim()
                 val sub = q.subtopicTitle?.trim().orEmpty()
                 if (s.isNotBlank() && t.isNotBlank()) {
-                    if (sub.isNotBlank()) results.add("$s > $t > $sub") else results.add("$s > $t")
+                    val subOrNull = if (sub.isNotBlank()) sub else null
+                    parsedEntries.add(TaxonomyEntry(s, t, subOrNull))
+                    if (subOrNull != null) results.add("$s > $t > $subOrNull") else results.add("$s > $t")
                 }
+            }
+        }
+
+        if (parsedEntries.isNotEmpty()) {
+            synchronized(inMemoryTaxonomies) {
+                inMemoryTaxonomies.clear()
+                inMemoryTaxonomies.addAll(parsedEntries)
             }
         }
         results.toList()
@@ -340,36 +360,57 @@ object SupabaseBankSoalClient {
         rawSubject: String,
         rawTopic: String,
         rawSubtopic: String,
-        referenceQuestions: List<BankQuestion> = loadQuestionsFromCache()
+        referenceQuestions: List<BankQuestion> = emptyList(),
+        taxonomyList: List<String> = emptyList()
     ): Triple<String, String, String> {
         var finalSubject = rawSubject.trim()
         var finalTopic = rawTopic.trim()
         var finalSubtopic = rawSubtopic.trim()
 
-        if (referenceQuestions.isEmpty()) {
+        val entries: List<TaxonomyEntry> = when {
+            referenceQuestions.isNotEmpty() -> {
+                referenceQuestions.map { TaxonomyEntry(it.subjectName.trim(), it.topicTitle.trim(), it.subtopicTitle?.trim()) }
+            }
+            synchronized(inMemoryTaxonomies) { inMemoryTaxonomies.isNotEmpty() } -> {
+                synchronized(inMemoryTaxonomies) { inMemoryTaxonomies.toList() }
+            }
+            taxonomyList.isNotEmpty() -> {
+                taxonomyList.mapNotNull { line ->
+                    val parts = line.split(">").map { it.trim() }
+                    if (parts.size >= 2) {
+                        TaxonomyEntry(parts[0], parts[1], parts.getOrNull(2))
+                    } else null
+                }
+            }
+            else -> {
+                loadQuestionsFromCache().map { TaxonomyEntry(it.subjectName.trim(), it.topicTitle.trim(), it.subtopicTitle?.trim()) }
+            }
+        }
+
+        if (entries.isEmpty()) {
             return Triple(finalSubject, finalTopic, finalSubtopic)
         }
 
         // 1. Normalize Subject
-        val existingSubjects = referenceQuestions.map { it.subjectName.trim() }.filter { it.isNotBlank() }.distinct()
+        val existingSubjects = entries.map { it.subject }.filter { it.isNotBlank() }.distinct()
         findCloseMatch(finalSubject, existingSubjects)?.let { finalSubject = it }
 
         // 2. Normalize Topic within matching Subject
-        val subjectQuestions = referenceQuestions.filter { it.subjectName.equals(finalSubject, ignoreCase = true) }
-        val candidateTopics = if (subjectQuestions.isNotEmpty()) {
-            subjectQuestions.map { it.topicTitle.trim() }.filter { it.isNotBlank() }.distinct()
+        val subjectEntries = entries.filter { it.subject.equals(finalSubject, ignoreCase = true) }
+        val candidateTopics = if (subjectEntries.isNotEmpty()) {
+            subjectEntries.map { it.topic }.filter { it.isNotBlank() }.distinct()
         } else {
-            referenceQuestions.map { it.topicTitle.trim() }.filter { it.isNotBlank() }.distinct()
+            entries.map { it.topic }.filter { it.isNotBlank() }.distinct()
         }
         findCloseMatch(finalTopic, candidateTopics)?.let { finalTopic = it }
 
         // 3. Normalize Subtopic within matching Subject & Topic
         if (finalSubtopic.isNotBlank()) {
-            val topicQuestions = subjectQuestions.filter { it.topicTitle.equals(finalTopic, ignoreCase = true) }
-            val candidateSubtopics = if (topicQuestions.isNotEmpty()) {
-                topicQuestions.mapNotNull { it.subtopicTitle?.trim() }.filter { it.isNotBlank() }.distinct()
+            val topicEntries = subjectEntries.filter { it.topic.equals(finalTopic, ignoreCase = true) }
+            val candidateSubtopics = if (topicEntries.isNotEmpty()) {
+                topicEntries.mapNotNull { it.subtopic }.filter { it.isNotBlank() }.distinct()
             } else {
-                referenceQuestions.mapNotNull { it.subtopicTitle?.trim() }.filter { it.isNotBlank() }.distinct()
+                entries.mapNotNull { it.subtopic }.filter { it.isNotBlank() }.distinct()
             }
             findCloseMatch(finalSubtopic, candidateSubtopics)?.let { finalSubtopic = it }
         }

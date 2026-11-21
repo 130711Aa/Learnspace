@@ -112,7 +112,8 @@ class DocumentJsBridge(
         spaceBeforePt: Int,
         spaceAfterPt: Int
     ) -> Unit,
-    private val onRequestReplaceImage: () -> Unit
+    private val onRequestReplaceImage: () -> Unit,
+    private val onRequestEditMath: (String) -> Unit = {}
 ) {
     @JavascriptInterface
     fun onContentChange(html: String) {
@@ -149,6 +150,11 @@ class DocumentJsBridge(
     fun requestReplaceImage() {
         mainHandler.post { onRequestReplaceImage() }
     }
+
+    @JavascriptInterface
+    fun onEditMath(latex: String) {
+        mainHandler.post { onRequestEditMath(latex) }
+    }
 }
 
 // ── IMAGE COMPRESSION TO BASE64 DATA URI ──────────────────────────────────────
@@ -178,7 +184,7 @@ private fun encodeUriToDataUri(context: Context, uri: Uri): String? {
     }
 
     val out = ByteArrayOutputStream()
-    val isPng = mimeType.contains("png", ignoreCase = true)
+    val isPng = mimeType.contains("png", ignoreCase = true) || mimeType.contains("webp", ignoreCase = true) || scaled.hasAlpha()
     if (isPng) {
         scaled.compress(Bitmap.CompressFormat.PNG, 95, out)
     } else {
@@ -566,15 +572,117 @@ fun generateEditorHtml(
     display: block; float: right; margin: 4px 0 10px 18px;
   }
 
-  /* ── MATH INLINE ── */
-  .math-inline {
-    font-family: 'Roboto Mono', 'Courier New', monospace;
-    color: #1D4ED8;
-    background: #EFF6FF;
-    padding: 2px 7px;
-    border-radius: 4px;
-    font-size: 14px;
+  /* ── MATH INLINE (CLEAN MODERN MATH EMBED - DOCS & WORD STYLE) ── */
+  .math-inline, .math-tex {
     display: inline-block;
+    vertical-align: -0.15em;
+    padding: 0.5px 3px;
+    margin: 0 1px;
+    border-radius: 4px;
+    color: inherit;
+    background: transparent;
+    border: 1px solid transparent;
+    cursor: pointer;
+    user-select: all;
+    -webkit-user-select: all;
+    white-space: nowrap;
+    line-height: normal;
+    transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .math-inline:hover, .math-inline:active, .math-inline:focus, .math-inline.selected,
+  .math-tex:hover, .math-tex:active, .math-tex:focus {
+    background: rgba(37, 99, 235, 0.08);
+    border-color: rgba(37, 99, 235, 0.35);
+    box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.15);
+  }
+  html.dark .math-inline:hover, html.dark .math-inline:active, html.dark .math-inline:focus, html.dark .math-inline.selected,
+  html.dark .math-tex:hover, html.dark .math-tex:active, html.dark .math-tex:focus {
+    background: rgba(96, 165, 250, 0.15);
+    border-color: rgba(96, 165, 250, 0.45);
+    box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.2);
+  }
+  .math-inline math, .math-tex math {
+    font-family: math, 'Cambria Math', 'STIX Two Math', 'Latin Modern Math', 'Times New Roman', serif;
+    font-size: 1.05em;
+    color: inherit;
+    line-height: 1;
+    vertical-align: baseline;
+  }
+  .math-inline math mi, .math-tex math mi {
+    font-style: italic;
+    font-family: math, 'Cambria Math', 'STIX Two Math', 'Times New Roman', serif;
+  }
+  .math-inline math mi[mathvariant="normal"], .math-tex math mi[mathvariant="normal"] {
+    font-style: normal;
+  }
+  .math-inline math mo, .math-tex math mo {
+    font-style: normal;
+    padding: 0 0.08em;
+  }
+  .math-inline math mn, .math-tex math mn {
+    font-style: normal;
+  }
+  .math-inline math mfrac, .math-tex math mfrac {
+    padding: 0 0.12em;
+    vertical-align: 0.05em;
+  }
+  .math-inline math msup, .math-tex math msup {
+    display: inline-flex !important;
+    flex-direction: row !important;
+    align-items: baseline !important;
+    vertical-align: baseline !important;
+  }
+  .math-inline math msup > :first-child, .math-tex math msup > :first-child {
+    display: inline-flex !important;
+    align-items: baseline !important;
+  }
+  .math-inline math msup > :last-child, .math-tex math msup > :last-child {
+    display: inline-flex !important;
+    align-items: baseline !important;
+    font-size: 0.74em !important;
+    transform: translateY(-0.45em) !important;
+    margin-left: 0.08em !important;
+  }
+  .math-inline math msub, .math-tex math msub {
+    display: inline-flex !important;
+    flex-direction: row !important;
+    align-items: baseline !important;
+    vertical-align: baseline !important;
+  }
+  .math-inline math msub > :first-child, .math-tex math msub > :first-child {
+    display: inline-flex !important;
+    align-items: baseline !important;
+  }
+  .math-inline math msub > :last-child, .math-tex math msub > :last-child {
+    display: inline-flex !important;
+    align-items: baseline !important;
+    font-size: 0.74em !important;
+    transform: translateY(0.30em) !important;
+    margin-left: 0.05em !important;
+  }
+  .math-inline math msubsup, .math-tex math msubsup {
+    display: inline-flex !important;
+    flex-direction: row !important;
+    align-items: baseline !important;
+    vertical-align: baseline !important;
+  }
+  .math-inline math msubsup > :first-child, .math-tex math msubsup > :first-child {
+    display: inline-flex !important;
+    align-items: baseline !important;
+  }
+  .math-inline math msubsup > :nth-child(2), .math-tex math msubsup > :nth-child(2) {
+    display: inline-flex !important;
+    align-items: baseline !important;
+    font-size: 0.72em !important;
+    transform: translateY(0.30em) !important;
+    margin-left: 0.05em !important;
+  }
+  .math-inline math msubsup > :last-child, .math-tex math msubsup > :last-child {
+    display: inline-flex !important;
+    align-items: baseline !important;
+    font-size: 0.72em !important;
+    transform: translateY(-0.45em) !important;
+    margin-left: 0.05em !important;
   }
 
   /* ── OPTIONAL FLOATING WORD COUNT PILL (BOTTOM-LEFT, OFF BY DEFAULT) ── */
@@ -1715,43 +1823,12 @@ function getCleanHtml() {
   for (var p = 0; p < parked.length; p++) {
     parked[p].parentNode.removeChild(parked[p]);
   }
-  var isBlankElem = function(el) {
-    if (!el) return false;
-    if (el.tagName !== 'P' && el.tagName !== 'DIV') return false;
-    if (el.classList.contains('doc-page-break')) return false;
-    if (el.querySelector('img, table, iframe')) return false;
-    return !(el.textContent || '').replace(/\u200B/g, '').trim();
-  };
-
   var pushed = clone.querySelectorAll('[data-page-push]');
   for (var k = 0; k < pushed.length; k++) {
     pushed[k].style.marginTop = pushed[k].dataset.spaceBefore ? (pushed[k].dataset.spaceBefore + 'px') : '';
     pushed[k].removeAttribute('data-page-push');
     if (!pushed[k].getAttribute('style')) pushed[k].removeAttribute('style');
   }
-
-  // Collapse excessive consecutive blank paragraphs (e.g. repeated Enters typed to reach next page)
-  var rootChildren = Array.prototype.slice.call(clone.children);
-  var blankStreak = [];
-  for (var ci = 0; ci < rootChildren.length; ci++) {
-    var cNode = rootChildren[ci];
-    if (isBlankElem(cNode)) {
-      blankStreak.push(cNode);
-    } else {
-      if (blankStreak.length >= 4) {
-        var pb = document.createElement('div');
-        pb.className = 'doc-page-break';
-        cNode.parentNode.insertBefore(pb, cNode);
-        for (var bi = 0; bi < blankStreak.length; bi++) {
-          if (blankStreak[bi].parentNode) {
-            blankStreak[bi].parentNode.removeChild(blankStreak[bi]);
-          }
-        }
-      }
-      blankStreak = [];
-    }
-  }
-
   var pbs = clone.querySelectorAll('.doc-page-break');
   for (var b = 0; b < pbs.length; b++) {
     pbs[b].innerHTML = '';
@@ -2343,26 +2420,39 @@ function insertLink(text, url) {
   notifyChange();
 }
 
-function insertMath(latex) {
+var selectedMathSpan = null;
+
+function insertMath(latex, mathMlHtml) {
   restoreSelection();
-  var sel = window.getSelection();
   var span = document.createElement('span');
   span.className = 'math-inline';
-  span.textContent = latex;
   span.setAttribute('data-latex', latex);
-  if (sel && sel.rangeCount > 0) {
-    var range = sel.getRangeAt(0);
-    range.deleteContents();
-    range.insertNode(span);
-    var sp = document.createTextNode('\u00A0');
-    span.parentNode.insertBefore(sp, span.nextSibling);
-    var nr = document.createRange();
-    nr.setStartAfter(sp);
-    nr.collapse(true);
-    sel.removeAllRanges();
-    sel.addRange(nr);
+  span.setAttribute('contenteditable', 'false');
+  span.setAttribute('title', 'Ketuk untuk mengedit rumus');
+  span.innerHTML = mathMlHtml || latex;
+
+  if (selectedMathSpan && editor.contains(selectedMathSpan)) {
+    var targetToReplace = selectedMathSpan.closest ? (selectedMathSpan.closest('.math-inline, .math-tex') || selectedMathSpan) : selectedMathSpan;
+    if (targetToReplace.parentNode) {
+      targetToReplace.parentNode.replaceChild(span, targetToReplace);
+    }
+    selectedMathSpan = null;
   } else {
-    editor.appendChild(span);
+    var sel = window.getSelection();
+    if (sel && sel.rangeCount > 0 && editor.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+      var range = sel.getRangeAt(0);
+      range.deleteContents();
+      range.insertNode(span);
+      var sp = document.createTextNode('\u00A0');
+      span.parentNode.insertBefore(sp, span.nextSibling);
+      var nr = document.createRange();
+      nr.setStartAfter(sp);
+      nr.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(nr);
+    } else {
+      editor.appendChild(span);
+    }
   }
   notifyChange();
 }
@@ -2632,6 +2722,27 @@ function positionTableToolbar(cell) {
 
 editor.addEventListener('click', function(e) {
   if (e.target && e.target.tagName === 'IMG') return;
+  var inlineMath = e.target.closest ? e.target.closest('.math-inline, .math-tex') : null;
+  var mathEl = inlineMath || (e.target.closest ? e.target.closest('math') : null);
+  if (mathEl) {
+    var container = inlineMath || (mathEl.closest ? mathEl.closest('.math-inline, .math-tex') : null) || mathEl;
+    selectedMathSpan = container;
+    var latex = container.getAttribute('data-latex');
+    if (!latex && container.querySelector) {
+      var child = container.querySelector('[data-latex]');
+      if (child) latex = child.getAttribute('data-latex');
+    }
+    if (!latex) {
+      latex = container.getAttribute('data-tex') || container.getAttribute('alt') || '';
+    }
+    if (!latex) {
+      latex = container.textContent.trim();
+    }
+    if (window.LernspaceDoc && window.LernspaceDoc.onEditMath) {
+      window.LernspaceDoc.onEditMath(latex);
+    }
+    return;
+  }
   var cell = getParentCell(e.target);
   if (cell) {
     deselectImage();
@@ -2882,7 +2993,8 @@ fun DocumentEditorViewport(
     onTriggerSummary: () -> Unit = {},
     onExportPdf: () -> Unit = {},
     onOpenGraph: () -> Unit = {},
-    onRegisterInsertImage: (((Bitmap) -> Unit) -> Unit)? = null,
+    onRegisterInsertImage: ((((Bitmap) -> Unit)?) -> Unit)? = null,
+    onRegisterExportPdf: (((() -> Unit)?) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -2931,6 +3043,7 @@ fun DocumentEditorViewport(
     var showTableDialog by remember { mutableStateOf(false) }
     var showLinkDialog by remember { mutableStateOf(false) }
     var showMathDialog by remember { mutableStateOf(false) }
+    var editingMathLatex by remember { mutableStateOf("") }
     var isReplacingImage by remember { mutableStateOf(false) }
 
     val alignModes = listOf("left", "center", "right", "justify")
@@ -2961,8 +3074,12 @@ fun DocumentEditorViewport(
             }
         }
         onRegisterInsertImage?.invoke(handler)
+        onRegisterExportPdf?.invoke {
+            printWebViewDocumentToPdf(context, webViewRef, latestTitle, latestPageSetup)
+        }
         onDispose {
-            onRegisterInsertImage?.invoke { }
+            onRegisterInsertImage?.invoke(null)
+            onRegisterExportPdf?.invoke(null)
         }
     }
 
@@ -3513,7 +3630,7 @@ fun DocumentEditorViewport(
                         DropdownMenuItem(
                             leadingIcon = { Icon(Icons.Filled.Functions, null, Modifier.size(18.dp), tint = Color(0xFF7C3AED)) },
                             text = { Text("Rumus Matematika", fontSize = 13.sp) },
-                            onClick = { showInsertDropdown = false; showMathDialog = true }
+                            onClick = { showInsertDropdown = false; editingMathLatex = ""; showMathDialog = true }
                         )
                         DropdownMenuItem(
                             leadingIcon = { Icon(Icons.Filled.ShowChart, null, Modifier.size(18.dp), tint = Color(0xFF0284C7)) },
@@ -3682,6 +3799,10 @@ fun DocumentEditorViewport(
                     onRequestReplaceImage = {
                         isReplacingImage = true
                         imagePickerLauncher.launch("image/*")
+                    },
+                    onRequestEditMath = { latex ->
+                        editingMathLatex = latex
+                        showMathDialog = true
                     }
                 )
 
@@ -3737,6 +3858,9 @@ fun DocumentEditorViewport(
                     wv.evaluateJavascript("applyDarkTheme($isDarkTheme);", null)
                 }
             },
+            onRelease = { wv ->
+                wv.destroy()
+            },
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
@@ -3788,9 +3912,17 @@ fun DocumentEditorViewport(
 
     // ── MATH DIALOG ───────────────────────────────────────────────────────
     if (showMathDialog) {
-        VisualMathEquationDialog(initialEquation = "", onDismiss = { showMathDialog = false }) { latex ->
-            js("insertMath(${JSONObject.quote(latex)});")
+        VisualMathEquationDialog(
+            initialEquation = editingMathLatex,
+            onDismiss = {
+                showMathDialog = false
+                editingMathLatex = ""
+            }
+        ) { latex ->
+            val mathMl = LatexMathCodec.toMathML(latex)
+            js("insertMath(${JSONObject.quote(latex)}, ${JSONObject.quote(mathMl)});")
             showMathDialog = false
+            editingMathLatex = ""
         }
     }
 }

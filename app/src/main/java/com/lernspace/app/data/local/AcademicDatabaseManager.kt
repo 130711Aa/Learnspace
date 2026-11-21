@@ -9,6 +9,7 @@ import com.lernspace.app.ui.learning.TopicStatus
 import com.lernspace.app.ui.learning.TopicUi
 import com.lernspace.app.ui.theme.AccentBlue
 import com.lernspace.app.ui.theme.AccentTeal
+import com.lernspace.app.ui.workspace.document.DocxDocumentCodec
 import com.lernspace.app.ui.workspace.model.NoteCanvasType
 import com.lernspace.app.ui.workspace.model.NotePageData
 import com.lernspace.app.ui.workspace.model.NoteUiModel
@@ -130,12 +131,26 @@ object AcademicDatabaseManager {
                 }
                 val dateFormatted = SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date(entity.updatedAt))
 
+                val isDoc = loaded?.canvasType == NoteCanvasType.DOC_DOCUMENT.name || entity.paperStyle == "DOC_DOCUMENT"
+                val rawDocContent = loaded?.documentContent.orEmpty()
+                val cleanSnippet = when {
+                    isDoc -> {
+                        val text = DocxDocumentCodec.exportToPlainText(rawDocContent.ifBlank { entity.snippet }).replace("\n", " ").trim()
+                        if (text.isNotBlank()) text.take(120) + (if (text.length > 120) "..." else "") else "Dokumen Teks Kosong..."
+                    }
+                    entity.snippet.contains('<') || entity.snippet.contains("<!--LSPAGE") -> {
+                        val text = DocxDocumentCodec.exportToPlainText(entity.snippet).replace("\n", " ").trim()
+                        if (text.isNotBlank()) text.take(120) + (if (text.length > 120) "..." else "") else "Catatan kosong..."
+                    }
+                    else -> entity.snippet
+                }
+
                 NoteUiModel(
                     id = entity.id,
                     title = entity.title,
                     subject = entity.subject,
                     date = dateFormatted,
-                    snippet = entity.snippet,
+                    snippet = cleanSnippet,
                     subjectId = entity.subjectId,
                     topicId = entity.topicId,
                     topicName = entity.topicName,
@@ -288,14 +303,25 @@ object AcademicDatabaseManager {
             )
         }
         val isDark = note.isDarkPaper
+        val isDoc = note.canvasType == NoteCanvasType.DOC_DOCUMENT
+        val cleanSnippet = if (isDoc) {
+            val text = DocxDocumentCodec.exportToPlainText(note.documentContent).replace("\n", " ").trim()
+            if (text.isNotBlank()) text.take(120) + (if (text.length > 120) "..." else "") else "Dokumen Teks Kosong..."
+        } else {
+            val s = note.snippet
+            if (s.contains('<') || s.contains("<!--LSPAGE")) {
+                val text = DocxDocumentCodec.exportToPlainText(s).replace("\n", " ").trim()
+                if (text.isNotBlank()) text.take(120) + (if (text.length > 120) "..." else "") else "Catatan kosong..."
+            } else {
+                s
+            }
+        }
+        note.snippet = cleanSnippet
+
         val entity = NoteEntity(
             id = note.id,
             title = note.title,
-            snippet = if (note.canvasType == NoteCanvasType.DOC_DOCUMENT) {
-                note.documentContent.take(120).replace("\n", " ") + "..."
-            } else {
-                note.snippet
-            },
+            snippet = cleanSnippet,
             subject = note.subject,
             subjectId = note.subjectId,
             topicId = note.topicId,

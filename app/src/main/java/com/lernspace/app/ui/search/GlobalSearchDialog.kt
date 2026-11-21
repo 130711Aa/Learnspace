@@ -132,7 +132,7 @@ fun GlobalSearchDialog(
         if (trimmedQuery.isBlank()) allNotes.toList()
         else allNotes.filter {
             it.title.lowercase().contains(trimmedQuery) ||
-                    it.snippet.lowercase().contains(trimmedQuery) ||
+                    it.displaySnippet.lowercase().contains(trimmedQuery) ||
                     it.subject.lowercase().contains(trimmedQuery) ||
                     (it.topicName?.lowercase()?.contains(trimmedQuery) == true)
         }
@@ -650,7 +650,7 @@ private fun NoteResultCard(
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = note.snippet,
+                    text = note.displaySnippet,
                     fontSize = 12.sp,
                     color = Color(0xFF64748B),
                     maxLines = 1,
