@@ -97,15 +97,21 @@ fun DraggableImage(
             modifier = Modifier
                 .fillMaxSize()
                 .then(
-                    if (image.isSelected && !image.isLocked) {
-                        Modifier
-                            .shadow(6.dp, RoundedCornerShape(10.dp))
-                            .border(2.5.dp, selectionColor, RoundedCornerShape(10.dp))
+                    if (image.isSelected) {
+                        if (image.isLocked) {
+                            Modifier
+                                .shadow(6.dp, RoundedCornerShape(10.dp))
+                                .border(2.5.dp, Color(0xFFF59E0B), RoundedCornerShape(10.dp))
+                        } else {
+                            Modifier
+                                .shadow(6.dp, RoundedCornerShape(10.dp))
+                                .border(2.5.dp, selectionColor, RoundedCornerShape(10.dp))
+                        }
                     } else {
                         Modifier.shadow(2.dp, RoundedCornerShape(8.dp))
                     }
                 ),
-            shape = RoundedCornerShape(if (image.isSelected && !image.isLocked) 10.dp else 8.dp),
+            shape = RoundedCornerShape(if (image.isSelected) 10.dp else 8.dp),
             color = Color.White
         ) {
             Image(
@@ -118,9 +124,9 @@ fun DraggableImage(
             )
         }
 
-        // Tap to Select (when unselected and unlocked and selection is allowed)
+        // Tap to Select (when unselected and selection is allowed, even if locked)
         // Multi-touch gestures (zoom/pan) pass cleanly to the canvas with zero accidental movement!
-        if (!image.isSelected && !image.isLocked && isSelectionEnabled) {
+        if (!image.isSelected && isSelectionEnabled) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -151,40 +157,16 @@ fun DraggableImage(
             )
         }
 
-        // Lock Indicator Pill: Placed OUTSIDE the top-end corner of the image!
-        // Never obstructs image/graph content, uses subtle slate/dark styling (not glaring bright yellow)
-        if (image.isLocked) {
-            Surface(
-                shape = CircleShape,
-                color = Color(0xCC0F172A),
-                border = BorderStroke(1.dp, Color(0x33475569)),
-                shadowElevation = 3.dp,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .offset(x = 6.dp, y = (-12).dp)
-                    .size(24.dp)
-                    .clip(CircleShape)
-                    .clickable { currentOnToggleLock() }
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Filled.Lock,
-                        contentDescription = "Posisi Terkunci (Ketuk untuk Buka)",
-                        tint = Color(0xCC94A3B8),
-                        modifier = Modifier.size(12.dp)
-                    )
-                }
-            }
-        }
 
-        // Overlay Controls when Image is Selected & Unlocked
-        if (image.isSelected && !image.isLocked) {
+
+        // Overlay Controls when Image is Selected
+        if (image.isSelected) {
             // Delete Button (Top-Right Circular Action)
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .offset(x = 10.dp, y = (-10).dp)
-                    .size(30.dp)
+                    .size(32.dp)
                     .shadow(4.dp, CircleShape)
                     .clip(CircleShape)
                     .background(Color(0xFFEF4444))
@@ -195,11 +177,11 @@ fun DraggableImage(
                     imageVector = Icons.Filled.Close,
                     contentDescription = "Delete Image",
                     tint = Color.White,
-                    modifier = Modifier.size(15.dp)
+                    modifier = Modifier.size(16.dp)
                 )
             }
 
-            // Action Pill (Top-Start): Move Indicator + Lock Position Button
+            // Action Pill (Top-Start): Move Indicator + Lock/Unlock Toggle Button
             Surface(
                 shape = RoundedCornerShape(14.dp),
                 color = Color(0xFF0F172A),
@@ -214,30 +196,32 @@ fun DraggableImage(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(3.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.OpenWith,
-                            contentDescription = "Move",
-                            tint = Color.White,
-                            modifier = Modifier.size(12.dp)
-                        )
-                        Text(
-                            text = "Geser",
-                            fontSize = 11.sp,
-                            color = Color.White,
-                            fontWeight = FontWeight.Medium
+                    if (!image.isLocked) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.OpenWith,
+                                contentDescription = "Move",
+                                tint = Color.White,
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Text(
+                                text = "Geser",
+                                fontSize = 11.sp,
+                                color = Color.White,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .width(1.dp)
+                                .height(14.dp)
+                                .background(Color(0xFF475569))
                         )
                     }
-
-                    Box(
-                        modifier = Modifier
-                            .width(1.dp)
-                            .height(14.dp)
-                            .background(Color(0xFF475569))
-                    )
 
                     Row(
                         modifier = Modifier
@@ -248,54 +232,104 @@ fun DraggableImage(
                         horizontalArrangement = Arrangement.spacedBy(3.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Filled.LockOpen,
-                            contentDescription = "Kunci Posisi",
-                            tint = Color(0xFF38BDF8),
+                            imageVector = if (image.isLocked) Icons.Filled.LockOpen else Icons.Filled.Lock,
+                            contentDescription = if (image.isLocked) "Buka Kunci" else "Kunci Posisi",
+                            tint = if (image.isLocked) Color(0xFFFBBF24) else Color(0xFF38BDF8),
                             modifier = Modifier.size(12.dp)
                         )
                         Text(
-                            text = "Kunci",
+                            text = if (image.isLocked) "Buka Kunci" else "Kunci",
                             fontSize = 11.sp,
-                            color = Color(0xFF38BDF8),
+                            color = if (image.isLocked) Color(0xFFFBBF24) else Color(0xFF38BDF8),
                             fontWeight = FontWeight.SemiBold
                         )
                     }
                 }
             }
 
-            // Proportional Resize Handle (Bottom-Right Corner)
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .offset(x = 12.dp, y = 12.dp)
-                    .size(44.dp)
-                    .pointerInput(image.id) {
-                        detectDragGestures(
-                            onDragEnd = { currentOnCommitResize(worldWidth, worldHeight) },
-                            onDragCancel = { currentOnCommitResize(worldWidth, worldHeight) },
-                            onDrag = { change, dragAmount ->
-                                change.consume()
-                                val curScale = currentScaleProvider().coerceAtLeast(0.05f)
-                                val deltaWorldX = dragAmount.x / curScale
-                                val deltaWorldY = dragAmount.y / curScale
-                                val delta = (deltaWorldX + deltaWorldY * aspectRatio) / 2f
-                                val newWidth = (worldWidth + delta).coerceIn(120f, 2500f)
-                                worldWidth = newWidth
-                                worldHeight = newWidth / aspectRatio
-                            }
-                        )
-                    },
-                contentAlignment = Alignment.Center
-            ) {
+            // Proportional Resize Handle (Bottom-Right Corner) - Only active when unlocked
+            if (!image.isLocked) {
                 Box(
                     modifier = Modifier
-                        .size(20.dp)
-                        .shadow(4.dp, CircleShape)
-                        .clip(CircleShape)
-                        .background(Color.White)
-                        .border(3.dp, selectionColor, CircleShape)
-                )
+                        .align(Alignment.BottomEnd)
+                        .offset(x = 12.dp, y = 12.dp)
+                        .size(44.dp)
+                        .pointerInput(image.id) {
+                            detectDragGestures(
+                                onDragEnd = { currentOnCommitResize(worldWidth, worldHeight) },
+                                onDragCancel = { currentOnCommitResize(worldWidth, worldHeight) },
+                                onDrag = { change, dragAmount ->
+                                    change.consume()
+                                    val curScale = currentScaleProvider().coerceAtLeast(0.05f)
+                                    val deltaWorldX = dragAmount.x / curScale
+                                    val deltaWorldY = dragAmount.y / curScale
+                                    val delta = (deltaWorldX + deltaWorldY * aspectRatio) / 2f
+                                    val newWidth = (worldWidth + delta).coerceIn(120f, 2500f)
+                                    worldWidth = newWidth
+                                    worldHeight = newWidth / aspectRatio
+                                }
+                            )
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(20.dp)
+                            .shadow(4.dp, CircleShape)
+                            .clip(CircleShape)
+                            .background(Color.White)
+                            .border(3.dp, selectionColor, CircleShape)
+                    )
+                }
             }
+        }
+    }
+}
+
+/**
+ * High-priority floating badge for locked images.
+ * Rendered above the Inking / DrawingSurface layer so users can tap to unlock at ANY time,
+ * even when the Pen or Eraser tool is active, with zero z-index obstruction.
+ * Compact circular badge that stays a crisp fixed size without covering the image graphic.
+ */
+@Composable
+fun LockedImageBadge(
+    image: ImageElement,
+    scaleProvider: () -> Float,
+    panXProvider: () -> Float,
+    panYProvider: () -> Float,
+    onUnlock: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val currentScaleProvider by rememberUpdatedState(scaleProvider)
+    val currentOnUnlock by rememberUpdatedState(onUnlock)
+
+    Box(
+        modifier = modifier
+            .graphicsLayer {
+                val s = currentScaleProvider()
+                translationX = (image.x + image.width) * s + panXProvider() - 36.dp.toPx()
+                translationY = image.y * s + panYProvider() + 2.dp.toPx()
+            }
+            .size(40.dp)
+            .clickable { currentOnUnlock() },
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(24.dp)
+                .shadow(2.dp, CircleShape)
+                .clip(CircleShape)
+                .background(Color(0xDD0F172A))
+                .border(BorderStroke(1.dp, Color(0x66FFFFFF)), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Lock,
+                contentDescription = "Buka Kunci Gambar",
+                tint = Color(0xFFFBBF24),
+                modifier = Modifier.size(12.dp)
+            )
         }
     }
 }

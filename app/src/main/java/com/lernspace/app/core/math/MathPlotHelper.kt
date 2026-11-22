@@ -202,11 +202,13 @@ object MathPlotHelper {
         if (parseDefiniteIntegral(raw) != null) return true
         if (parseCircle(raw) != null) return true
         if (parseLinearEquation(raw) != null) return true
+        if (parseYRelation(raw) != null) return true
 
         val clean = cleanLatexForPlot(raw).lowercase().replace(" ", "")
-        val hasVar = clean.contains('x')
+        val hasVar = clean.contains('x') || clean.contains('y')
         val isEquation = clean.startsWith("y=") || clean.startsWith("f(x)=") ||
-                clean.startsWith("g(x)=") ||
+                clean.startsWith("g(x)=") || clean.startsWith("x=") ||
+                clean.contains("y^2") || clean.contains("y^{2}") ||
                 (hasVar && !clean.contains("=") && !clean.contains("\\"))
         return isEquation
     }
@@ -300,6 +302,12 @@ object MathPlotHelper {
         val linear = parseLinearEquation(raw)
         if (linear != null) {
             return if (linear.isVertical) linear.standardEquation else linear.functionExpr
+        }
+
+        // If it's a y-relation / parabola (e.g. y^2 = x + 1 or x = y^2 - 1)
+        val yRel = parseYRelation(raw)
+        if (yRel != null) {
+            return if (yRel.isXFunctionOfY) yRel.xExprOfY else yRel.fxExprOfX
         }
 
         var clean = cleanLatexForPlot(raw)
@@ -763,6 +771,238 @@ object MathPlotHelper {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Y-RELATION & PARABOLA PARSER (y^2 = f(x) or x = f(y))
+    // ─────────────────────────────────────────────────────────────────────────
+
+    data class YRelationData(
+        val standardEquation: String,
+        val isXFunctionOfY: Boolean = false,
+        val isDualBranch: Boolean = false,
+        val xExprOfY: String = "",   // e.g. "y^2 - 1"
+        val fxExprOfX: String = "",  // e.g. "x + 1"
+        val yOffsetK: Float = 0f,
+        val keyPoints: List<KeyPoint> = emptyList()
+    )
+
+    fun parseYRelation(raw: String): YRelationData? {
+        if (raw.isBlank()) return null
+        var s = cleanLatexForPlot(raw).lowercase().replace(" ", "")
+        s = s.replace("^{2.0}", "^2").replace("^{2}", "^2")
+        if (!s.contains("=")) return null
+
+        // 1. Direct form: x = f(y) (where RHS contains 'y' and not 'x')
+        if (s.startsWith("x=") && s.contains("y") && !s.substring(2).contains("x")) {
+            val rhs = s.substring(2).trim()
+            val keyPts = mutableListOf<KeyPoint>()
+
+            val comp = compile(rhs.replace("y", "x"))
+            if (comp != null) {
+                val x0 = comp.eval(0.0)
+                if (!x0.isNaN() && !x0.isInfinite() && abs(x0) < 2000.0) {
+                    val x0F = x0.toFloat()
+                    keyPts.add(KeyPoint(x0F, 0f, KeyPointType.X_INTERCEPT, "Potong X", "(${formatNumber(x0F)}, 0)"))
+                }
+
+                // Sample roots where x(y) = 0
+                for (stepY in -20..20) {
+                    val yA = stepY.toDouble()
+                    val yB = (stepY + 1).toDouble()
+                    val xA = comp.eval(yA)
+                    val xB = comp.eval(yB)
+                    if (!xA.isNaN() && !xB.isNaN() && (xA * xB <= 0.0)) {
+                        var low = yA
+                        var high = yB
+                        for (iter in 0 until 18) {
+                            val mid = (low + high) / 2.0
+                            val xm = comp.eval(mid)
+                            if (abs(xm) < 1e-7) { low = mid; break }
+                            if (xA * xm <= 0.0) high = mid else low = mid
+                        }
+                        val yValF = low.toFloat()
+                        keyPts.add(KeyPoint(0f, yValF, KeyPointType.Y_INTERCEPT, "Potong Y", "(0, ${formatNumber(yValF)})"))
+                    }
+                }
+            }
+
+            return YRelationData(
+                standardEquation = "x = $rhs",
+                isXFunctionOfY = true,
+                xExprOfY = rhs,
+                keyPoints = keyPts.distinctBy { Triple(it.type, (it.x * 100).roundToInt(), (it.y * 100).roundToInt()) }
+            )
+        }
+
+        // 2. Form: y^2 = RHS or (y - k)^2 = RHS
+        val parts = s.split("=")
+        if (parts.size != 2) return null
+        var lhs = parts[0].trim()
+        var rhs = parts[1].trim()
+
+        var k = 0f
+        var isYPower = false
+
+        if (lhs == "y^2") {
+            isYPower = true
+            k = 0f
+        } else {
+            val yMatch = Regex("""^\(?y([+-]\d*\.?\d+)\)?\^2$""").find(lhs)
+            if (yMatch != null) {
+                isYPower = true
+                val shift = yMatch.groupValues[1].toFloatOrNull() ?: 0f
+                k = -shift
+            }
+        }
+
+        // Handle inverted: RHS is y^2 or (y - k)^2
+        if (!isYPower && (rhs == "y^2" || Regex("""^\(?y([+-]\d*\.?\d+)\)?\^2$""").matches(rhs))) {
+            val tmp = lhs
+            lhs = rhs
+            rhs = tmp
+            if (lhs == "y^2") {
+                isYPower = true
+                k = 0f
+            } else {
+                val yMatch = Regex("""^\(?y([+-]\d*\.?\d+)\)?\^2$""").find(lhs)
+                if (yMatch != null) {
+                    isYPower = true
+                    val shift = yMatch.groupValues[1].toFloatOrNull() ?: 0f
+                    k = -shift
+                }
+            }
+        }
+
+        if (!isYPower) return null
+
+        // Check if RHS is linear in x: ax + b (e.g. x + 1, x - 1, 4x, 2x - 4)
+        var a = 1.0
+        var b = 0.0
+        var isLinearX = false
+
+        val normRhs = rhs.replace("-", "+-").trim('+')
+        val terms = normRhs.split("+").filter { it.isNotBlank() }
+
+        var foundX = false
+        var validLinear = true
+
+        for (term in terms) {
+            val t = term.trim()
+            if (t.contains("x")) {
+                if (t.contains("^") || foundX) {
+                    validLinear = false
+                    break
+                }
+                foundX = true
+                val coeffStr = t.replace("x", "").replace("*", "").trim()
+                a = when (coeffStr) {
+                    "", "+" -> 1.0
+                    "-" -> -1.0
+                    else -> coeffStr.toDoubleOrNull() ?: 1.0
+                }
+            } else {
+                val constVal = t.toDoubleOrNull()
+                if (constVal != null) {
+                    b += constVal
+                } else {
+                    validLinear = false
+                    break
+                }
+            }
+        }
+
+        if (foundX && validLinear && abs(a) > 1e-6) {
+            isLinearX = true
+        }
+
+        val keyPts = mutableListOf<KeyPoint>()
+
+        if (isLinearX) {
+            // (y - k)^2 = a*x + b => x = ((y - k)^2 - b) / a
+            val kStr = if (k == 0f) "y^2" else if (k > 0) "(y - $k)^2" else "(y + ${-k})^2"
+            val xExpr = if (a == 1.0) {
+                if (b == 0.0) kStr else if (b > 0) "$kStr - $b" else "$kStr + ${-b}"
+            } else if (a == -1.0) {
+                if (b == 0.0) "-($kStr)" else if (b > 0) "-($kStr) + $b" else "-($kStr) - ${-b}"
+            } else {
+                if (b == 0.0) "($kStr) / $a" else if (b > 0) "($kStr - $b) / $a" else "($kStr + ${-b}) / $a"
+            }
+
+            // Vertex: y = k, x = -b / a
+            val vx = (-b / a).toFloat()
+            val vy = k
+            keyPts.add(KeyPoint(vx, vy, KeyPointType.VERTEX_MIN, "Puncak Parabola", "(${formatNumber(vx)}, ${formatNumber(vy)})"))
+            if (abs(vy) < 1e-4) {
+                keyPts.add(KeyPoint(vx, 0f, KeyPointType.X_INTERCEPT, "Potong X", "(${formatNumber(vx)}, 0)"))
+            }
+
+            // Y-intercepts: where x = 0 => (y - k)^2 = b
+            if (b >= 0.0) {
+                val sqrtB = sqrt(b)
+                val y1 = (k + sqrtB).toFloat()
+                val y2 = (k - sqrtB).toFloat()
+                keyPts.add(KeyPoint(0f, y1, KeyPointType.Y_INTERCEPT, "Potong Y", "(0, ${formatNumber(y1)})"))
+                if (abs(y1 - y2) > 0.01f) {
+                    keyPts.add(KeyPoint(0f, y2, KeyPointType.Y_INTERCEPT, "Potong Y", "(0, ${formatNumber(y2)})"))
+                }
+            }
+
+            return YRelationData(
+                standardEquation = raw,
+                isXFunctionOfY = true,
+                isDualBranch = false,
+                xExprOfY = xExpr,
+                fxExprOfX = rhs,
+                yOffsetK = k,
+                keyPoints = keyPts.distinctBy { Triple(it.type, (it.x * 100).roundToInt(), (it.y * 100).roundToInt()) }
+            )
+        } else {
+            // Non-linear RHS: e.g. y^2 = x^3 - x -> dual branch y = k ± sqrt(rhs)
+            return YRelationData(
+                standardEquation = raw,
+                isXFunctionOfY = false,
+                isDualBranch = true,
+                xExprOfY = "",
+                fxExprOfX = rhs,
+                yOffsetK = k,
+                keyPoints = emptyList()
+            )
+        }
+    }
+
+    /**
+     * Samples curve points when x is a function of y: x = f(y) (e.g. parabolas like x = y^2 - 1).
+     * Guarantees y = 0 is evaluated so the curve passes through the exact x-intercept.
+     */
+    fun sampleXAsFunctionOfY(
+        xExprOfY: String,
+        yMin: Float,
+        yMax: Float,
+        steps: Int = 300
+    ): List<Offset> {
+        val clean = cleanLatexForPlot(xExprOfY).replace("y", "x").replace("Y", "x")
+        val compiled = compile(clean) ?: return emptyList()
+        val stepSize = (yMax - yMin) / steps.toDouble()
+        val points = ArrayList<Offset>(steps + 10)
+
+        var zeroEvaluated = false
+
+        for (i in 0..steps) {
+            val y = yMin + i * stepSize
+            if (!zeroEvaluated && y >= 0.0) {
+                val x0 = compiled.eval(0.0)
+                if (!x0.isNaN() && !x0.isInfinite() && abs(x0) < 2000.0) {
+                    points.add(Offset(x0.toFloat(), 0f))
+                }
+                zeroEvaluated = true
+            }
+            val xVal = compiled.eval(y)
+            if (!xVal.isNaN() && !xVal.isInfinite() && abs(xVal) < 2000.0) {
+                points.add(Offset(xVal.toFloat(), y.toFloat()))
+            }
+        }
+        return points
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // HIGH-SPEED COMPILED AST EXPRESSION EVALUATOR
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -1025,6 +1265,11 @@ object MathPlotHelper {
             return getCircleKeyPoints(circle)
         }
 
+        val yRel = parseYRelation(functionBody)
+        if (yRel != null && yRel.keyPoints.isNotEmpty()) {
+            return yRel.keyPoints
+        }
+
         val compiled = compile(functionBody) ?: return emptyList()
         val results = mutableListOf<KeyPoint>()
 
@@ -1118,12 +1363,45 @@ object MathPlotHelper {
             val curX = searchXMin + i * step
             val curY = compiled.eval(curX)
 
-            if (!curY.isNaN() && !curY.isInfinite()) {
+            val prevValid = !prevY.isNaN() && !prevY.isInfinite()
+            val curValid = !curY.isNaN() && !curY.isInfinite()
+
+            if (!prevValid && curValid) {
+                // Domain boundary start (e.g. sqrt(x - 1) at x = 1)
+                var low = prevX
+                var high = curX
+                for (iter in 0 until 18) {
+                    val mid = (low + high) / 2.0
+                    val ym = compiled.eval(mid)
+                    if (ym.isNaN() || ym.isInfinite()) low = mid else high = mid
+                }
+                val ym = compiled.eval(high)
+                if (!ym.isNaN() && abs(ym) < 0.15) {
+                    if (foundRoots.none { abs(it - high) < 0.05 }) {
+                        foundRoots.add(high)
+                    }
+                }
+            } else if (prevValid && !curValid) {
+                // Domain boundary end (e.g. sqrt(1 - x) at x = 1)
+                var low = prevX
+                var high = curX
+                for (iter in 0 until 18) {
+                    val mid = (low + high) / 2.0
+                    val ym = compiled.eval(mid)
+                    if (!ym.isNaN() && !ym.isInfinite()) low = mid else high = mid
+                }
+                val ym = compiled.eval(low)
+                if (!ym.isNaN() && abs(ym) < 0.15) {
+                    if (foundRoots.none { abs(it - low) < 0.05 }) {
+                        foundRoots.add(low)
+                    }
+                }
+            } else if (curValid) {
                 if (abs(curY) < 1e-5) {
                     if (foundRoots.none { abs(it - curX) < 0.05 }) {
                         foundRoots.add(curX)
                     }
-                } else if (!prevY.isNaN() && !prevY.isInfinite() && (prevY * curY < 0.0)) {
+                } else if (prevValid && (prevY * curY < 0.0)) {
                     var low = prevX
                     var high = curX
                     var rootX = (low + high) / 2.0
@@ -1760,6 +2038,36 @@ object MathPlotHelper {
             )
         }
 
+        val yRel = parseYRelation(functionBody)
+        if (yRel != null) {
+            val yMinInit = -10f
+            val yMaxInit = 10f
+            val pts = if (yRel.isXFunctionOfY) {
+                sampleXAsFunctionOfY(yRel.xExprOfY, yMinInit, yMaxInit, steps)
+            } else {
+                val topBody = if (yRel.yOffsetK == 0f) "sqrt(${yRel.fxExprOfX})" else "(${yRel.yOffsetK}) + sqrt(${yRel.fxExprOfX})"
+                val botBody = if (yRel.yOffsetK == 0f) "-sqrt(${yRel.fxExprOfX})" else "(${yRel.yOffsetK}) - sqrt(${yRel.fxExprOfX})"
+                sampleFunctionDynamic(topBody, xMin, xMax, steps, yRel.keyPoints) +
+                        sampleFunctionDynamic(botBody, xMin, xMax, steps, yRel.keyPoints)
+            }
+            var computedXMin = xMin
+            var computedXMax = xMax
+            if (pts.isNotEmpty()) {
+                computedXMin = pts.minOf { it.x }.coerceAtLeast(-50f)
+                computedXMax = pts.maxOf { it.x }.coerceAtMost(50f)
+            }
+            return MathPlotData(
+                functionExpression = yRel.standardEquation,
+                variable = 'x',
+                xMin = min(computedXMin - 2f, -10f),
+                xMax = max(computedXMax + 2f, 10f),
+                yMin = yMinInit,
+                yMax = yMaxInit,
+                points = pts,
+                keyPoints = yRel.keyPoints
+            )
+        }
+
         val points = sampleFunctionDynamic(functionBody, xMin, xMax, steps)
         if (points.size < 4) return null
 
@@ -1790,25 +2098,101 @@ object MathPlotHelper {
 
     /**
      * Ultra-fast compiled sampling of curve points across any dynamic viewport [xMin, xMax].
-     * Zero regex, zero string allocation.
+     * Uses bisection at domain boundaries (e.g. square roots) and zero-crossings, ensuring
+     * curves touch the X-axis at exact mathematical roots (e.g. x = 1) without floating.
      */
     fun sampleFunctionDynamic(
         functionBody: String,
         xMin: Float,
         xMax: Float,
-        steps: Int = 300
+        steps: Int = 300,
+        keyPoints: List<KeyPoint> = emptyList()
     ): List<Offset> {
         val compiled = compile(functionBody) ?: return emptyList()
-        val stepSize = (xMax - xMin) / steps.toFloat()
-        val points = ArrayList<Offset>(steps + 1)
+        val stepSize = (xMax - xMin) / steps.toDouble()
+        val points = ArrayList<Offset>(steps + 20)
 
-        for (i in 0..steps) {
-            val x = xMin + i * stepSize
-            val yVal = compiled.eval(x.toDouble())
-            if (!yVal.isNaN() && !yVal.isInfinite() && abs(yVal) < 2000.0) {
-                points.add(Offset(x, yVal.toFloat()))
-            }
+        var prevX = xMin.toDouble()
+        var prevY = compiled.eval(prevX)
+        if (!prevY.isNaN() && !prevY.isInfinite() && abs(prevY) < 2000.0) {
+            points.add(Offset(xMin, prevY.toFloat()))
         }
+
+        for (i in 1..steps) {
+            val x = xMin + i * stepSize
+            val yVal = compiled.eval(x)
+
+            val prevValid = !prevY.isNaN() && !prevY.isInfinite() && abs(prevY) < 2000.0
+            val curValid = !yVal.isNaN() && !yVal.isInfinite() && abs(yVal) < 2000.0
+
+            if (!prevValid && curValid) {
+                // Transition into domain: bisection to find exact boundary (e.g. sqrt(x - 1) at x = 1)
+                var low = prevX
+                var high = x
+                for (iter in 0 until 18) {
+                    val mid = (low + high) / 2.0
+                    val ym = compiled.eval(mid)
+                    if (ym.isNaN() || ym.isInfinite() || abs(ym) >= 2000.0) low = mid else high = mid
+                }
+                val boundaryY = compiled.eval(high)
+                if (!boundaryY.isNaN() && !boundaryY.isInfinite() && abs(boundaryY) < 2000.0) {
+                    val finalY = if (abs(boundaryY) < 0.05) 0f else boundaryY.toFloat()
+                    points.add(Offset(high.toFloat(), finalY))
+                }
+            } else if (prevValid && !curValid) {
+                // Transition out of domain: bisection to find exact boundary
+                var low = prevX
+                var high = x
+                for (iter in 0 until 18) {
+                    val mid = (low + high) / 2.0
+                    val ym = compiled.eval(mid)
+                    if (!ym.isNaN() && !ym.isInfinite() && abs(ym) < 2000.0) low = mid else high = mid
+                }
+                val boundaryY = compiled.eval(low)
+                if (!boundaryY.isNaN() && !boundaryY.isInfinite() && abs(boundaryY) < 2000.0) {
+                    val finalY = if (abs(boundaryY) < 0.05) 0f else boundaryY.toFloat()
+                    points.add(Offset(low.toFloat(), finalY))
+                }
+            } else if (prevValid && curValid && (prevY * yVal < 0.0) && abs(prevY - yVal) < 50.0) {
+                // Crossing X-axis: bisection to find exact root so it connects to y = 0 with zero gap
+                var rLow = prevX
+                var rHigh = x
+                var rLowY = prevY
+                for (iter in 0 until 16) {
+                    val rMid = (rLow + rHigh) / 2.0
+                    val rMidY = compiled.eval(rMid)
+                    if (rMidY.isNaN() || rMidY.isInfinite()) break
+                    if (abs(rMidY) < 1e-7) { rLow = rMid; break }
+                    if ((rLowY > 0 && rMidY < 0) || (rLowY < 0 && rMidY > 0)) {
+                        rHigh = rMid
+                    } else {
+                        rLow = rMid
+                        rLowY = rMidY
+                    }
+                }
+                points.add(Offset(rLow.toFloat(), 0f))
+            }
+
+            if (curValid) {
+                points.add(Offset(x.toFloat(), yVal.toFloat()))
+            }
+
+            prevX = x
+            prevY = yVal
+        }
+
+        // Merge keypoints (roots/intercepts/extrema) within [xMin, xMax]
+        if (keyPoints.isNotEmpty()) {
+            for (kp in keyPoints) {
+                if (kp.x in xMin..xMax && abs(kp.y) < 2000f) {
+                    if (points.none { abs(it.x - kp.x) < 0.005f }) {
+                        points.add(Offset(kp.x, kp.y))
+                    }
+                }
+            }
+            points.sortBy { it.x }
+        }
+
         return points
     }
 

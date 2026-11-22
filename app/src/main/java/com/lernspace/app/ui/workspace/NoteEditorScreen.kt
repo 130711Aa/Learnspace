@@ -11,6 +11,8 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
+import com.lernspace.app.core.mimolab.MimoLabActiveSession
+import com.lernspace.app.ui.mimolab.components.MimoFloatingSimWindow
 import com.lernspace.app.ui.workspace.document.DocPageSetup
 import com.lernspace.app.ui.workspace.document.DocxDocumentCodec
 import androidx.activity.compose.BackHandler
@@ -112,6 +114,7 @@ import com.lernspace.app.data.repository.AcademicWorkspaceState
 import com.lernspace.app.ui.components.DrawingSurface
 import com.lernspace.app.ui.theme.*
 import com.lernspace.app.ui.workspace.components.DraggableImage
+import com.lernspace.app.ui.workspace.components.LockedImageBadge
 import com.lernspace.app.ui.workspace.components.DraggableTextBox
 import com.lernspace.app.ui.workspace.components.FloatingGraphWindow
 import com.lernspace.app.ui.workspace.components.InteractiveGraphDialog
@@ -1466,6 +1469,79 @@ fun NoteEditorScreen(
             )
         }
 
+        // Floating Mimo Lab Simulation Window (PiP)
+        MimoLabActiveSession.activeFloatingSimulation?.let { activeSim ->
+            MimoFloatingSimWindow(
+                simulation = activeSim,
+                isDarkTheme = false,
+                onInsertSnapshotToNote = { bitmap ->
+                    if (activeState.canvasType == NoteCanvasType.DOC_DOCUMENT) {
+                        val handler = activeState.onInsertImageToDocument
+                        if (handler != null) {
+                            handler(bitmap)
+                        } else {
+                            coroutineScope.launch(Dispatchers.IO) {
+                                val stream = ByteArrayOutputStream()
+                                bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+                                val base64 = Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
+                                val dataUri = "data:image/png;base64,$base64"
+                                withContext(Dispatchers.Main) {
+                                    val (setup, cleanBody) = DocPageSetup.extractFromContent(activeState.documentContent)
+                                    val imgTag = "<p><img data-wrap=\"break\" src=\"$dataUri\" style=\"width: 480px; max-width: 100%;\"></p>"
+                                    activeState.updateDocumentContent(DocPageSetup.packWithContent(setup, cleanBody + imgTag))
+                                    Toast.makeText(context, "Snapshot simulasi disisipkan ke dokumen", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }
+                    } else {
+                        val curScale = activeState.scale.coerceAtLeast(0.05f)
+                        val spawnX = (-activeState.panX + 160f) / curScale
+                        val spawnY = (-activeState.panY + 140f) / curScale
+                        activeState.pushUndoSnapshot()
+                        activeState.deselectAll()
+                        activeState.imageElements.add(
+                            ImageElement(
+                                x = spawnX.coerceAtLeast(32f),
+                                y = spawnY.coerceAtLeast(32f),
+                                bitmap = bitmap.asImageBitmap(),
+                                width = 560f,
+                                height = 380f,
+                                isSelected = true
+                            )
+                        )
+                        activeState.saveActivePageData()
+                        Toast.makeText(context, "Snapshot simulasi disisipkan ke catatan", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                onClose = {
+                    MimoLabActiveSession.clearFloatingSimulation()
+                },
+                modifier = Modifier.zIndex(50f)
+            )
+        }
+
+        // Consume any pending snapshot passed from Mimo Lab
+        LaunchedEffect(MimoLabActiveSession.pendingSnapshotBitmap) {
+            val bitmap = MimoLabActiveSession.consumePendingSnapshot() ?: return@LaunchedEffect
+            val curScale = activeState.scale.coerceAtLeast(0.05f)
+            val spawnX = (-activeState.panX + 160f) / curScale
+            val spawnY = (-activeState.panY + 140f) / curScale
+            activeState.pushUndoSnapshot()
+            activeState.deselectAll()
+            activeState.imageElements.add(
+                ImageElement(
+                    x = spawnX.coerceAtLeast(32f),
+                    y = spawnY.coerceAtLeast(32f),
+                    bitmap = bitmap.asImageBitmap(),
+                    width = 560f,
+                    height = 380f,
+                    isSelected = true
+                )
+            )
+            activeState.saveActivePageData()
+            Toast.makeText(context, "Snapshot simulasi disisipkan ke catatan", Toast.LENGTH_SHORT).show()
+        }
+
         // Dialog: Confirm Clear Canvas (Zero accidental clears!)
         if (showClearCanvasDialog) {
             AlertDialog(
@@ -2248,10 +2324,17 @@ private fun NotePaneViewport(
                                     worldDownX in (tb.x - sidePad)..(tb.x + tb.width + sidePad) &&
                                         worldDownY in (tb.y - topPad)..(tb.y + tb.height + sidePad)
                                 } || state.imageElements.any { img ->
-                                    !img.isLocked && run {
-                                        val pad = if (img.isSelected) with(density) { 26.dp.toPx() } / state.scale else 12f / state.scale
+                                    if (activeTool == NoteTool.IMAGE || img.isSelected || !img.isLocked) {
+                                        val pad = if (img.isSelected) with(density) { 26.dp.toPx() } / state.scale else 16f / state.scale
                                         worldDownX in (img.x - pad)..(img.x + img.width + pad) &&
                                             worldDownY in (img.y - pad)..(img.y + img.height + pad)
+                                    } else {
+                                        // Locked image: check if tap hits the lock badge at top-right
+                                        val pad = with(density) { 44.dp.toPx() } / state.scale
+                                        val badgeX = img.x + img.width
+                                        val badgeY = img.y
+                                        worldDownX in (badgeX - pad)..(badgeX + pad) &&
+                                            worldDownY in (badgeY - pad)..(badgeY + pad)
                                     }
                                 }
 
@@ -2501,6 +2584,7 @@ private fun NotePaneViewport(
                                 if (index < state.imageElements.size) {
                                     state.imageElements[index] = state.imageElements[index].copy(isSelected = true)
                                 }
+                                AppSettingsManager.updateActiveTool(NoteTool.IMAGE)
                             },
                             onToggleLock = {
                                 if (index < state.imageElements.size) {
@@ -2510,6 +2594,9 @@ private fun NotePaneViewport(
                                         isLocked = nowLocked,
                                         isSelected = if (nowLocked) false else true
                                     )
+                                    if (!nowLocked) {
+                                        AppSettingsManager.updateActiveTool(NoteTool.IMAGE)
+                                    }
                                     state.saveActivePageData()
                                     val msg = if (nowLocked) "Posisi gambar/grafik dikunci" else "Kunci posisi dibuka"
                                     android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
@@ -2520,8 +2607,8 @@ private fun NotePaneViewport(
                                 state.imageElements.remove(img)
                                 state.saveActivePageData()
                             },
-                            isSelectionEnabled = activeTool == NoteTool.IMAGE,
-                            modifier = Modifier.zIndex(if (img.isSelected) 5f else if (activeTool == NoteTool.IMAGE) 2f else 0f)
+                            isSelectionEnabled = !img.isLocked || activeTool == NoteTool.IMAGE || activeTool == NoteTool.LASSO,
+                            modifier = Modifier.zIndex(if (img.isSelected) 10f else if (!img.isLocked) 2f else 0f)
                         )
                     }
                 }
@@ -2592,6 +2679,32 @@ private fun NotePaneViewport(
                 },
                 modifier = Modifier.fillMaxSize().clipToBounds().zIndex(1f)
             )
+
+            // Locked Image Unlock Badges (Floating on top of Inking Layer so user can tap lock to unlock from ANY tool!)
+            state.imageElements.forEachIndexed { index, img ->
+                if (img.isLocked && !img.isSelected) {
+                    key("locked-badge-${img.id}") {
+                        LockedImageBadge(
+                            image = img,
+                            scaleProvider = { state.scale },
+                            panXProvider = { state.panX },
+                            panYProvider = { state.panY },
+                            onUnlock = {
+                                state.pushUndoSnapshot()
+                                state.deselectAll()
+                                state.imageElements[index] = state.imageElements[index].copy(
+                                    isLocked = false,
+                                    isSelected = true
+                                )
+                                AppSettingsManager.updateActiveTool(NoteTool.IMAGE)
+                                state.saveActivePageData()
+                                android.widget.Toast.makeText(context, "Kunci posisi dibuka", android.widget.Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.zIndex(4f)
+                        )
+                    }
+                }
+            }
 
             // Shape Tool Drawing & Live Preview Layer (Strictly clipped)
             if (activeTool == NoteTool.SHAPE && isActive) {

@@ -12,6 +12,7 @@ import com.lernspace.app.ui.home.HomeScreen
 import com.lernspace.app.ui.home.HomeViewModel
 import com.lernspace.app.ui.insights.InsightsScreen
 import com.lernspace.app.ui.learning.LearningScreen
+import com.lernspace.app.ui.mimolab.MimoLabScreen
 import com.lernspace.app.ui.planner.PlannerScreen
 import com.lernspace.app.ui.quiz.QuizScreen
 import com.lernspace.app.ui.settings.SettingsScreen
@@ -106,6 +107,21 @@ fun LernspaceTabHost(
                 WorkspaceScreen(
                     onNavigateToSyllabus = { _ ->
                         onNavigate(Screen.Learning.route)
+                    }
+                )
+            }
+        }
+
+        // Tab: Mimo Lab
+        if (visitedTabs.contains(Screen.MimoLab.route)) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .keepAliveTab(currentRoute == Screen.MimoLab.route)
+            ) {
+                MimoLabScreen(
+                    onNavigateToWorkspace = {
+                        onNavigate(Screen.Workspace.route)
                     }
                 )
             }

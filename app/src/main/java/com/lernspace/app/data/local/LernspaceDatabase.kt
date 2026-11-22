@@ -21,9 +21,10 @@ import com.lernspace.app.data.local.entity.*
         NoteEntity::class,
         UserSettingsEntity::class,
         FlashcardDeckEntity::class,
-        FlashcardEntity::class
+        FlashcardEntity::class,
+        MimoSimulationEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class LernspaceDatabase : RoomDatabase() {
@@ -36,6 +37,7 @@ abstract class LernspaceDatabase : RoomDatabase() {
     abstract fun reminderDao(): ReminderDao
     abstract fun noteDao(): NoteDao
     abstract fun flashcardDao(): FlashcardDao
+    abstract fun mimoSimulationDao(): MimoSimulationDao
 
     companion object {
         @Volatile
@@ -88,6 +90,33 @@ abstract class LernspaceDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `mimo_simulations` (
+                        `id` TEXT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `subject` TEXT NOT NULL,
+                        `conceptTopic` TEXT NOT NULL,
+                        `description` TEXT NOT NULL,
+                        `htmlContent` TEXT NOT NULL,
+                        `isFavorite` INTEGER NOT NULL DEFAULT 0,
+                        `isCommunityOrigin` INTEGER NOT NULL DEFAULT 0,
+                        `authorName` TEXT NOT NULL DEFAULT 'Mimo AI',
+                        `likesCount` INTEGER NOT NULL DEFAULT 0,
+                        `viewsCount` INTEGER NOT NULL DEFAULT 0,
+                        `createdAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_mimo_simulations_subject` ON `mimo_simulations` (`subject`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_mimo_simulations_createdAt` ON `mimo_simulations` (`createdAt`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_mimo_simulations_isFavorite` ON `mimo_simulations` (`isFavorite`)")
+            }
+        }
+
         fun getInstance(context: Context): LernspaceDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -95,7 +124,7 @@ abstract class LernspaceDatabase : RoomDatabase() {
                     LernspaceDatabase::class.java,
                     "lernspace_database"
                 )
-                    .addMigrations(MIGRATION_2_3)
+                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4)
                     .fallbackToDestructiveMigrationOnDowngrade(true)
                     .build()
                 INSTANCE = instance

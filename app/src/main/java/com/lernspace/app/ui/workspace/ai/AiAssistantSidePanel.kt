@@ -36,6 +36,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lernspace.app.core.ai.GeminiApiClient
 import com.lernspace.app.core.ai.GeneratedFlashcard
+import com.lernspace.app.core.mimolab.MimoEnginePresets
+import com.lernspace.app.core.mimolab.MimoLabActiveSession
 import com.lernspace.app.ui.theme.*
 import com.lernspace.app.ui.workspace.components.MarkdownLatexContent
 import kotlinx.coroutines.Job
@@ -89,6 +91,26 @@ You have direct visual and textual access to the user's active document or noteb
 ## Core Principle
 Be the little companion that makes big ideas easier to understand.
 You are Mimo. Stay curious, stay thoughtful, and make learning delightful!
+
+## Mimo Lab Interactive Simulations Catalog
+LearnSpace features Mimo Lab — a dedicated interactive STEM visualization laboratory. The catalog currently consists of ONLY the following 10 master simulations:
+1. "starter_ohm_circuit" - Rangkaian Listrik & Hukum Ohm: Arus listrik, tegangan baterai, resistansi (V = I·R, P = V·I), saklar, lampu berfilamen, partikel elektron bergerak.
+2. "starter_snell_refraction" - Pembiasan Cahaya & Hukum Snellius: Pembiasan sinar laser melintasi medium (Udara, Air, Kaca, Intan), sudut datang & bias (n1 sin theta1 = n2 sin theta2), pemantulan internal total (TIR).
+3. "starter_friction_inclined_plane" - Gaya Gesek pada Bidang Miring: Hukum Newton, sudut kemiringan, koefisien gesek statis/kinetis (mu_s, mu_k), gaya normal, gaya berat, diagram gaya bebas (FBD).
+4. "starter_hooke_spring" - Hukum Hooke & Elastisitas Pegas: Hukum Hooke (F = -k delta_x), konstanta pegas k, massa beban gantung, energi potensial elastis, grafik regangan, getaran harmonik.
+5. "starter_projectile_motion" - Gerak Parabola / Proyektil: Kecepatan awal v0, sudut elevasi tembakan, titik puncak H_max, jangkauan terjauh X_max, gravitasi, hambatan udara.
+6. "starter_bohr_atom_shells" - Model Atom Bohr & Konfigurasi Elektron: Nomor atom Z, kulit elektron K, L, M, N (rumus 2n^2), elektron valensi, kestabilan konfigurasi gas mulia.
+7. "starter_punnett_genetics" - Pewarisan Sifat Mendel & Diagram Punnett: Genetika dasar, persilangan monohibrid (rasio 3:1) dan dihibrid (rasio 9:3:3:1), alel dominan & resesif, genotipe & fenotipe.
+8. "starter_riemann_sum_integral" - Aproksimasi Integral Riemann: Kalkulus integral, partisi n, jumlah Riemann kiri, kanan, tengah (midpoint), trapesium, estimasi luas daerah kurva.
+9. "starter_carnot_cycle_thermo" - Siklus Mesin Carnot & Termodinamika: Diagram P-V termodinamika, proses 4 tahap isotermal & adiabatik, reservoir suhu tinggi TH & rendah TC, efisiensi termal eta.
+10. "starter_acid_base_titration" - Titrasi Asam Basa & Kurva Netralisasi: Buret larutan titran, labu Erlenmeyer, titik ekuivalen netralisasi, indikator pH (PP, Bromtimol Biru, Metil Oranye), grafik kurva pH.
+
+### Simulation Recommendation Rules (Strict):
+1. If and ONLY IF the user's question, discussion, or page content directly matches one of these 10 simulations, recommend that simulation at the end of your response so the user can test the concept interactively.
+2. When recommending, append this exact tag at the very end of your response on a new line:
+   [MIMO_SIM: <id> | <Judul>]
+   (Example: [MIMO_SIM: starter_ohm_circuit | Rangkaian Listrik & Hukum Ohm])
+3. STRICT NEGATIVE CONSTRAINT: If the concept discussed does NOT match any of these 10 simulations (e.g., sejarah, sastra, geografi, atau materi lain yang belum ada di daftar di atas), DO NOT mention, promise, or invent any simulation whatsoever! Keep your explanation purely conceptual and helpful.
 """
 
 @Composable
@@ -515,7 +537,9 @@ fun AiAssistantSidePanel(
                                 text = action.title,
                                 fontSize = 11.5.sp,
                                 fontWeight = if (isFeatured) FontWeight.Bold else FontWeight.SemiBold,
-                                color = if (action == AiQuickAction.CHEAT_SHEET) {
+                                color = if (action == AiQuickAction.MIMO_LAB) {
+                                    Color(0xFF0284C7)
+                                } else if (action == AiQuickAction.CHEAT_SHEET) {
                                     Color(0xFF8B5CF6)
                                 } else if (action == AiQuickAction.SUMMARIZE) {
                                     AccentBlue
@@ -681,6 +705,7 @@ private fun ChatMessageItem(
     onSaveFlashcards: (List<GeneratedFlashcard>) -> Unit
 ) {
     val isUser = message.role == "user"
+    val context = LocalContext.current
 
     if (isUser) {
         // User Message Bubble (Right aligned)
@@ -824,6 +849,96 @@ private fun ChatMessageItem(
                         fontSize = 12.5.sp,
                         color = LernspaceTextSecondary
                     )
+                }
+
+                // Mimo Lab Simulation Recommendation Card
+                val simRec = message.recommendedSimInfo
+                if (!message.isStreaming && simRec != null && !message.hasError) {
+                    val (simId, simTitle) = simRec
+                    val matchedSim = remember(simId) {
+                        MimoEnginePresets.getPresetSimulations().find {
+                            it.id.equals(simId, ignoreCase = true) ||
+                            it.title.contains(simTitle, ignoreCase = true) ||
+                            it.title.contains(simId, ignoreCase = true)
+                        }
+                    }
+
+                    if (matchedSim != null) {
+                        Spacer(Modifier.height(10.dp))
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = Color(0xFF0284C7).copy(alpha = if (isDarkTheme) 0.18f else 0.08f),
+                            border = BorderStroke(1.dp, Color(0xFF0284C7).copy(alpha = 0.35f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Functions,
+                                        contentDescription = null,
+                                        tint = Color(0xFF0284C7),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Text(
+                                        text = "Rekomendasi Simulasi Mimo Lab",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF0284C7)
+                                    )
+                                }
+                                Text(
+                                    text = matchedSim.title,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = LernspaceDark
+                                )
+                                Text(
+                                    text = matchedSim.description,
+                                    fontSize = 11.sp,
+                                    color = LernspaceTextSecondary,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    lineHeight = 15.sp
+                                )
+                                Spacer(Modifier.height(2.dp))
+                                Button(
+                                    onClick = {
+                                        MimoLabActiveSession.activeFloatingSimulation = matchedSim
+                                        Toast.makeText(
+                                            context,
+                                            "Simulasi '${matchedSim.title}' dibuka melayang!",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF0284C7),
+                                        contentColor = Color.White
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                    modifier = Modifier.height(32.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.OpenWith,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        text = "Buka Simulasi Melayang",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // Action Bar (Copy, Insert to Note, Save as New Note, Save Flashcards)

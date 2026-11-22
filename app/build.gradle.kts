@@ -13,8 +13,8 @@ android {
         applicationId = "com.lernspace.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 29
-        versionName = "2.1.0"
+        versionCode = 30
+        versionName = "2.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -86,10 +86,6 @@ dependencies {
     implementation("androidx.ink:ink-brush-compose:1.0.0")
     implementation("androidx.ink:ink-geometry-compose:1.0.0")
     implementation("androidx.input:input-motionprediction:1.0.1")
-
-    // On-Device SLM Engine (llama.cpp GGUF via Llamatik)
-    implementation("com.llamatik:library:0.12.0")
-    implementation("com.facebook.fbjni:fbjni:0.7.0")
 
     // ML Kit Text OCR
     implementation("com.google.mlkit:text-recognition:16.0.0")

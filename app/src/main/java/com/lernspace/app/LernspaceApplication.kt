@@ -2,9 +2,9 @@ package com.lernspace.app
 
 import android.app.Application
 import com.lernspace.app.core.ai.GeminiApiClient
-import com.lernspace.app.core.ai.LocalSlmManager
 import com.lernspace.app.core.supabase.BankSoalAttemptManager
 import com.lernspace.app.core.supabase.SupabaseBankSoalClient
+import com.lernspace.app.core.supabase.SupabaseMimoLabClient
 import com.lernspace.app.data.local.AcademicDatabaseManager
 import com.lernspace.app.data.local.AppSettingsManager
 import com.lernspace.app.data.local.LernspaceDatabase
@@ -27,8 +27,8 @@ class LernspaceApplication : Application() {
         AppSettingsManager.init(this)
         BankSoalAttemptManager.init(this)
         SupabaseBankSoalClient.init(this)
+        SupabaseMimoLabClient.init(this)
         AcademicDatabaseManager.init(database, this)
-        LocalSlmManager.init(this)
         GeminiApiClient.init(this)
     }
 }

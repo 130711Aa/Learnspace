@@ -40,8 +40,6 @@ import com.lernspace.app.core.ai.GeminiApiClient
 import com.lernspace.app.core.ai.GeneratedFlashcard
 import com.lernspace.app.core.ai.HandwrittenNoteRecognizer
 import com.lernspace.app.core.ai.HybridStudyAiRouter
-import com.lernspace.app.core.ai.LocalSlmManager
-import com.lernspace.app.core.ai.SlmModelSpec
 import com.lernspace.app.core.document.DocumentTextExtractor
 import com.lernspace.app.core.document.ExtractedDocumentResult
 import com.lernspace.app.data.local.NoteStorageManager
@@ -73,7 +71,7 @@ fun FlashcardsScreen() {
     var showCreateDeckDialog by remember { mutableStateOf(false) }
     var showAddCardDialog by remember { mutableStateOf(false) }
     var cardToEdit by remember { mutableStateOf<FlashcardUi?>(null) }
-    var showSlmGenerateDialog by remember { mutableStateOf(false) }
+    var showAiGenerateDialog by remember { mutableStateOf(false) }
 
     // Active study session state
     var studyDeck by remember { mutableStateOf<FlashcardDeckUi?>(null) }
@@ -168,7 +166,7 @@ fun FlashcardsScreen() {
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
-                    onClick = { showSlmGenerateDialog = true },
+                    onClick = { showAiGenerateDialog = true },
                     shape = RoundedCornerShape(10.dp),
                     border = BorderStroke(1.dp, LernspaceBorder),
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
@@ -606,7 +604,7 @@ fun FlashcardsScreen() {
                                             Text("Tambah Kartu")
                                         }
                                         OutlinedButton(
-                                            onClick = { showSlmGenerateDialog = true },
+                                            onClick = { showAiGenerateDialog = true },
                                             shape = RoundedCornerShape(8.dp)
                                         ) {
                                             Icon(Icons.Filled.AutoAwesome, null, modifier = Modifier.size(16.dp), tint = AccentBlue)
@@ -711,13 +709,13 @@ fun FlashcardsScreen() {
     }
 
     // â”€â”€ SLM Generate From Notes / Topic / Text Dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    if (showSlmGenerateDialog) {
+    if (showAiGenerateDialog) {
         GenerateFlashcardsFromNoteDialog(
             subjects = subjects,
             topics = topics,
             notes = notes,
             targetDeck = activeDeck,
-            onDismiss = { showSlmGenerateDialog = false },
+            onDismiss = { showAiGenerateDialog = false },
             onImportGenerated = { deckTitle, subject, topic, note, cards ->
                 val target = activeDeck ?: FlashcardDeckUi(
                     title = deckTitle,
@@ -742,7 +740,7 @@ fun FlashcardsScreen() {
                         )
                     )
                 }
-                showSlmGenerateDialog = false
+                showAiGenerateDialog = false
             }
         )
     }
@@ -1637,10 +1635,8 @@ private fun GenerateFlashcardsFromNoteDialog(
     val generatedCards = remember { mutableStateListOf<GeneratedFlashcard>() }
     val selectedFlags = remember { mutableStateListOf<Boolean>() }
 
-    val hasSlmReady = LocalSlmManager.hasReadyModel(context)
-    val hasGeminiReady = GeminiApiClient.isConfigured() && GeminiApiClient.preferGeminiWhenOnline
-    val hasAnyAi = hasSlmReady || hasGeminiReady
-    val isDownloading = LocalSlmManager.isDownloading
+    val hasGeminiReady = GeminiApiClient.isConfigured()
+    val hasAnyAi = hasGeminiReady
     var activeProviderResult by remember { mutableStateOf<String?>(null) }
     var activeGenJob by remember { mutableStateOf<Job?>(null) }
 
@@ -1848,10 +1844,8 @@ private fun GenerateFlashcardsFromNoteDialog(
                             Text(
                                 text = when {
                                     activeProviderResult != null -> "Hasil terakhir: $activeProviderResult"
-                                    hasGeminiReady && hasSlmReady -> "Engine: ${GeminiApiClient.selectedModelId} (fallback SLM: ${LocalSlmManager.activeModelFileName})"
                                     hasGeminiReady -> "Engine aktif: ${GeminiApiClient.selectedModelId} (BYOK)"
-                                    hasSlmReady -> "Engine offline: ${LocalSlmManager.activeModelFileName}"
-                                    else -> "Aktifkan Gemini API di Settings atau unduh model SLM offline"
+                                    else -> "Aktifkan Gemini API di Settings untuk generate otomatis"
                                 },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = if (hasAnyAi) AccentTeal else LernspaceTextSecondary
@@ -1884,47 +1878,10 @@ private fun GenerateFlashcardsFromNoteDialog(
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Text(
-                                text = "Unduh model SLM ringan untuk membuat flashcard otomatis 100% offline, atau gunakan pola \"Istilah : Penjelasan\" secara manual.",
+                                text = "Aktifkan Gemini API Key di menu Settings untuk membuat flashcard otomatis dari catatan, atau gunakan pola \"Istilah : Penjelasan\" secara manual.",
                                 fontSize = 12.sp,
                                 color = LernspaceDark
                             )
-                            if (isDownloading) {
-                                LinearProgressIndicator(
-                                    progress = { LocalSlmManager.downloadProgress },
-                                    modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(3.dp)),
-                                    color = AccentBlue
-                                )
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(LocalSlmManager.downloadStatusText, fontSize = 11.sp, color = LernspaceTextSecondary)
-                                    TextButton(onClick = { LocalSlmManager.cancelDownload() }) {
-                                        Text("Batal", fontSize = 11.sp, color = AccentRed)
-                                    }
-                                }
-                            } else {
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(
-                                        onClick = { LocalSlmManager.startModelDownload(context, SlmModelSpec.QWEN_2_5_0_5B) },
-                                        shape = RoundedCornerShape(8.dp),
-                                        colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
-                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                                    ) {
-                                        Icon(Icons.Filled.Download, null, modifier = Modifier.size(14.dp))
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text("Unduh Qwen 0.5B (~469 MB)", fontSize = 11.sp)
-                                    }
-                                    OutlinedButton(
-                                        onClick = { LocalSlmManager.startModelDownload(context, SlmModelSpec.QWEN_2_5_1_5B) },
-                                        shape = RoundedCornerShape(8.dp),
-                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                                    ) {
-                                        Text("Qwen 1.5B (~1.04 GB)", fontSize = 11.sp)
-                                    }
-                                }
-                            }
                         }
                     }
                 }
@@ -2318,8 +2275,6 @@ private fun GenerateFlashcardsFromNoteDialog(
                 // Bottom Actions
                 val liveStatus = when {
                     !isGenerating -> ""
-                    HybridStudyAiRouter.isUsingLocalFallback || !hasGeminiReady ->
-                        LocalSlmManager.statusMessage.ifBlank { HybridStudyAiRouter.statusMessage }
                     else -> HybridStudyAiRouter.statusMessage.ifBlank { "Menghubungi ${GeminiApiClient.selectedModelId}..." }
                 }
                 Row(
@@ -2340,7 +2295,6 @@ private fun GenerateFlashcardsFromNoteDialog(
                         if (isGenerating) {
                             TextButton(onClick = {
                                 activeGenJob?.cancel()
-                                LocalSlmManager.cancelGeneration()
                                 isGenerating = false
                             }) {
                                 Text("Hentikan", color = AccentRed)
@@ -2351,7 +2305,7 @@ private fun GenerateFlashcardsFromNoteDialog(
                             }
                         }
 
-                        if (!hasSlmReady && ruleBasedPairs.isNotEmpty() && generatedCards.isEmpty()) {
+                        if (ruleBasedPairs.isNotEmpty() && generatedCards.isEmpty()) {
                             OutlinedButton(
                                 onClick = {
                                     generatedCards.clear()
@@ -2408,8 +2362,8 @@ private fun GenerateFlashcardsFromNoteDialog(
                                 Text(
                                     text = when {
                                         generatedCards.isNotEmpty() -> "Ulangi"
-                                        hasGeminiReady -> "Generate Gemini"
-                                        else -> "Generate SLM"
+                                        hasGeminiReady -> "Generate AI"
+                                        else -> "Generate (Atur API Key)"
                                     },
                                     fontSize = 12.sp
                                 )

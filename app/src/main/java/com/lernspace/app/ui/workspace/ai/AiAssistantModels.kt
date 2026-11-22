@@ -11,6 +11,27 @@ enum class AiQuickAction(
     val defaultPrompt: String,
     val isFeatured: Boolean = false
 ) {
+    MIMO_LAB(
+        title = "Simulasi Mimo Lab",
+        emoji = "🔬",
+        defaultPrompt = """
+Jelaskan konsep sains, matematika, atau fisika pada materi ini secara visual dan intuitif.
+Jika materi ini cocok dengan salah satu dari 10 simulasi Mimo Lab berikut:
+1. Rangkaian Listrik & Hukum Ohm (starter_ohm_circuit)
+2. Pembiasan Cahaya & Hukum Snellius (starter_snell_refraction)
+3. Gaya Gesek Bidang Miring (starter_friction_inclined_plane)
+4. Hukum Hooke Pegas (starter_hooke_spring)
+5. Gerak Parabola (starter_projectile_motion)
+6. Model Atom Bohr (starter_bohr_atom_shells)
+7. Pewarisan Sifat Mendel / Diagram Punnett (starter_punnett_genetics)
+8. Aproksimasi Integral Riemann (starter_riemann_sum_integral)
+9. Siklus Mesin Carnot (starter_carnot_cycle_thermo)
+10. Titrasi Asam Basa (starter_acid_base_titration)
+Maka rekomendasikan simulasi tersebut dan sertakan tag persis di baris terakhir: [MIMO_SIM: <id> | <Judul>].
+Jika materi ini TIDAK cocok dengan 10 simulasi di atas, jelaskan konsepnya saja dan JANGAN sebutkan simulasi apapun.
+        """.trimIndent(),
+        isFeatured = true
+    ),
     CHEAT_SHEET(
         title = "Cheat Sheet Ujian",
         emoji = "⚡",
@@ -85,6 +106,47 @@ data class AiChatMessage(
     val isSummary: Boolean
         get() = content.contains("EXECUTIVE SUMMARY", ignoreCase = true) || content.contains("Rangkuman", ignoreCase = true)
 
+    val recommendedSimInfo: Pair<String, String>?
+        get() {
+            // 1. Explicit tag: [MIMO_SIM: <id> | <title>] or [SIMULASI: <id> | <title>]
+            val tagMatch = Regex("""\[(?:MIMO_SIM|SIMULASI):\s*([a-zA-Z0-9_-]+)\s*(?:\|\s*([^\]]+))?\]""", RegexOption.IGNORE_CASE).find(content)
+            if (tagMatch != null) {
+                val id = tagMatch.groupValues[1].trim()
+                val title = tagMatch.groupValues.getOrNull(2)?.trim()?.ifBlank { null } ?: id
+                return Pair(id, title)
+            }
+
+            // 2. Direct ID or title match when Mimo mentions simulation
+            val knownSims = listOf(
+                "starter_ohm_circuit" to "Rangkaian Listrik & Hukum Ohm",
+                "starter_snell_refraction" to "Pembiasan Cahaya & Hukum Snellius",
+                "starter_friction_inclined_plane" to "Gaya Gesek pada Bidang Miring",
+                "starter_hooke_spring" to "Hukum Hooke & Elastisitas Pegas",
+                "starter_projectile_motion" to "Gerak Parabola / Proyektil",
+                "starter_bohr_atom_shells" to "Model Atom Bohr & Konfigurasi Elektron",
+                "starter_punnett_genetics" to "Pewarisan Sifat Mendel & Diagram Punnett",
+                "starter_riemann_sum_integral" to "Aproksimasi Integral Riemann",
+                "starter_carnot_cycle_thermo" to "Siklus Mesin Carnot & Termodinamika",
+                "starter_acid_base_titration" to "Titrasi Asam Basa & Kurva Netralisasi"
+            )
+
+            for ((id, title) in knownSims) {
+                if (content.contains(id, ignoreCase = true)) {
+                    return Pair(id, title)
+                }
+            }
+
+            if (content.contains("Mimo Lab", ignoreCase = true) || content.contains("simulasi", ignoreCase = true)) {
+                for ((id, title) in knownSims) {
+                    if (content.contains(title, ignoreCase = true)) {
+                        return Pair(id, title)
+                    }
+                }
+            }
+
+            return null
+        }
+
     companion object {
         fun cleanContentForDisplay(
             rawText: String,
@@ -118,6 +180,9 @@ data class AiChatMessage(
 
             // Strip any remaining XML/HTML tags
             text = text.replace(Regex("""<[a-zA-Z/][^>]*>"""), "")
+
+            // Strip [MIMO_SIM: ...] or [SIMULASI: ...] tags from displayed markdown
+            text = text.replace(Regex("""\[(?:MIMO_SIM|SIMULASI):[^\]]+\]""", RegexOption.IGNORE_CASE), "")
 
             text = text.trim()
 

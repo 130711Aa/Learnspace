@@ -172,7 +172,10 @@ data class GraphPlotItem(
     val integralLowerA: Float = 0f,
     val integralUpperB: Float = 2f,
     val integralRiemannType: RiemannType = RiemannType.SMOOTH,
-    val integralPartitions: Int = 12
+    val integralPartitions: Int = 12,
+    val isXFunctionOfY: Boolean = false,
+    val isDualBranch: Boolean = false,
+    val yRelationData: MathPlotHelper.YRelationData? = null
 )
 
 /**
@@ -440,21 +443,10 @@ fun FloatingGraphWindow(
 
         when (template) {
             is MathExpr.Root -> {
-                if (mathCursorOffset > 0) {
-                    val lastItem = items[mathCursorOffset - 1]
-                    val radicandSeq = when (lastItem) {
-                        is MathExpr.Sequence -> lastItem
-                        else -> MathExpr.Sequence(listOf(lastItem))
-                    }
-                    val rootNode = MathExpr.Root(degree = template.degree, radicand = radicandSeq)
-                    items[mathCursorOffset - 1] = rootNode
-                    mathRoot = replaceSequence(mathRoot, mathActiveSeqId, currentSeq.copy(items = items)) as MathExpr.Sequence
-                } else {
-                    items.add(mathCursorOffset, template)
-                    mathRoot = replaceSequence(mathRoot, mathActiveSeqId, currentSeq.copy(items = items)) as MathExpr.Sequence
-                    mathActiveSeqId = template.radicand.id
-                    mathCursorOffset = 0
-                }
+                items.add(mathCursorOffset, template)
+                mathRoot = replaceSequence(mathRoot, mathActiveSeqId, currentSeq.copy(items = items)) as MathExpr.Sequence
+                mathActiveSeqId = template.degree?.id ?: template.radicand.id
+                mathCursorOffset = 0
             }
             is MathExpr.Parens -> {
                 items.add(mathCursorOffset, template)
@@ -908,6 +900,23 @@ fun FloatingGraphWindow(
             }
         }
 
+        val yRel = MathPlotHelper.parseYRelation(trimmed)
+        if (yRel != null) {
+            val rawEq = MathPlotHelper.denormalizeImplicitMultiplication(trimmed)
+            return GraphPlotItem(
+                rawEquation = rawEq,
+                displayLabel = rawEq,
+                color = color,
+                isCircle = false,
+                isVerticalLine = false,
+                cleanExpr = if (yRel.isXFunctionOfY) yRel.xExprOfY else yRel.fxExprOfX,
+                keyPoints = yRel.keyPoints,
+                isXFunctionOfY = yRel.isXFunctionOfY,
+                isDualBranch = yRel.isDualBranch,
+                yRelationData = yRel
+            )
+        }
+
         val clean = MathPlotHelper.denormalizeImplicitMultiplication(MathPlotHelper.extractFunctionBody(trimmed))
         val rawClean = MathPlotHelper.denormalizeImplicitMultiplication(trimmed)
         return GraphPlotItem(
@@ -1262,12 +1271,22 @@ fun FloatingGraphWindow(
                         }
                     ),
                     colorArgb = item.color.toArgb(),
-                    points = if (item.isCircle || item.isVerticalLine) emptyList() else MathPlotHelper.sampleFunctionDynamic(
-                        effExpr,
-                        optimal.xMin,
-                        optimal.xMax,
-                        steps = 500
-                    ),
+                    points = when {
+                        item.isCircle || item.isVerticalLine -> emptyList()
+                        item.isXFunctionOfY && item.yRelationData != null -> MathPlotHelper.sampleXAsFunctionOfY(
+                            item.yRelationData.xExprOfY,
+                            optimal.yMin,
+                            optimal.yMax,
+                            steps = 500
+                        )
+                        else -> MathPlotHelper.sampleFunctionDynamic(
+                            effExpr,
+                            optimal.xMin,
+                            optimal.xMax,
+                            steps = 500,
+                            keyPoints = item.keyPoints
+                        )
+                    },
                     circleData = effCircle,
                     keyPoints = item.keyPoints,
                     isVerticalLine = item.isVerticalLine,
@@ -2505,9 +2524,62 @@ fun FloatingGraphWindow(
                                             strokeWidth = 1.6f,
                                             pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f), 0f)
                                         )
+                                    } else if (item.isXFunctionOfY && item.yRelationData != null) {
+                                        // Horizontal parabola / relation x = f(y), e.g. y^2 = x + 1 => x = y^2 - 1
+                                        val pts = MathPlotHelper.sampleXAsFunctionOfY(item.yRelationData.xExprOfY, yMin, yMax, steps = 300)
+                                        val path = Path()
+                                        var isFirst = true
+                                        for (pt in pts) {
+                                            val sx = toScreenX(pt.x)
+                                            val sy = toScreenY(pt.y)
+                                            if (sx.isFinite() && sx in -viewWidth..(viewWidth * 2)) {
+                                                if (isFirst) {
+                                                    path.moveTo(sx, sy)
+                                                    isFirst = false
+                                                } else {
+                                                    path.lineTo(sx, sy)
+                                                }
+                                            } else {
+                                                isFirst = true
+                                            }
+                                        }
+                                        drawPath(
+                                            path = path,
+                                            color = item.color,
+                                            style = Stroke(width = 3.2f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                                        )
+                                    } else if (item.isDualBranch && item.yRelationData != null) {
+                                        // Dual branch y = k ± sqrt(f(x))
+                                        val kVal = item.yRelationData.yOffsetK
+                                        val topBody = if (kVal == 0f) "sqrt(${item.yRelationData.fxExprOfX})" else "($kVal) + sqrt(${item.yRelationData.fxExprOfX})"
+                                        val botBody = if (kVal == 0f) "-sqrt(${item.yRelationData.fxExprOfX})" else "($kVal) - sqrt(${item.yRelationData.fxExprOfX})"
+                                        val ptsTop = MathPlotHelper.sampleFunctionDynamic(topBody, xMin, xMax, steps = 300, keyPoints = item.keyPoints)
+                                        val ptsBot = MathPlotHelper.sampleFunctionDynamic(botBody, xMin, xMax, steps = 300, keyPoints = item.keyPoints)
+                                        val path = Path()
+                                        var isFirst = true
+                                        for (pt in ptsTop) {
+                                            val sx = toScreenX(pt.x)
+                                            val sy = toScreenY(pt.y)
+                                            if (sy.isFinite() && sy in -viewHeight..(viewHeight * 2)) {
+                                                if (isFirst) { path.moveTo(sx, sy); isFirst = false } else { path.lineTo(sx, sy) }
+                                            } else { isFirst = true }
+                                        }
+                                        isFirst = true
+                                        for (pt in ptsBot) {
+                                            val sx = toScreenX(pt.x)
+                                            val sy = toScreenY(pt.y)
+                                            if (sy.isFinite() && sy in -viewHeight..(viewHeight * 2)) {
+                                                if (isFirst) { path.moveTo(sx, sy); isFirst = false } else { path.lineTo(sx, sy) }
+                                            } else { isFirst = true }
+                                        }
+                                        drawPath(
+                                            path = path,
+                                            color = item.color,
+                                            style = Stroke(width = 3.2f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                                        )
                                     } else {
                                         // Function curve
-                                        val pts = MathPlotHelper.sampleFunctionDynamic(effExpr, xMin, xMax, steps = 300)
+                                        val pts = MathPlotHelper.sampleFunctionDynamic(effExpr, xMin, xMax, steps = 300, keyPoints = item.keyPoints)
                                         val path = Path()
                                         var isFirst = true
                                         for (pt in pts) {

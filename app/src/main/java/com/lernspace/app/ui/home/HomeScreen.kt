@@ -882,6 +882,106 @@ fun HomeScreen(
                         }
                     }
 
+                    // Mimo Lab Discovery Card
+                    item {
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(14.dp),
+                            color = LernspaceSurfaceCard,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, LernspaceBorder),
+                            shadowElevation = 1.dp
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = Color(0xFF0284C7).copy(alpha = 0.15f)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.Functions,
+                                                contentDescription = null,
+                                                tint = Color(0xFF0284C7),
+                                                modifier = Modifier.size(24.dp).padding(4.dp)
+                                            )
+                                        }
+                                        Column {
+                                            Text(
+                                                text = "Mimo Lab (Simulasi STEM)",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = LernspaceDark
+                                            )
+                                            Text(
+                                                text = "Eksplorasi konsep sains & matematika interaktif",
+                                                fontSize = 11.sp,
+                                                color = LernspaceTextSecondary
+                                            )
+                                        }
+                                    }
+
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                        modifier = Modifier.clickable { onNavigateToScreen(Screen.MimoLab.route) }
+                                    ) {
+                                        Text(
+                                            text = "Buka Lab",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF0284C7)
+                                        )
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                            contentDescription = null,
+                                            tint = Color(0xFF0284C7),
+                                            modifier = Modifier.size(13.dp)
+                                        )
+                                    }
+                                }
+
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = LernspaceSurfaceLow,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { onNavigateToScreen(Screen.MimoLab.route) }
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(12.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = "🔬 Simulasi Bidang Miring, Riemann, & Siklus Carnot",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = LernspaceDark
+                                            )
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Text(
+                                                text = "Uji parameter fisika secara real-time atau minta Mimo AI merancang simulasi baru.",
+                                                fontSize = 11.sp,
+                                                color = LernspaceTextSecondary
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     // 2. Recent Notes from Workspace Desk
                     item {
                         Surface(

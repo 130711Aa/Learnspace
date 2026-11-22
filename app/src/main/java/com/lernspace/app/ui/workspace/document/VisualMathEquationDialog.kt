@@ -757,21 +757,10 @@ fun VisualMathEquationDialog(
 
         when (template) {
             is MathExpr.Root -> {
-                if (cursorOffset > 0) {
-                    val lastItem = items[cursorOffset - 1]
-                    val radicandSeq = when (lastItem) {
-                        is MathExpr.Sequence -> lastItem
-                        else -> MathExpr.Sequence(listOf(lastItem))
-                    }
-                    val rootNode = MathExpr.Root(degree = template.degree, radicand = radicandSeq)
-                    items[cursorOffset - 1] = rootNode
-                    root = replaceSequence(root, activeSeqId, currentSeq.copy(items = items)) as MathExpr.Sequence
-                } else {
-                    items.add(cursorOffset, template)
-                    root = replaceSequence(root, activeSeqId, currentSeq.copy(items = items)) as MathExpr.Sequence
-                    activeSeqId = template.radicand.id
-                    cursorOffset = 0
-                }
+                items.add(cursorOffset, template)
+                root = replaceSequence(root, activeSeqId, currentSeq.copy(items = items)) as MathExpr.Sequence
+                activeSeqId = template.degree?.id ?: template.radicand.id
+                cursorOffset = 0
             }
             is MathExpr.Parens -> {
                 items.add(cursorOffset, template)
