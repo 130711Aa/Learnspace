@@ -62,6 +62,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.ViewInAr
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalIconButton
@@ -223,6 +224,7 @@ fun FloatingGraphWindow(
     isDarkTheme: Boolean = false,
     onClose: () -> Unit,
     onInsertGraphToNote: (Bitmap) -> Unit,
+    onOpen3DLab: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     FloatingGraphWindow(
@@ -230,6 +232,7 @@ fun FloatingGraphWindow(
         isDarkTheme = isDarkTheme,
         onClose = onClose,
         onInsertGraphToNote = { bmp, _ -> onInsertGraphToNote(bmp) },
+        onOpen3DLab = onOpen3DLab,
         modifier = modifier
     )
 }
@@ -250,6 +253,7 @@ fun FloatingGraphWindow(
     isDarkTheme: Boolean = false,
     onClose: () -> Unit,
     onInsertGraphToNote: (Bitmap, List<String>) -> Unit,
+    onOpen3DLab: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     // Intercept hardware/gesture Back: close only the floating graph window, never the note!
@@ -1402,6 +1406,38 @@ fun FloatingGraphWindow(
                                         fontWeight = FontWeight.SemiBold,
                                         color = if (isSidebarOpen) Color(0xFF2563EB) else textSecondary
                                     )
+                                }
+                            }
+
+                            // 3D Lab Direct Shortcut
+                            if (onOpen3DLab != null) {
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = Color(0xFF7C3AED).copy(alpha = 0.12f),
+                                    border = androidx.compose.foundation.BorderStroke(
+                                        1.dp,
+                                        Color(0xFF7C3AED).copy(alpha = 0.4f)
+                                    ),
+                                    modifier = Modifier.clickable { onOpen3DLab() }
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.ViewInAr,
+                                            contentDescription = "3D Lab",
+                                            tint = Color(0xFF7C3AED),
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Text(
+                                            text = "3D Lab",
+                                            fontSize = 10.5.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = Color(0xFF7C3AED)
+                                        )
+                                    }
                                 }
                             }
                         }

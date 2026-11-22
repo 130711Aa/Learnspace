@@ -12,6 +12,7 @@ import com.lernspace.app.ui.home.HomeScreen
 import com.lernspace.app.ui.home.HomeViewModel
 import com.lernspace.app.ui.insights.InsightsScreen
 import com.lernspace.app.ui.learning.LearningScreen
+import com.lernspace.app.ui.math3d.Math3DLabScreen
 import com.lernspace.app.ui.mimolab.MimoLabScreen
 import com.lernspace.app.ui.planner.PlannerScreen
 import com.lernspace.app.ui.quiz.QuizScreen
@@ -122,6 +123,21 @@ fun LernspaceTabHost(
                 MimoLabScreen(
                     onNavigateToWorkspace = {
                         onNavigate(Screen.Workspace.route)
+                    }
+                )
+            }
+        }
+
+        // Tab: Math 3D Lab
+        if (visitedTabs.contains(Screen.Math3DLab.route)) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .keepAliveTab(currentRoute == Screen.Math3DLab.route)
+            ) {
+                Math3DLabScreen(
+                    onNavigateBack = {
+                        onNavigate(Screen.Home.route)
                     }
                 )
             }

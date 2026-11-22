@@ -97,6 +97,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.ink.brush.Brush
 import androidx.ink.brush.StockBrushes
 import androidx.ink.brush.compose.createWithComposeColor
@@ -118,6 +119,7 @@ import com.lernspace.app.ui.workspace.components.LockedImageBadge
 import com.lernspace.app.ui.workspace.components.DraggableTextBox
 import com.lernspace.app.ui.workspace.components.FloatingGraphWindow
 import com.lernspace.app.ui.workspace.components.InteractiveGraphDialog
+import com.lernspace.app.ui.math3d.Math3DLabScreen
 import com.lernspace.app.ui.workspace.components.MarkdownLatexContent
 import com.lernspace.app.ui.workspace.components.NoteFloatingToolbar
 import com.lernspace.app.ui.workspace.components.PaperBackground
@@ -978,6 +980,7 @@ fun NoteEditorScreen(
     var showEditNoteLinkDialog by remember { mutableStateOf(false) }
     var interactiveGraphFunction by remember { mutableStateOf<String?>(null) }
     var showInteractiveGraphDialog by remember { mutableStateOf(false) }
+    var showMath3DDialog by remember { mutableStateOf(false) }
     var showClearCanvasDialog by remember { mutableStateOf(false) }
     var showAiAssistantPanel by remember { mutableStateOf(false) }
     var pendingAiAction by remember { mutableStateOf<AiQuickAction?>(null) }
@@ -1465,8 +1468,67 @@ fun NoteEditorScreen(
                         Toast.makeText(context, "Grafik kartesius disisipkan ke catatan", Toast.LENGTH_SHORT).show()
                     }
                 },
+                onOpen3DLab = { showMath3DDialog = true },
                 modifier = Modifier.zIndex(20f)
             )
+        }
+
+        // Dedicated Math 3D Lab Fullscreen Dialog
+        if (showMath3DDialog) {
+            Dialog(
+                onDismissRequest = { showMath3DDialog = false },
+                properties = DialogProperties(usePlatformDefaultWidth = false)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.background)
+                ) {
+                    Math3DLabScreen(
+                        onNavigateBack = { showMath3DDialog = false },
+                        onInsertSnapshotToNote = { bitmap ->
+                            if (activeState.canvasType == NoteCanvasType.DOC_DOCUMENT) {
+                                val handler = activeState.onInsertImageToDocument
+                                if (handler != null) {
+                                    handler(bitmap)
+                                } else {
+                                    coroutineScope.launch(Dispatchers.IO) {
+                                        val stream = ByteArrayOutputStream()
+                                        bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+                                        val base64 = Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
+                                        val dataUri = "data:image/png;base64,$base64"
+                                        withContext(Dispatchers.Main) {
+                                            val (setup, cleanBody) = DocPageSetup.extractFromContent(activeState.documentContent)
+                                            val imgTag = "<p><img data-wrap=\"break\" src=\"$dataUri\" style=\"width: 360px; max-width: 100%;\"></p>"
+                                            activeState.updateDocumentContent(DocPageSetup.packWithContent(setup, cleanBody + imgTag))
+                                            Toast.makeText(context, "Snapshot 3D disisipkan ke dokumen", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                }
+                            } else {
+                                val curScale = activeState.scale.coerceAtLeast(0.05f)
+                                val spawnX = (-activeState.panX + 160f) / curScale
+                                val spawnY = (-activeState.panY + 140f) / curScale
+                                activeState.pushUndoSnapshot()
+                                activeState.deselectAll()
+                                activeState.imageElements.add(
+                                    ImageElement(
+                                        x = spawnX,
+                                        y = spawnY,
+                                        bitmap = bitmap.asImageBitmap(),
+                                        width = 560f,
+                                        height = 420f,
+                                        isSelected = true
+                                    )
+                                )
+                                activeState.saveActivePageData()
+                                Toast.makeText(context, "Snapshot 3D disisipkan ke catatan", Toast.LENGTH_SHORT).show()
+                            }
+                            showMath3DDialog = false
+                        }
+                    )
+                }
+            }
         }
 
         // Floating Mimo Lab Simulation Window (PiP)

@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Lernspace Math 3D Lab</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+        }
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #0F131C;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            touch-action: none;
+        }
+        #viewport {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        /* Subtly styled compass indicator in top corner */
+        .axis-indicator {
+            position: absolute;
+            bottom: 12px;
+            left: 12px;
+            pointer-events: none;
+            display: flex;
+            gap: 10px;
+            font-size: 11px;
+            font-weight: 600;
+            background: rgba(15, 19, 28, 0.7);
+            backdrop-filter: blur(8px);
+            padding: 4px 10px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .axis-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .dot-x { width: 8px; height: 8px; border-radius: 50%; background-color: #EF5350; }
+        .dot-y { width: 8px; height: 8px; border-radius: 50%; background-color: #66BB6A; }
+        .dot-z { width: 8px; height: 8px; border-radius: 50%; background-color: #42A5F5; }
+        .axis-text { color: #CFD8DC; }
+    </style>
+</head>
+<body>
+    <div id="viewport"></div>
+
+    <div class="axis-indicator">
+        <div class="axis-item"><span class="dot-x"></span><span class="axis-text">X (Merah)</span></div>
+        <div class="axis-item"><span class="dot-y"></span><span class="axis-text">Y (Hijau)</span></div>
+        <div class="axis-item"><span class="dot-z"></span><span class="axis-text">Z (Biru)</span></div>
+    </div>
+
+    <!-- Scripts (100% Offline from Android Assets) -->
+    <script src="three.min.js"></script>
+    <script src="OrbitControls.js"></script>
+    <script src="math3d_engine.js"></script>
+</body>
+</html>
