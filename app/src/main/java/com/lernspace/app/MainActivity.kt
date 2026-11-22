@@ -15,6 +15,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import com.lernspace.app.data.local.AcademicDatabaseManager
 import com.lernspace.app.data.local.AppSettingsManager
@@ -94,7 +97,14 @@ class MainActivity : ComponentActivity() {
 
                 val activeEditingNote = AcademicWorkspaceState.activeEditingNote
 
-                // ── IMMERSIVE FULL-SCREEN NOTE CANVAS (Zero Rail, 100% Display) ──
+                // ── IMMERSIVE FULL-SCREEN NOTE CANVAS (Zero Rail, 100% Display, No accidental gestures) ──
+                DisposableEffect(activeEditingNote != null) {
+                    setImmersiveFullscreen(activeEditingNote != null)
+                    onDispose {
+                        setImmersiveFullscreen(false)
+                    }
+                }
+
                 if (activeEditingNote != null) {
                     BackHandler {
                         AcademicWorkspaceState.closeNoteEditor()
@@ -222,6 +232,24 @@ class MainActivity : ComponentActivity() {
             }.onFailure { err ->
                 Toast.makeText(this@MainActivity, "Gagal membuka dokumen: ${err.message}", Toast.LENGTH_LONG).show()
             }
+        }
+    }
+
+    private fun setImmersiveFullscreen(enable: Boolean) {
+        val windowInsetsController = WindowCompat.getInsetsController(window, window.decorView)
+        if (enable) {
+            windowInsetsController.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            windowInsetsController.hide(WindowInsetsCompat.Type.systemBars())
+        } else {
+            windowInsetsController.show(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && AcademicWorkspaceState.activeEditingNote != null) {
+            setImmersiveFullscreen(true)
         }
     }
 }
