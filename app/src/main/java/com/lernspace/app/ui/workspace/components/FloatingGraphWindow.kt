@@ -1427,12 +1427,12 @@ fun FloatingGraphWindow(
                                     ) {
                                         Icon(
                                             Icons.Default.ViewInAr,
-                                            contentDescription = "3D Lab",
+                                            contentDescription = "GeoNix 3D",
                                             tint = Color(0xFF7C3AED),
                                             modifier = Modifier.size(14.dp)
                                         )
                                         Text(
-                                            text = "3D Lab",
+                                            text = "GeoNix 3D",
                                             fontSize = 10.5.sp,
                                             fontWeight = FontWeight.SemiBold,
                                             color = Color(0xFF7C3AED)

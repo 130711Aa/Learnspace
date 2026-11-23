@@ -35,6 +35,7 @@ import com.lernspace.app.ui.home.HomeViewModel
 import com.lernspace.app.ui.theme.LernspaceDark
 import com.lernspace.app.ui.theme.LernspaceTheme
 import com.lernspace.app.ui.workspace.NoteEditorScreen
+import com.lernspace.app.ui.math3d.Math3DLabScreen
 import com.lernspace.app.ui.workspace.document.DocxDocumentCodec
 import com.lernspace.app.ui.workspace.model.NoteCanvasType
 import com.lernspace.app.ui.workspace.model.NotePageData
@@ -96,10 +97,12 @@ class MainActivity : ComponentActivity() {
                 }
 
                 val activeEditingNote = AcademicWorkspaceState.activeEditingNote
+                val isMath3DLab = currentRoute == Screen.Math3DLab.route
 
-                // ── IMMERSIVE FULL-SCREEN NOTE CANVAS (Zero Rail, 100% Display, No accidental gestures) ──
-                DisposableEffect(activeEditingNote != null) {
-                    setImmersiveFullscreen(activeEditingNote != null)
+                // ── IMMERSIVE FULL-SCREEN NOTE CANVAS & MATH 3D (Zero Rail, 100% Display, No accidental gestures) ──
+                val isImmersive = activeEditingNote != null || isMath3DLab
+                DisposableEffect(isImmersive) {
+                    setImmersiveFullscreen(isImmersive)
                     onDispose {
                         setImmersiveFullscreen(false)
                     }
@@ -112,6 +115,25 @@ class MainActivity : ComponentActivity() {
                     NoteEditorScreen(
                         note = activeEditingNote,
                         onBack = { AcademicWorkspaceState.closeNoteEditor() }
+                    )
+                } else if (isMath3DLab) {
+                    BackHandler {
+                        if (backStack.size > 1) {
+                            backStack.removeLast()
+                            currentRoute = backStack.last()
+                        } else {
+                            navigateTo(Screen.Home.route)
+                        }
+                    }
+                    Math3DLabScreen(
+                        onNavigateBack = {
+                            if (backStack.size > 1) {
+                                backStack.removeLast()
+                                currentRoute = backStack.last()
+                            } else {
+                                navigateTo(Screen.Home.route)
+                            }
+                        }
                     )
                 } else {
                     // ── TABLET APP SHELL WITH NAVIGATION RAIL ────────────────────
@@ -235,7 +257,10 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private var isImmersiveFullscreenActive = false
+
     private fun setImmersiveFullscreen(enable: Boolean) {
+        isImmersiveFullscreenActive = enable
         val windowInsetsController = WindowCompat.getInsetsController(window, window.decorView)
         if (enable) {
             windowInsetsController.systemBarsBehavior =
@@ -248,7 +273,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus && AcademicWorkspaceState.activeEditingNote != null) {
+        if (hasFocus && (AcademicWorkspaceState.activeEditingNote != null || isImmersiveFullscreenActive)) {
             setImmersiveFullscreen(true)
         }
     }

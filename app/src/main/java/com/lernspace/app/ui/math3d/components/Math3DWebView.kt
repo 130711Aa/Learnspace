@@ -4,6 +4,8 @@ import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Base64
+import android.view.MotionEvent
+import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
@@ -20,7 +22,22 @@ import org.json.JSONObject
 class Math3DWebViewController(
     private val webViewProvider: () -> WebView?
 ) {
+    private var cachedElements: List<GeoElementModel>? = null
+    var isEngineReady = false
+
+    fun onEngineReady() {
+        isEngineReady = true
+        cachedElements?.let {
+            sendElementsInternal(it)
+        }
+    }
+
     fun setElements(elements: List<GeoElementModel>) {
+        cachedElements = elements
+        sendElementsInternal(elements)
+    }
+
+    private fun sendElementsInternal(elements: List<GeoElementModel>) {
         val wv = webViewProvider() ?: return
         val jsonArray = JSONArray()
         elements.forEach { elem ->
@@ -76,6 +93,50 @@ class Math3DWebViewController(
             wv.evaluateJavascript("window.Math3D && window.Math3D.captureSnapshot();", null)
         }
     }
+
+    fun zoomIn() {
+        val wv = webViewProvider() ?: return
+        wv.post {
+            wv.evaluateJavascript("window.Math3D && window.Math3D.zoom(0.85);", null)
+        }
+    }
+
+    fun zoomOut() {
+        val wv = webViewProvider() ?: return
+        wv.post {
+            wv.evaluateJavascript("window.Math3D && window.Math3D.zoom(1.18);", null)
+        }
+    }
+
+    fun setMode(mode: String) {
+        val wv = webViewProvider() ?: return
+        wv.post {
+            wv.evaluateJavascript("window.Math3D && window.Math3D.setMode('$mode');", null)
+        }
+    }
+
+    fun toggleGrid(show: Boolean? = null) {
+        val wv = webViewProvider() ?: return
+        val arg = if (show != null) "$show" else "undefined"
+        wv.post {
+            wv.evaluateJavascript("window.Math3D && window.Math3D.toggleGrid($arg);", null)
+        }
+    }
+
+    fun toggleAxes(show: Boolean? = null) {
+        val wv = webViewProvider() ?: return
+        val arg = if (show != null) "$show" else "undefined"
+        wv.post {
+            wv.evaluateJavascript("window.Math3D && window.Math3D.toggleAxes($arg);", null)
+        }
+    }
+
+    fun setTheme(theme: String) {
+        val wv = webViewProvider() ?: return
+        wv.post {
+            wv.evaluateJavascript("window.Math3D && window.Math3D.setTheme('$theme');", null)
+        }
+    }
 }
 
 class Math3DJavascriptBridge(
@@ -122,7 +183,12 @@ fun Math3DWebView(
 ) {
     AndroidView(
         factory = { ctx ->
-            WebView(ctx).apply {
+            object : WebView(ctx) {
+                override fun onTouchEvent(event: MotionEvent): Boolean {
+                    requestDisallowInterceptTouchEvent(true)
+                    return super.onTouchEvent(event)
+                }
+            }.apply {
                 settings.apply {
                     javaScriptEnabled = true
                     domStorageEnabled = true
@@ -131,17 +197,32 @@ fun Math3DWebView(
                     loadWithOverviewMode = true
                     useWideViewPort = true
                     cacheMode = WebSettings.LOAD_NO_CACHE
+                    setSupportZoom(false)
+                    builtInZoomControls = false
+                    displayZoomControls = false
                 }
                 setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
-                webChromeClient = WebChromeClient()
+                val controller = Math3DWebViewController { this }
+
+                webChromeClient = object : WebChromeClient() {
+                    override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
+                        android.util.Log.e("Math3DConsole", "${consoleMessage?.message()} (${consoleMessage?.lineNumber()})")
+                        return true
+                    }
+                }
                 webViewClient = object : WebViewClient() {
                     override fun onPageFinished(view: WebView?, url: String?) {
                         super.onPageFinished(view, url)
+                        postDelayed({ controller.onEngineReady() }, 200)
                     }
                 }
 
                 val bridge = Math3DJavascriptBridge(
-                    onEngineReadyCallback = {},
+                    onEngineReadyCallback = {
+                        post {
+                            controller.onEngineReady()
+                        }
+                    },
                     onMetricsCallback = { json -> post { onMetricsUpdated(json) } },
                     onSnapshotCallback = { bmp -> post { onSnapshotReady(bmp) } }
                 )
@@ -149,7 +230,6 @@ fun Math3DWebView(
 
                 loadUrl("file:///android_asset/math3d/index.html")
 
-                val controller = Math3DWebViewController { this }
                 onControllerReady(controller)
             }
         },

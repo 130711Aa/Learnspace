@@ -6,13 +6,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layout
-import com.lernspace.app.ui.banksoal.BankSoalScreen
-import com.lernspace.app.ui.flashcards.FlashcardsScreen
+import com.lernspace.app.ui.practice.PracticeHubScreen
+import com.lernspace.app.ui.practice.PracticeHubState
+import com.lernspace.app.ui.practice.PracticeTab
 import com.lernspace.app.ui.home.HomeScreen
 import com.lernspace.app.ui.home.HomeViewModel
 import com.lernspace.app.ui.insights.InsightsScreen
 import com.lernspace.app.ui.learning.LearningScreen
-import com.lernspace.app.ui.math3d.Math3DLabScreen
 import com.lernspace.app.ui.mimolab.MimoLabScreen
 import com.lernspace.app.ui.planner.PlannerScreen
 import com.lernspace.app.ui.quiz.QuizScreen
@@ -128,53 +128,33 @@ fun LernspaceTabHost(
             }
         }
 
-        // Tab: Math 3D Lab
-        if (visitedTabs.contains(Screen.Math3DLab.route)) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .keepAliveTab(currentRoute == Screen.Math3DLab.route)
-            ) {
-                Math3DLabScreen(
-                    onNavigateBack = {
-                        onNavigate(Screen.Home.route)
-                    }
-                )
-            }
-        }
 
-        // Tab 5: Flashcards
-        if (visitedTabs.contains(Screen.Flashcards.route)) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .keepAliveTab(currentRoute == Screen.Flashcards.route)
-            ) {
-                FlashcardsScreen()
-            }
-        }
+        // Tab: Practice Hub (Unified Flashcards, Quiz, Bank Soal)
+        val isPracticeRoute = currentRoute in listOf(
+            Screen.Practice.route,
+            Screen.Flashcards.route,
+            Screen.Quiz.route,
+            Screen.BankSoal.route
+        )
+        val isPracticeVisited = visitedTabs.any { it in listOf(
+            Screen.Practice.route,
+            Screen.Flashcards.route,
+            Screen.Quiz.route,
+            Screen.BankSoal.route
+        ) }
 
-        // Tab 6: Quiz
-        if (visitedTabs.contains(Screen.Quiz.route)) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .keepAliveTab(currentRoute == Screen.Quiz.route)
-            ) {
-                QuizScreen()
+        if (isPracticeVisited) {
+            when (currentRoute) {
+                Screen.Flashcards.route -> PracticeHubState.selectedTab = PracticeTab.FLASHCARDS
+                Screen.Quiz.route -> PracticeHubState.selectedTab = PracticeTab.QUIZ
+                Screen.BankSoal.route -> PracticeHubState.selectedTab = PracticeTab.BANK_SOAL
             }
-        }
-
-        // Tab 7: Bank Soal
-        if (visitedTabs.contains(Screen.BankSoal.route)) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .keepAliveTab(currentRoute == Screen.BankSoal.route)
+                    .keepAliveTab(isPracticeRoute)
             ) {
-                BankSoalScreen(
-                    onNavigateToQuiz = { onNavigate(Screen.Quiz.route) }
-                )
+                PracticeHubScreen()
             }
         }
 

@@ -102,6 +102,7 @@ sealed class MathExpr {
         val upper: Sequence,
         val integrand: Sequence,
         val variable: Sequence,
+        val isDefinite: Boolean = true,
         override val id: String = UUID.randomUUID().toString()
     ) : MathExpr()
 
@@ -207,7 +208,8 @@ fun replaceSequence(tree: MathExpr, targetSeqId: String, newSeq: MathExpr.Sequen
             upper = replaceSequence(tree.upper, targetSeqId, newSeq) as MathExpr.Sequence,
             integrand = replaceSequence(tree.integrand, targetSeqId, newSeq) as MathExpr.Sequence,
             variable = replaceSequence(tree.variable, targetSeqId, newSeq) as MathExpr.Sequence,
-            id = tree.id
+            id = tree.id,
+            isDefinite = tree.isDefinite
         )
         is MathExpr.Summation -> MathExpr.Summation(
             lower = replaceSequence(tree.lower, targetSeqId, newSeq) as MathExpr.Sequence,
@@ -1208,7 +1210,7 @@ fun VisualMathEquationDialog(
                         }
                         Column {
                             Text("Editor Rumus Matematika", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = LernspaceDark)
-                            Text("Gaya kalkulator GeoGebra visual", fontSize = 11.sp, color = LernspaceTextSecondary)
+                            Text("Gaya kalkulator GeoNix visual", fontSize = 11.sp, color = LernspaceTextSecondary)
                         }
                     }
 
@@ -1543,7 +1545,7 @@ fun MathExprView(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 modifier = Modifier.padding(horizontal = 2.dp)
             ) {
-                val hasBounds = expr.lower.items.isNotEmpty() || expr.upper.items.isNotEmpty() ||
+                val hasBounds = expr.isDefinite || expr.lower.items.isNotEmpty() || expr.upper.items.isNotEmpty() ||
                         activeSeqId == expr.lower.id || activeSeqId == expr.upper.id
                 if (hasBounds) {
                     Column(
@@ -1781,11 +1783,11 @@ fun MathEmptySlot(
             bringIntoViewRequester.bringIntoView()
         }
     }
-    val slotBg = if (isActive) Color(0xFFD1D5DB).copy(alpha = 0.9f) else Color(0xFFE5E7EB).copy(alpha = 0.85f)
-    val slotBorder = if (isActive) cursorColor.copy(alpha = 0.6f) else Color.Transparent
+    val slotBg = if (isActive) Color(0xFFDBEAFE) else Color(0xFFF3F4F6)
+    val slotBorder = if (isActive) Color(0xFF2563EB) else Color(0xFF9CA3AF).copy(alpha = 0.7f)
 
-    val slotW = (size.value * 0.65f).dp.coerceIn(10.dp, 18.dp)
-    val slotH = (size.value * 1.0f).dp.coerceIn(14.dp, 26.dp)
+    val slotW = (size.value * 0.95f).dp.coerceIn(18.dp, 28.dp)
+    val slotH = (size.value * 1.15f).dp.coerceIn(20.dp, 30.dp)
 
     Box(
         contentAlignment = Alignment.Center,
@@ -2007,10 +2009,10 @@ fun GeoGebraKeypadFunctions(
             modifier = Modifier.fillMaxWidth().weight(1f)
         ) {
             GeoGebraKey("∫ₐᵇ", Modifier.weight(1f), isSpecial = true) {
-                onStructure { MathExpr.Integral(MathExpr.Sequence(), MathExpr.Sequence(), MathExpr.Sequence(), MathExpr.Sequence(listOf(MathExpr.Atom("x")))) }
+                onStructure { MathExpr.Integral(MathExpr.Sequence(), MathExpr.Sequence(), MathExpr.Sequence(), MathExpr.Sequence(listOf(MathExpr.Atom("x"))), isDefinite = true) }
             }
             GeoGebraKey("∫", Modifier.weight(1f), isSpecial = true) {
-                onStructure { MathExpr.Integral(MathExpr.Sequence(), MathExpr.Sequence(), MathExpr.Sequence(), MathExpr.Sequence(listOf(MathExpr.Atom("x")))) }
+                onStructure { MathExpr.Integral(MathExpr.Sequence(), MathExpr.Sequence(), MathExpr.Sequence(), MathExpr.Sequence(listOf(MathExpr.Atom("x"))), isDefinite = false) }
             }
             GeoGebraKey("d/dx", Modifier.weight(1f), isSpecial = true) {
                 onDerivative()
@@ -2165,3 +2167,48 @@ fun GeoGebraKeypadGreek(
         }
     }
 }
+
+// ── GeoNix Keypad Composables ──
+@Composable
+fun GeoNixKeypad123(
+    onChar: (String) -> Unit,
+    onStructure: (() -> MathExpr) -> Unit,
+    onFraction: () -> Unit,
+    onPower: () -> Unit,
+    onPowerSquare: () -> Unit,
+    onBackspace: () -> Unit,
+    onNavLeft: () -> Unit,
+    onNavRight: () -> Unit,
+    onEnter: () -> Unit
+) = GeoGebraKeypad123(onChar, onStructure, onFraction, onPower, onPowerSquare, onBackspace, onNavLeft, onNavRight, onEnter)
+
+@Composable
+fun GeoNixKeypadFunctions(
+    onChar: (String) -> Unit,
+    onFunction: (String) -> Unit,
+    onDerivative: () -> Unit,
+    onStructure: (() -> MathExpr) -> Unit,
+    onFraction: () -> Unit,
+    onBackspace: () -> Unit,
+    onNavLeft: () -> Unit,
+    onNavRight: () -> Unit,
+    onEnter: () -> Unit
+) = GeoGebraKeypadFunctions(onChar, onFunction, onDerivative, onStructure, onFraction, onBackspace, onNavLeft, onNavRight, onEnter)
+
+@Composable
+fun GeoNixKeypadAbc(
+    onChar: (String) -> Unit,
+    onBackspace: () -> Unit,
+    onNavLeft: () -> Unit,
+    onNavRight: () -> Unit,
+    onEnter: () -> Unit
+) = GeoGebraKeypadAbc(onChar, onBackspace, onNavLeft, onNavRight, onEnter)
+
+@Composable
+fun GeoNixKeypadGreek(
+    onChar: (String) -> Unit,
+    onBackspace: () -> Unit,
+    onNavLeft: () -> Unit,
+    onNavRight: () -> Unit,
+    onEnter: () -> Unit
+) = GeoGebraKeypadGreek(onChar, onBackspace, onNavLeft, onNavRight, onEnter)

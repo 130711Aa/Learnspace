@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>Lernspace Math 3D Lab</title>
+    <title>GeoNix 3D Studio</title>
     <style>
         * {
             box-sizing: border-box;
@@ -17,16 +17,17 @@
             width: 100%;
             height: 100%;
             overflow: hidden;
-            background-color: #0F131C;
+            background-color: #FFFFFF;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             touch-action: none;
         }
-        #viewport {
+        #viewport, canvas {
             width: 100%;
             height: 100%;
             position: absolute;
             top: 0;
             left: 0;
+            touch-action: none;
         }
         /* Subtly styled compass indicator in top corner */
         .axis-indicator {
@@ -59,9 +60,9 @@
     <div id="viewport"></div>
 
     <div class="axis-indicator">
-        <div class="axis-item"><span class="dot-x"></span><span class="axis-text">X (Merah)</span></div>
-        <div class="axis-item"><span class="dot-y"></span><span class="axis-text">Y (Hijau)</span></div>
-        <div class="axis-item"><span class="dot-z"></span><span class="axis-text">Z (Biru)</span></div>
+        <div class="axis-item"><span class="dot-x"></span><span class="axis-text">X (Kanan)</span></div>
+        <div class="axis-item"><span class="dot-y"></span><span class="axis-text">Y (Atas)</span></div>
+        <div class="axis-item"><span class="dot-z"></span><span class="axis-text">Z (Depan)</span></div>
     </div>
 
     <!-- Scripts (100% Offline from Android Assets) -->

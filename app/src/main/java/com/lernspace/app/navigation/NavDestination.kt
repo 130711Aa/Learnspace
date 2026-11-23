@@ -24,7 +24,8 @@ sealed class Screen(
     data object Learning : Screen("learning", "Learning", Icons.Filled.MenuBook)
     data object Workspace : Screen("workspace", "Workspace", Icons.Filled.EditNote)
     data object MimoLab : Screen("mimo_lab", "Mimo Lab", Icons.Filled.Functions)
-    data object Math3DLab : Screen("math3d_lab", "Math 3D", Icons.Filled.ViewInAr)
+    data object Math3DLab : Screen("math3d_lab", "GeoNix", Icons.Filled.ViewInAr)
+    data object Practice : Screen("practice", "Latihan", Icons.Filled.Quiz)
     data object Flashcards : Screen("flashcards", "Cards", Icons.Filled.Style)
     data object Quiz : Screen("quiz", "Quiz", Icons.Filled.Quiz)
     data object BankSoal : Screen("bank_soal", "Bank Soal", Icons.Filled.FolderCopy)
@@ -32,7 +33,11 @@ sealed class Screen(
     data object Settings : Screen("settings", "Settings", Icons.Filled.Settings)
 
     companion object {
-        val items get() = listOf(Home, Planner, Learning, Workspace, MimoLab, Math3DLab, Flashcards, Quiz, BankSoal, Insights, Settings)
+        val primaryNavItems get() = listOf(Home, Planner, Workspace, Learning)
+        val studioNavItems get() = listOf(Math3DLab, MimoLab, Practice)
+        val bottomNavItems get() = listOf(Insights, Settings)
+
+        val items get() = listOf(Home, Planner, Workspace, Learning, Math3DLab, MimoLab, Practice, Insights, Settings)
     }
 }
 

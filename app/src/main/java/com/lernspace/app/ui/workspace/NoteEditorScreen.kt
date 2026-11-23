@@ -4895,7 +4895,7 @@ private fun NoteActionsCapsule(
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
                                 imageVector = Icons.Filled.ShowChart,
-                                contentDescription = "Buka Grafik Matematika (GeoGebra)",
+                                contentDescription = "Buka Grafik Matematika (GeoNix)",
                                 tint = LernspaceTextPrimary,
                                 modifier = Modifier.size(16.dp)
                             )

@@ -83,7 +83,7 @@ private fun TabletNavRail(
 
     Surface(
         modifier = Modifier
-            .width(80.dp)
+            .width(82.dp)
             .fillMaxHeight(),
         color = LernspaceSurfaceCard,
         shadowElevation = 2.dp
@@ -93,16 +93,16 @@ private fun TabletNavRail(
                 .fillMaxSize()
                 .statusBarsPadding()
                 .navigationBarsPadding()
-                .verticalScroll(rememberScrollState())
                 .padding(vertical = 12.dp, horizontal = 4.dp),
-            verticalArrangement = Arrangement.Top,
+            verticalArrangement = Arrangement.SpaceBetween,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Header Logo
+            // TOP SECTION: Logo + Primary Flow + Studio & Practice Hub
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.fillMaxWidth()
             ) {
+                // Header Logo
                 Box(
                     modifier = Modifier
                         .size(38.dp)
@@ -117,50 +117,118 @@ private fun TabletNavRail(
                         modifier = Modifier.size(20.dp)
                     )
                 }
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(3.dp))
                 Text(
                     text = "Learnspace",
-                    fontSize = 11.sp,
+                    fontSize = 10.5.sp,
                     fontWeight = FontWeight.Bold,
                     color = LernspaceDark
                 )
 
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
-                // Nav Items
-                Screen.items.forEach { screen ->
+                // 1. Primary Workflow: Home, Planner, Workspace, Learning
+                Screen.primaryNavItems.forEach { screen ->
                     val isSelected = currentRoute == screen.route
-                    NavigationRailItem(
-                        selected = isSelected,
-                        onClick = { onNavigate(screen.route) },
-                        icon = {
-                            Icon(
-                                imageVector = screen.icon,
-                                contentDescription = screen.title,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        },
-                        label = {
-                            Text(
-                                text = screen.title,
-                                fontSize = 10.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
-                            )
-                        },
-                        alwaysShowLabel = true,
-                        colors = NavigationRailItemDefaults.colors(
-                            selectedIconColor = if (isDark) Color.Black else Color.White,
-                            selectedTextColor = if (isDark) Color.White else Color.Black,
-                            indicatorColor = if (isDark) Color.White else Color.Black,
-                            unselectedIconColor = LernspaceTextSecondary,
-                            unselectedTextColor = LernspaceTextSecondary
-                        ),
-                        modifier = Modifier.padding(vertical = 2.dp)
+                    NavRailButton(
+                        screen = screen,
+                        isSelected = isSelected,
+                        isDark = isDark,
+                        onNavigate = onNavigate
+                    )
+                }
+
+                // Subtle Divider between Primary and Studio/Practice
+                HorizontalDivider(
+                    modifier = Modifier
+                        .padding(horizontal = 14.dp, vertical = 6.dp)
+                        .fillMaxWidth(),
+                    thickness = 0.8.dp,
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                )
+
+                // 2. Studio & Practice Hub: GeoNix, Mimo Lab, Latihan
+                Screen.studioNavItems.forEach { screen ->
+                    val isSelected = if (screen == Screen.Practice) {
+                        currentRoute in listOf(
+                            Screen.Practice.route,
+                            Screen.Flashcards.route,
+                            Screen.Quiz.route,
+                            Screen.BankSoal.route
+                        )
+                    } else {
+                        currentRoute == screen.route
+                    }
+                    NavRailButton(
+                        screen = screen,
+                        isSelected = isSelected,
+                        isDark = isDark,
+                        onNavigate = onNavigate
+                    )
+                }
+            }
+
+            // BOTTOM PINNED SECTION: Insights & Settings (Universal pro-app standard)
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                HorizontalDivider(
+                    modifier = Modifier
+                        .padding(horizontal = 14.dp, vertical = 6.dp)
+                        .fillMaxWidth(),
+                    thickness = 0.8.dp,
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                )
+
+                Screen.bottomNavItems.forEach { screen ->
+                    val isSelected = currentRoute == screen.route
+                    NavRailButton(
+                        screen = screen,
+                        isSelected = isSelected,
+                        isDark = isDark,
+                        onNavigate = onNavigate
                     )
                 }
             }
         }
     }
+}
+
+@Composable
+private fun NavRailButton(
+    screen: Screen,
+    isSelected: Boolean,
+    isDark: Boolean,
+    onNavigate: (String) -> Unit
+) {
+    NavigationRailItem(
+        selected = isSelected,
+        onClick = { onNavigate(screen.route) },
+        icon = {
+            Icon(
+                imageVector = screen.icon,
+                contentDescription = screen.title,
+                modifier = Modifier.size(20.dp)
+            )
+        },
+        label = {
+            Text(
+                text = screen.title,
+                fontSize = 10.sp,
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+            )
+        },
+        alwaysShowLabel = true,
+        colors = NavigationRailItemDefaults.colors(
+            selectedIconColor = if (isDark) Color.Black else Color.White,
+            selectedTextColor = if (isDark) Color.White else Color.Black,
+            indicatorColor = if (isDark) Color.White else Color.Black,
+            unselectedIconColor = LernspaceTextSecondary,
+            unselectedTextColor = LernspaceTextSecondary
+        ),
+        modifier = Modifier.padding(vertical = 1.dp)
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
