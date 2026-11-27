@@ -46,16 +46,37 @@ fun PaperBackground(
         val panY = panYProvider()
 
         clipRect(0f, 0f, size.width, size.height) {
-            // Colors adaptive to Light / Dark Paper mode
+            // Colors adaptive to Light / Dark Paper mode & Warm Cream template
+            val isWarm = style == PaperStyle.WARM_CREAM
             val deskColor = if (isDarkPaper) Color(0xFF091426) else Color(0xFFE2E8F0)
-            val sheetColor = if (isDarkPaper) Color(0xFF131822) else Color(0xFFFCFCFD)
+            val sheetColor = when {
+                isDarkPaper && isWarm -> Color(0xFF1C1914)
+                isDarkPaper -> Color(0xFF131822)
+                isWarm -> Color(0xFFFDF8EC)
+                else -> Color(0xFFFCFCFD)
+            }
             val shadowColor = if (isDarkPaper) Color(0x66000000) else Color(0x1F0F172A)
-            val borderColor = if (isDarkPaper) Color(0xFF263245) else Color(0xFFCBD5E1)
+            val borderColor = when {
+                isDarkPaper && isWarm -> Color(0xFF3A3328)
+                isDarkPaper -> Color(0xFF263245)
+                isWarm -> Color(0xFFE5DCC8)
+                else -> Color(0xFFCBD5E1)
+            }
             val marginLineColor = if (isDarkPaper) Color(0xFFEF4444) else Color(0xFFFCA5A5)
-            val ruledLineColor = if (isDarkPaper) Color(0xFF242F42) else Color(0xFFE2E8F0)
+            val ruledLineColor = when {
+                isDarkPaper && isWarm -> Color(0xFF332D24)
+                isDarkPaper -> Color(0xFF242F42)
+                isWarm -> Color(0xFFEFE6D2)
+                else -> Color(0xFFE2E8F0)
+            }
             val gridLineColor = if (isDarkPaper) Color(0xFF202A3C) else Color(0xFFEEF2F6)
             val dotColor = if (isDarkPaper) Color(0xFF475569) else Color(0xFFCBD5E1)
-            val infiniteBgColor = if (isDarkPaper) Color(0xFF131822) else Color(0xFFFAFAFA)
+            val infiniteBgColor = when {
+                isDarkPaper && isWarm -> Color(0xFF1C1914)
+                isDarkPaper -> Color(0xFF131822)
+                isWarm -> Color(0xFFFDF8EC)
+                else -> Color(0xFFFAFAFA)
+            }
             val blankInfiniteColor = if (isDarkPaper) Color(0xFF131822) else Color.White
 
             if (isPaged) {
@@ -194,6 +215,75 @@ fun PaperBackground(
                         }
                     }
 
+                    PaperStyle.CORNELL -> {
+                        val headerY = sheetTop + (140f * scale)
+                        val summaryY = sheetTop + ((pageHeight - 240f) * scale)
+                        val cueX = sheetLeft + (pageWidth * 0.28f * scale)
+                        val lineStepScreen = CanvasConstants.RULED_LINE_SPACING * scale
+                        if (lineStepScreen > 2f) {
+                            var y = 140f + CanvasConstants.RULED_LINE_SPACING
+                            while (y < pageHeight - 240f) {
+                                val lineScreenY = sheetTop + (y * scale)
+                                if (lineScreenY in visTop..visBottom) {
+                                    drawLine(
+                                        color = ruledLineColor,
+                                        start = Offset(maxOf(visLeft, cueX), lineScreenY),
+                                        end = Offset(visRight, lineScreenY),
+                                        strokeWidth = 1.1f
+                                    )
+                                }
+                                y += CanvasConstants.RULED_LINE_SPACING
+                            }
+                        }
+                        if (headerY in visTop..visBottom) {
+                            drawLine(
+                                color = marginLineColor,
+                                start = Offset(visLeft, headerY),
+                                end = Offset(visRight, headerY),
+                                strokeWidth = (2.2f * scale).coerceIn(1.5f, 4f)
+                            )
+                        }
+                        if (summaryY in visTop..visBottom) {
+                            drawLine(
+                                color = marginLineColor,
+                                start = Offset(visLeft, summaryY),
+                                end = Offset(visRight, summaryY),
+                                strokeWidth = (2.2f * scale).coerceIn(1.5f, 4f)
+                            )
+                        }
+                        if (cueX in visLeft..visRight) {
+                            val cueTop = maxOf(visTop, headerY)
+                            val cueBottom = minOf(visBottom, summaryY)
+                            if (cueBottom > cueTop) {
+                                drawLine(
+                                    color = marginLineColor,
+                                    start = Offset(cueX, cueTop),
+                                    end = Offset(cueX, cueBottom),
+                                    strokeWidth = (2.2f * scale).coerceIn(1.5f, 4f)
+                                )
+                            }
+                        }
+                    }
+
+                    PaperStyle.WARM_CREAM -> {
+                        val lineStepScreen = CanvasConstants.RULED_LINE_SPACING * scale
+                        if (lineStepScreen > 2f) {
+                            var y = CanvasConstants.RULED_FIRST_LINE_Y
+                            while (y < pageHeight - 40f) {
+                                val lineScreenY = sheetTop + (y * scale)
+                                if (lineScreenY in visTop..visBottom) {
+                                    drawLine(
+                                        color = ruledLineColor,
+                                        start = Offset(visLeft, lineScreenY),
+                                        end = Offset(visRight, lineScreenY),
+                                        strokeWidth = 1.2f
+                                    )
+                                }
+                                y += CanvasConstants.RULED_LINE_SPACING
+                            }
+                        }
+                    }
+
                     PaperStyle.BLANK -> Unit
                 }
             } else {
@@ -275,6 +365,28 @@ fun PaperBackground(
                                 dotPaint.color = dotColor.toArgb()
                                 dotPaint.strokeWidth = (1.5f * scale).coerceIn(1f, 3f) * 2f
                                 drawContext.canvas.nativeCanvas.drawPoints(dotCoords, 0, count, dotPaint)
+                            }
+                        }
+                    }
+                    PaperStyle.CORNELL, PaperStyle.WARM_CREAM -> {
+                        drawRect(infiniteBgColor)
+                        val lineSpacing = CanvasConstants.RULED_LINE_SPACING * scale
+                        if (lineSpacing > 4f) {
+                            val firstLineY = (CanvasConstants.RULED_FIRST_LINE_Y * scale) + panY
+                            val kMin = floor(-firstLineY / lineSpacing).toInt()
+                            var k = kMin
+                            while (true) {
+                                val y = firstLineY + (k * lineSpacing)
+                                if (y > size.height) break
+                                if (y >= 0f) {
+                                    drawLine(
+                                        color = ruledLineColor,
+                                        start = Offset(0f, y),
+                                        end = Offset(size.width, y),
+                                        strokeWidth = 1f
+                                    )
+                                }
+                                k++
                             }
                         }
                     }

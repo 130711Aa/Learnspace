@@ -56,6 +56,12 @@ class NoteStorageManager(private val context: Context) {
         get() = File(notesDir, "pdfs").apply { if (!exists()) mkdirs() }
 
     companion object {
+        fun getThumbnailFile(context: Context, noteId: String): File {
+            val notesDir = File(context.filesDir, "notes").apply { if (!exists()) mkdirs() }
+            val thumbsDir = File(notesDir, "thumbs").apply { if (!exists()) mkdirs() }
+            return File(thumbsDir, "$noteId.png")
+        }
+
         /**
          * Safely copies an external PDF Uri into the app's internal private storage directory
          * (files/notes/pdfs/<noteId>.pdf) so it stays permanently readable across app restarts.
@@ -348,7 +354,11 @@ class NoteStorageManager(private val context: Context) {
                         strokeObj.put("color", stroke.brush.colorIntArgb)
                         strokeObj.put(
                             "brushFamily",
-                            if (stroke.brush.family == StockBrushes.highlighter()) "highlighter" else "pen"
+                            when (stroke.brush.family) {
+                                StockBrushes.highlighter() -> "highlighter"
+                                StockBrushes.marker() -> "marker"
+                                else -> "pen"
+                            }
                         )
                         baos.reset()
                         StrokeInputBatchSerialization.encode(stroke.inputs, baos)
@@ -381,6 +391,10 @@ class NoteStorageManager(private val context: Context) {
                     tempFile.copyTo(noteFile, overwrite = true)
                     tempFile.delete()
                 }
+            }
+            // Generate lightweight Page-1 thumbnail for Workspace cards
+            pages.firstOrNull()?.let { firstPage ->
+                savePageThumbnail(noteId, firstPage, isDarkPaper)
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -498,10 +512,10 @@ class NoteStorageManager(private val context: Context) {
                         val colorInt = strokeObj.optInt("color", 0xFF191C1E.toInt())
                         val finalColor = if (colorInt != 0) colorInt else 0xFF191C1E.toInt()
                         val familyName = strokeObj.optString("brushFamily", "pen")
-                        val family = if (familyName == "highlighter") {
-                            StockBrushes.highlighter()
-                        } else {
-                            StockBrushes.pressurePen()
+                        val family = when (familyName) {
+                            "highlighter" -> StockBrushes.highlighter()
+                            "marker" -> StockBrushes.marker()
+                            else -> StockBrushes.pressurePen()
                         }
                         val brush = Brush.createWithColorIntArgb(
                             family = family,
@@ -582,6 +596,59 @@ class NoteStorageManager(private val context: Context) {
         if (pdfFile.exists()) {
             pdfFile.delete()
         }
+        val thumbFile = getThumbnailFile(context, noteId)
+        if (thumbFile.exists()) {
+            thumbFile.delete()
+        }
+    }
+
+    private fun savePageThumbnail(noteId: String, pageData: NotePageData, isDarkPaper: Boolean) {
+        if (pageData.strokes.isEmpty() && pageData.textBoxes.isEmpty()) return
+        try {
+            val w = 180
+            val h = 240
+            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            val canvas = android.graphics.Canvas(bmp)
+            canvas.drawColor(if (isDarkPaper) 0xFF131822.toInt() else 0xFFFCFCFD.toInt())
+
+            val scale = w.toFloat() / com.lernspace.app.ui.workspace.model.CanvasConstants.PAGE_WIDTH
+            val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                style = android.graphics.Paint.Style.STROKE
+                strokeCap = android.graphics.Paint.Cap.ROUND
+                strokeJoin = android.graphics.Paint.Join.ROUND
+            }
+            val reusableInput = androidx.ink.strokes.StrokeInput()
+            val path = android.graphics.Path()
+            for (stroke in pageData.strokes) {
+                val count = stroke.inputs.size
+                if (count < 2) continue
+                val isHigh = stroke.brush.family == StockBrushes.highlighter()
+                val baseColor = stroke.brush.colorIntArgb
+                paint.color = if (isDarkPaper && !isHigh && (baseColor == 0xFF000000.toInt() || baseColor == 0xFF0F172A.toInt() || baseColor == 0xFF191C1E.toInt())) {
+                    0xFFF8FAFC.toInt()
+                } else {
+                    baseColor
+                }
+                paint.alpha = if (isHigh) 95 else 255
+                paint.strokeWidth = (stroke.brush.size * scale).coerceIn(1f, if (isHigh) 8f else 2.5f)
+                path.reset()
+                stroke.inputs.populate(0, reusableInput)
+                path.moveTo(reusableInput.x * scale, reusableInput.y * scale)
+                val step = if (count > 60) 2 else 1
+                var idx = step
+                while (idx < count) {
+                    stroke.inputs.populate(idx, reusableInput)
+                    path.lineTo(reusableInput.x * scale, reusableInput.y * scale)
+                    idx += step
+                }
+                canvas.drawPath(path, paint)
+            }
+            val thumbFile = getThumbnailFile(context, noteId)
+            FileOutputStream(thumbFile).use { out ->
+                bmp.compress(Bitmap.CompressFormat.PNG, 85, out)
+            }
+            bmp.recycle()
+        } catch (_: Exception) {}
     }
 
     /**

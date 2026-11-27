@@ -24,10 +24,17 @@ enum class GeometricShapeType(val label: String) {
     ARROW("Panah")
 }
 
+enum class PenBrushType(val displayName: String) {
+    PRESSURE_PEN("Pressure Pen"),
+    MARKER("Ballpoint / Marker")
+}
+
 enum class PaperStyle(val displayName: String) {
     RULED("Ruled Lines"),
     GRID("Math Grid"),
     DOTTED("Dot Grid"),
+    CORNELL("Cornell Notes"),
+    WARM_CREAM("Warm Cream"),
     BLANK("Blank Paper")
 }
 
@@ -114,7 +121,8 @@ data class NoteUiModel(
     var pdfTotalPages: Int = 1,
     var lastOpenedPageIndex: Int = 0,
     val pages: MutableList<NotePageData> = mutableListOf(NotePageData(pageIndex = 0)),
-    var documentContent: String = ""
+    var documentContent: String = "",
+    var isContentLoaded: Boolean = true
 ) {
     val displaySnippet: String
         get() {

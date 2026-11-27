@@ -53,6 +53,7 @@ import androidx.compose.material.icons.automirrored.filled.ViewSidebar
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -371,20 +372,21 @@ class NotePaneState(
     }
 
     suspend fun loadFromDiskAsync() {
-        val alreadyInRam = note.pages.any {
+        val alreadyInRam = note.isContentLoaded || note.pages.any {
             it.strokes.isNotEmpty() || it.textBoxes.isNotEmpty() || it.imageElements.isNotEmpty()
         }
         if (alreadyInRam || AcademicDatabaseManager.hasPendingSave(note.id)) {
+            note.isContentLoaded = true
             return
         }
 
         isLoadingFromDisk = true
         try {
             AcademicDatabaseManager.awaitPendingSave(note.id)
-            val diskContent = withContext(Dispatchers.IO) {
-                AcademicDatabaseManager.loadNoteContent(note.id)
-            }
+            val diskContent = AcademicDatabaseManager.loadNoteContentAsync(note.id)
             if (diskContent != null) {
+                note.isDarkPaper = diskContent.isDarkPaper
+                isDarkPaper = diskContent.isDarkPaper
                 if (diskContent.documentContent != null) {
                     note.documentContent = diskContent.documentContent
                     documentContent = diskContent.documentContent
@@ -399,6 +401,7 @@ class NotePaneState(
                     }
                 }
             }
+            note.isContentLoaded = true
             loadActivePageData(currentPageIndex.coerceIn(0, (note.pages.size - 1).coerceAtLeast(0)))
         } finally {
             isLoadingFromDisk = false
@@ -910,6 +913,7 @@ fun NoteEditorScreen(
     val activeTool = AppSettingsManager.activeTool
     val penColor = AppSettingsManager.penColor
     val penThickness = AppSettingsManager.penThickness
+    val penBrushType = AppSettingsManager.penBrushType
     val highlighterColor = AppSettingsManager.highlighterColor
     val highlighterThickness = AppSettingsManager.highlighterThickness
     val selectedShapeType = AppSettingsManager.selectedShapeType
@@ -939,7 +943,7 @@ fun NoteEditorScreen(
     }
 
     // Brush calculation reacting immediately to independent tool presets
-    val currentBrush = remember(activeTool, penColor, penThickness, highlighterColor, highlighterThickness) {
+    val currentBrush = remember(activeTool, penColor, penThickness, penBrushType, highlighterColor, highlighterThickness) {
         when (activeTool) {
             NoteTool.HIGHLIGHTER -> {
                 Brush.createWithComposeColor(
@@ -950,8 +954,12 @@ fun NoteEditorScreen(
                 )
             }
             else -> {
+                val family = when (penBrushType) {
+                    PenBrushType.PRESSURE_PEN -> StockBrushes.pressurePen()
+                    PenBrushType.MARKER -> StockBrushes.marker()
+                }
                 Brush.createWithComposeColor(
-                    family = StockBrushes.pressurePen(),
+                    family = family,
                     color = penColor,
                     size = penThickness,
                     epsilon = 0.1f
@@ -2430,6 +2438,9 @@ private fun NotePaneViewport(
                                 var isTransforming = false
                                 var accumulatedPan = Offset.Zero
                                 val touchSlop = viewConfiguration.touchSlop
+                                var maxFingerCount = 1
+                                var hasMultiFingerTransformed = false
+                                val tapStartTime = System.currentTimeMillis()
 
                                 while (true) {
                                     val event = awaitPointerEvent(pass = PointerEventPass.Initial)
@@ -2446,8 +2457,22 @@ private fun NotePaneViewport(
                                     val pressedFingers = event.changes.filter {
                                         it.type == PointerType.Touch && it.pressed
                                     }
+                                    if (pressedFingers.size > maxFingerCount) {
+                                        maxFingerCount = pressedFingers.size
+                                    }
                                     if (pressedFingers.isEmpty()) {
-                                        if (!isTransforming && accumulatedPan.getDistance() < touchSlop) {
+                                        val isQuickTap = (System.currentTimeMillis() - tapStartTime) < 350L
+                                        if (maxFingerCount == 2 && !hasMultiFingerTransformed && isQuickTap) {
+                                            if (state.undoStack.isNotEmpty()) {
+                                                state.undo()
+                                                try { view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK) } catch (_: Exception) {}
+                                            }
+                                        } else if (maxFingerCount >= 3 && !hasMultiFingerTransformed && isQuickTap) {
+                                            if (state.redoStack.isNotEmpty()) {
+                                                state.redo()
+                                                try { view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK) } catch (_: Exception) {}
+                                            }
+                                        } else if (!isTransforming && accumulatedPan.getDistance() < touchSlop) {
                                             state.deselectAll()
                                         }
                                         break
@@ -2460,6 +2485,10 @@ private fun NotePaneViewport(
                                         val pan = event.calculatePan()
                                         val centroid = event.calculateCentroid(useCurrent = false)
                                         event.changes.forEach { it.consume() }
+
+                                        if (kotlin.math.abs(zoom - 1f) > 0.025f || pan.getDistance() > 8f) {
+                                            hasMultiFingerTransformed = true
+                                        }
 
                                         if (centroid != Offset.Unspecified && !zoom.isNaN() && zoom > 0f) {
                                             val minScale = 0.25f
@@ -2495,6 +2524,9 @@ private fun NotePaneViewport(
                             // 1 Jari / Stylus = Coret-coret (Drawing/Eraser/Shape/Lasso)
                             // 2 Jari = Geser (Pan) & Zoom
                             var isTransforming = false
+                            var maxFingerCount = 1
+                            var hasMultiFingerTransformed = false
+                            val tapStartTime = System.currentTimeMillis()
 
                             while (true) {
                                 val event = awaitPointerEvent(pass = PointerEventPass.Initial)
@@ -2511,8 +2543,23 @@ private fun NotePaneViewport(
                                 val pressedFingers = event.changes.filter {
                                     it.type == PointerType.Touch && it.pressed
                                 }
+                                if (pressedFingers.size > maxFingerCount) {
+                                    maxFingerCount = pressedFingers.size
+                                }
 
                                 if (pressedFingers.isEmpty()) {
+                                    val isQuickTap = (System.currentTimeMillis() - tapStartTime) < 350L
+                                    if (maxFingerCount == 2 && !hasMultiFingerTransformed && isQuickTap) {
+                                        if (state.undoStack.isNotEmpty()) {
+                                            state.undo()
+                                            try { view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK) } catch (_: Exception) {}
+                                        }
+                                    } else if (maxFingerCount >= 3 && !hasMultiFingerTransformed && isQuickTap) {
+                                        if (state.redoStack.isNotEmpty()) {
+                                            state.redo()
+                                            try { view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK) } catch (_: Exception) {}
+                                        }
+                                    }
                                     break
                                 }
 
@@ -2527,6 +2574,10 @@ private fun NotePaneViewport(
                                     val pan = event.calculatePan()
                                     val centroid = event.calculateCentroid(useCurrent = false)
                                     event.changes.forEach { it.consume() }
+
+                                    if (kotlin.math.abs(zoom - 1f) > 0.025f || pan.getDistance() > 8f) {
+                                        hasMultiFingerTransformed = true
+                                    }
 
                                     if (centroid != Offset.Unspecified && !zoom.isNaN() && zoom > 0f) {
                                         val minScale = 0.25f
@@ -2688,6 +2739,8 @@ private fun NotePaneViewport(
             var lassoHiddenStrokes by remember { mutableStateOf<Set<Stroke>>(emptySet()) }
             var lassoMovingStrokes by remember { mutableStateOf<List<Stroke>>(emptyList()) }
             var lassoDragOffset by remember { mutableStateOf(Offset.Zero) }
+            var lassoScaleFactor by remember { mutableFloatStateOf(1f) }
+            var lassoScalePivot by remember { mutableStateOf(Offset.Zero) }
 
             // Inking Layer (AndroidX Ink Native Vector Tessellation - Strictly clipped)
             DrawingSurface(
@@ -2713,7 +2766,15 @@ private fun NotePaneViewport(
                                 }
                             }
 
-                            if (isStrokeHoldAtEnd(stroke, state.scale)) {
+                            if (activeTool == NoteTool.HIGHLIGHTER) {
+                                val straightened = ShapeRecognizer.straightenHighlighterIfNearLine(stroke)
+                                if (straightened !== stroke) {
+                                    try {
+                                        view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+                                    } catch (_: Exception) {}
+                                }
+                                strokesToAdd.add(straightened)
+                            } else if (isStrokeHoldAtEnd(stroke, state.scale)) {
                                 val refined = ShapeRecognizer.refineStroke(stroke)
                                 if (refined != null) {
                                     try {
@@ -2755,8 +2816,40 @@ private fun NotePaneViewport(
                 hiddenStrokes = lassoHiddenStrokes,
                 movingStrokes = lassoMovingStrokes,
                 movingOffsetProvider = { lassoDragOffset },
+                movingScaleProvider = { lassoScaleFactor },
+                movingPivotProvider = { lassoScalePivot },
                 modifier = Modifier.fillMaxSize().clipToBounds().zIndex(1f)
             )
+
+            if (state.isLoadingFromDisk) {
+                Box(
+                    modifier = Modifier.fillMaxSize().zIndex(20f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = if (state.isDarkPaper) Color(0xE61E293B) else Color(0xF2FFFFFF),
+                        shadowElevation = 6.dp
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.5.dp,
+                                color = AccentBlue
+                            )
+                            Text(
+                                text = "Memuat catatan...",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (state.isDarkPaper) Color.White else LernspaceDark
+                            )
+                        }
+                    }
+                }
+            }
 
             // Locked Image Unlock Badges (Floating on top of Inking Layer so user can tap lock to unlock from ANY tool!)
             state.imageElements.forEachIndexed { index, img ->
@@ -2945,45 +3038,87 @@ private fun NotePaneViewport(
 
             // Lasso Tool Selection & Manipulation Layer (Strictly clipped - Top-most layer)
             if ((activeTool == NoteTool.LASSO || state.lassoSelection != null) && isActive) {
+                var lassoCommitJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+
                 val beginLassoMove: (LassoSelectionState) -> Unit = { sel ->
-                    state.beginUndoTransaction()
-                    if (sel.selectedStrokes.isNotEmpty()) {
-                        val hidden = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Stroke, Boolean>())
-                        hidden.addAll(sel.selectedStrokes)
-                        lassoHiddenStrokes = hidden
-                        lassoMovingStrokes = sel.selectedStrokes.toList()
+                    if (lassoCommitJob?.isActive == true) {
+                        // Lanjutkan drag dari posisi visual yang sedang di-render MovingStrokesCache
+                        lassoCommitJob?.cancel()
+                        lassoCommitJob = null
+                    } else {
+                        state.beginUndoTransaction()
+                        if (sel.selectedStrokes.isNotEmpty()) {
+                            val hidden = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Stroke, Boolean>())
+                            hidden.addAll(sel.selectedStrokes)
+                            lassoHiddenStrokes = hidden
+                            lassoMovingStrokes = sel.selectedStrokes.toList()
+                        }
+                        lassoDragOffset = Offset.Zero
                     }
-                    lassoDragOffset = Offset.Zero
                 }
                 val commitLassoMove: (LassoSelectionState?) -> Unit = { sel ->
                     val totalDx = lassoDragOffset.x
                     val totalDy = lassoDragOffset.y
-                    if (sel != null && (totalDx != 0f || totalDy != 0f)) {
-                        if (sel.selectedStrokes.isNotEmpty()) {
-                            val indexMap = java.util.IdentityHashMap<Stroke, Int>(state.strokes.size)
-                            for (idx in state.strokes.indices) {
-                                indexMap[state.strokes[idx]] = idx
-                            }
-                            for (i in sel.selectedStrokes.indices) {
-                                val oldStroke = sel.selectedStrokes[i]
-                                val newStroke = ShapeRecognizer.translateStroke(oldStroke, totalDx, totalDy)
-                                val idxInMain = indexMap[oldStroke]
-                                if (idxInMain != null) {
-                                    state.strokes[idxInMain] = newStroke
-                                }
-                                sel.selectedStrokes[i] = newStroke
-                            }
-                        }
+                    if (sel == null || (totalDx == 0f && totalDy == 0f)) {
+                        lassoHiddenStrokes = emptySet()
+                        lassoMovingStrokes = emptyList()
+                        lassoDragOffset = Offset.Zero
+                        state.commitUndoTransactionIfChanged()
+                        state.saveActivePageData()
+                    } else if (sel.selectedStrokes.isEmpty()) {
                         val latestSel = state.lassoSelection ?: sel
                         state.lassoSelection = latestSel.copy(
                             bounds = latestSel.bounds.translate(Offset(totalDx, totalDy))
                         )
+                        lassoHiddenStrokes = emptySet()
+                        lassoMovingStrokes = emptyList()
+                        lassoDragOffset = Offset.Zero
+                        state.commitUndoTransactionIfChanged()
+                        state.saveActivePageData()
+                    } else {
+                        // Pertahankan lassoMovingStrokes & lassoDragOffset di layar selama tessellation
+                        // berjalan di background agar UI tidak freeze saat stylus diangkat.
+                        val oldStrokes = sel.selectedStrokes.toList()
+                        lassoCommitJob?.cancel()
+                        lassoCommitJob = coroutineScope.launch {
+                            val translatedStrokes = withContext(Dispatchers.Default) {
+                                ArrayList<Stroke>(oldStrokes.size).apply {
+                                    for (i in oldStrokes.indices) {
+                                        add(ShapeRecognizer.translateStroke(oldStrokes[i], totalDx, totalDy))
+                                    }
+                                }
+                            }
+                            Snapshot.withMutableSnapshot {
+                                val indexMap = java.util.IdentityHashMap<Stroke, Int>(state.strokes.size)
+                                for (idx in state.strokes.indices) {
+                                    indexMap[state.strokes[idx]] = idx
+                                }
+                                for (i in oldStrokes.indices) {
+                                    val oldStroke = oldStrokes[i]
+                                    val newStroke = translatedStrokes[i]
+                                    val idxInMain = indexMap[oldStroke]
+                                    if (idxInMain != null) {
+                                        state.strokes[idxInMain] = newStroke
+                                    }
+                                    if (i < sel.selectedStrokes.size && sel.selectedStrokes[i] === oldStroke) {
+                                        sel.selectedStrokes[i] = newStroke
+                                    }
+                                }
+                                val latestSel = state.lassoSelection
+                                if (latestSel != null) {
+                                    state.lassoSelection = latestSel.copy(
+                                        bounds = latestSel.bounds.translate(Offset(totalDx, totalDy))
+                                    )
+                                }
+                                lassoHiddenStrokes = emptySet()
+                                lassoMovingStrokes = emptyList()
+                                lassoDragOffset = Offset.Zero
+                            }
+                            lassoCommitJob = null
+                            state.commitUndoTransactionIfChanged()
+                            state.saveActivePageData()
+                        }
                     }
-                    lassoHiddenStrokes = emptySet()
-                    lassoMovingStrokes = emptyList()
-                    lassoDragOffset = Offset.Zero
-                    state.commitUndoTransactionIfChanged()
-                    state.saveActivePageData()
                 }
 
                 Box(
@@ -3003,11 +3138,12 @@ private fun NotePaneViewport(
 
                                 val curSel = state.lassoSelection
                                 if (curSel != null && !curSel.isEmpty) {
+                                    val activeOff = lassoDragOffset
                                     val screenBounds = Rect(
-                                        curSel.bounds.left * state.scale + state.panX,
-                                        curSel.bounds.top * state.scale + state.panY,
-                                        curSel.bounds.right * state.scale + state.panX,
-                                        curSel.bounds.bottom * state.scale + state.panY
+                                        (curSel.bounds.left + activeOff.x) * state.scale + state.panX,
+                                        (curSel.bounds.top + activeOff.y) * state.scale + state.panY,
+                                        (curSel.bounds.right + activeOff.x) * state.scale + state.panX,
+                                        (curSel.bounds.bottom + activeOff.y) * state.scale + state.panY
                                     )
                                     if (screenBounds.contains(screenPoint)) {
                                         beginLassoMove(curSel)
@@ -3167,10 +3303,16 @@ private fun NotePaneViewport(
                         val sel = state.lassoSelection ?: return@Canvas
                         if (sel.isEmpty) return@Canvas
                         val dragOff = lassoDragOffset
-                        val sLeft = (sel.bounds.left + dragOff.x) * state.scale + state.panX
-                        val sTop = (sel.bounds.top + dragOff.y) * state.scale + state.panY
-                        val sRight = (sel.bounds.right + dragOff.x) * state.scale + state.panX
-                        val sBottom = (sel.bounds.bottom + dragOff.y) * state.scale + state.panY
+                        val sc = lassoScaleFactor
+                        val piv = lassoScalePivot
+                        val wLeft = if (sc != 1f) piv.x + (sel.bounds.left - piv.x) * sc else sel.bounds.left + dragOff.x
+                        val wTop = if (sc != 1f) piv.y + (sel.bounds.top - piv.y) * sc else sel.bounds.top + dragOff.y
+                        val wRight = if (sc != 1f) piv.x + (sel.bounds.right - piv.x) * sc else sel.bounds.right + dragOff.x
+                        val wBottom = if (sc != 1f) piv.y + (sel.bounds.bottom - piv.y) * sc else sel.bounds.bottom + dragOff.y
+                        val sLeft = wLeft * state.scale + state.panX
+                        val sTop = wTop * state.scale + state.panY
+                        val sRight = wRight * state.scale + state.panX
+                        val sBottom = wBottom * state.scale + state.panY
                         val sWidth = maxOf(40f, sRight - sLeft)
                         val sHeight = maxOf(40f, sBottom - sTop)
 
@@ -3185,6 +3327,162 @@ private fun NotePaneViewport(
                                     pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 8f), 0f)
                                 )
                             )
+                        }
+                    }
+
+                    // Bottom-Right Corner Resize Handle for Lasso Selection
+                    if (curSel.selectedStrokes.isNotEmpty() || curSel.selectedTextBoxes.isNotEmpty() || curSel.selectedImages.isNotEmpty()) {
+                        var resizeBaseDiag by remember { mutableFloatStateOf(1f) }
+                        var resizeAccumDelta by remember { mutableStateOf(Offset.Zero) }
+                        Surface(
+                            shape = CircleShape,
+                            color = Color.White,
+                            shadowElevation = 4.dp,
+                            border = BorderStroke(2.dp, AccentBlue),
+                            modifier = Modifier
+                                .offset {
+                                    val sel = state.lassoSelection
+                                    if (sel != null && !sel.isEmpty) {
+                                        val dragOff = lassoDragOffset
+                                        val sc = lassoScaleFactor
+                                        val piv = lassoScalePivot
+                                        val wRight = if (sc != 1f) piv.x + (sel.bounds.right - piv.x) * sc else sel.bounds.right + dragOff.x
+                                        val wBottom = if (sc != 1f) piv.y + (sel.bounds.bottom - piv.y) * sc else sel.bounds.bottom + dragOff.y
+                                        val sRight = wRight * state.scale + state.panX
+                                        val sBottom = wBottom * state.scale + state.panY
+                                        IntOffset(
+                                            x = (sRight - 14.dp.toPx()).roundToInt(),
+                                            y = (sBottom - 14.dp.toPx()).roundToInt()
+                                        )
+                                    } else {
+                                        IntOffset(-1000, -1000)
+                                    }
+                                }
+                                .size(28.dp)
+                                .pointerInput(state.note.id) {
+                                    detectDragGestures(
+                                        onDragStart = {
+                                            val sel = state.lassoSelection ?: return@detectDragGestures
+                                            beginLassoMove(sel)
+                                            val piv = Offset(sel.bounds.left, sel.bounds.top)
+                                            lassoScalePivot = piv
+                                            lassoScaleFactor = 1f
+                                            resizeAccumDelta = Offset.Zero
+                                            val bw = (sel.bounds.width * state.scale).coerceAtLeast(24f)
+                                            val bh = (sel.bounds.height * state.scale).coerceAtLeast(24f)
+                                            resizeBaseDiag = kotlin.math.hypot(bw.toDouble(), bh.toDouble()).toFloat().coerceAtLeast(24f)
+                                        },
+                                        onDragEnd = {
+                                            val sel = state.lassoSelection
+                                            val factor = lassoScaleFactor
+                                            val pivot = lassoScalePivot
+                                            if (sel != null && kotlin.math.abs(factor - 1f) > 0.01f) {
+                                                for (box in sel.selectedTextBoxes) {
+                                                    box.x = pivot.x + (box.x - pivot.x) * factor
+                                                    box.y = pivot.y + (box.y - pivot.y) * factor
+                                                    box.width = (box.width * factor).coerceAtLeast(60f)
+                                                    box.height = (box.height * factor).coerceAtLeast(40f)
+                                                }
+                                                for (img in sel.selectedImages) {
+                                                    img.x = pivot.x + (img.x - pivot.x) * factor
+                                                    img.y = pivot.y + (img.y - pivot.y) * factor
+                                                    img.width = (img.width * factor).coerceAtLeast(40f)
+                                                    img.height = (img.height * factor).coerceAtLeast(40f)
+                                                }
+                                                if (sel.selectedStrokes.isNotEmpty()) {
+                                                    val oldStrokes = sel.selectedStrokes.toList()
+                                                    lassoCommitJob?.cancel()
+                                                    lassoCommitJob = coroutineScope.launch {
+                                                        val scaledStrokes = withContext(Dispatchers.Default) {
+                                                            ArrayList<Stroke>(oldStrokes.size).apply {
+                                                                for (i in oldStrokes.indices) {
+                                                                    add(ShapeRecognizer.scaleStroke(oldStrokes[i], factor, pivot))
+                                                                }
+                                                            }
+                                                        }
+                                                        Snapshot.withMutableSnapshot {
+                                                            val indexMap = java.util.IdentityHashMap<Stroke, Int>(state.strokes.size)
+                                                            for (idx in state.strokes.indices) {
+                                                                indexMap[state.strokes[idx]] = idx
+                                                            }
+                                                            for (i in oldStrokes.indices) {
+                                                                val oldStroke = oldStrokes[i]
+                                                                val newStroke = scaledStrokes[i]
+                                                                val idxInMain = indexMap[oldStroke]
+                                                                if (idxInMain != null) {
+                                                                    state.strokes[idxInMain] = newStroke
+                                                                }
+                                                                if (i < sel.selectedStrokes.size && sel.selectedStrokes[i] === oldStroke) {
+                                                                    sel.selectedStrokes[i] = newStroke
+                                                                }
+                                                            }
+                                                            val latestSel = state.lassoSelection
+                                                            if (latestSel != null) {
+                                                                val b = latestSel.bounds
+                                                                latestSel.copy(
+                                                                    bounds = Rect(
+                                                                        left = pivot.x + (b.left - pivot.x) * factor,
+                                                                        top = pivot.y + (b.top - pivot.y) * factor,
+                                                                        right = pivot.x + (b.right - pivot.x) * factor,
+                                                                        bottom = pivot.y + (b.bottom - pivot.y) * factor
+                                                                    )
+                                                                ).also { state.lassoSelection = it }
+                                                            }
+                                                            lassoHiddenStrokes = emptySet()
+                                                            lassoMovingStrokes = emptyList()
+                                                            lassoDragOffset = Offset.Zero
+                                                            lassoScaleFactor = 1f
+                                                        }
+                                                        lassoCommitJob = null
+                                                        state.commitUndoTransactionIfChanged()
+                                                        state.saveActivePageData()
+                                                    }
+                                                } else {
+                                                    val b = sel.bounds
+                                                    state.lassoSelection = sel.copy(
+                                                        bounds = Rect(
+                                                            left = pivot.x + (b.left - pivot.x) * factor,
+                                                            top = pivot.y + (b.top - pivot.y) * factor,
+                                                            right = pivot.x + (b.right - pivot.x) * factor,
+                                                            bottom = pivot.y + (b.bottom - pivot.y) * factor
+                                                        )
+                                                    )
+                                                    lassoHiddenStrokes = emptySet()
+                                                    lassoMovingStrokes = emptyList()
+                                                    lassoDragOffset = Offset.Zero
+                                                    lassoScaleFactor = 1f
+                                                    state.commitUndoTransactionIfChanged()
+                                                    state.saveActivePageData()
+                                                }
+                                            } else {
+                                                lassoHiddenStrokes = emptySet()
+                                                lassoMovingStrokes = emptyList()
+                                                lassoDragOffset = Offset.Zero
+                                                lassoScaleFactor = 1f
+                                            }
+                                        },
+                                        onDragCancel = {
+                                            lassoHiddenStrokes = emptySet()
+                                            lassoMovingStrokes = emptyList()
+                                            lassoDragOffset = Offset.Zero
+                                            lassoScaleFactor = 1f
+                                        }
+                                    ) { change, dragAmount ->
+                                        change.consume()
+                                        resizeAccumDelta += dragAmount
+                                        val proj = (resizeAccumDelta.x + resizeAccumDelta.y) * 0.707f
+                                        lassoScaleFactor = ((resizeBaseDiag + proj) / resizeBaseDiag).coerceIn(0.35f, 3.5f)
+                                    }
+                                }
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Filled.OpenInFull,
+                                    contentDescription = "Ubah Ukuran",
+                                    tint = AccentBlue,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
                         }
                     }
 
@@ -4265,6 +4563,218 @@ private fun NotePaneViewport(
             )
         }
 
+        // ── 4. Zoom Box (Kotak Zoom Tulis ala GoodNotes) ──
+        var isZoomBoxEnabled by remember(state.note.id) { mutableStateOf(false) }
+        var zoomBoxWorldX by remember(state.note.id) { mutableFloatStateOf(90f) }
+        var zoomBoxWorldY by remember(state.note.id) { mutableFloatStateOf(160f) }
+        val zoomBoxWorldW = 420f
+        val zoomBoxWorldH = 140f
+
+        if (isActive && !isZoomBoxEnabled) {
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = LernspaceSurfaceCard.copy(alpha = 0.94f),
+                shadowElevation = 4.dp,
+                border = BorderStroke(1.dp, LernspaceBorder),
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 16.dp, bottom = 16.dp)
+                    .zIndex(15f)
+                    .rejectPalmAfterStylus(shouldRejectFloatingTouch)
+                    .clickable { isZoomBoxEnabled = true }
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.ZoomIn,
+                        contentDescription = "Zoom Box",
+                        tint = AccentBlue,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = "Zoom Box",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = LernspaceDark
+                    )
+                }
+            }
+        }
+
+        if (isActive && isZoomBoxEnabled) {
+            // Target frame indicator on the main canvas (draggable)
+            val targetScreenLeft = zoomBoxWorldX * state.scale + state.panX
+            val targetScreenTop = zoomBoxWorldY * state.scale + state.panY
+            val targetScreenW = (zoomBoxWorldW * state.scale).coerceAtLeast(36f)
+            val targetScreenH = (zoomBoxWorldH * state.scale).coerceAtLeast(24f)
+
+            Box(
+                modifier = Modifier
+                    .offset {
+                        IntOffset(targetScreenLeft.roundToInt(), targetScreenTop.roundToInt())
+                    }
+                    .size(
+                        width = with(density) { targetScreenW.toDp() },
+                        height = with(density) { targetScreenH.toDp() }
+                    )
+                    .border(2.dp, AccentBlue, RoundedCornerShape(6.dp))
+                    .background(AccentBlue.copy(alpha = 0.08f), RoundedCornerShape(6.dp))
+                    .zIndex(14f)
+                    .pointerInput(state.note.id, state.scale) {
+                        detectDragGestures { change, dragAmount ->
+                            change.consume()
+                            zoomBoxWorldX = (zoomBoxWorldX + dragAmount.x / state.scale).coerceIn(0f, CanvasConstants.PAGE_WIDTH - 120f)
+                            zoomBoxWorldY = (zoomBoxWorldY + dragAmount.y / state.scale).coerceIn(0f, CanvasConstants.PAGE_HEIGHT - 80f)
+                        }
+                    }
+            )
+
+            // Magnified Writing Window at bottom center
+            var zoomWindowSize by remember { mutableStateOf(IntSize.Zero) }
+            val zoomBoxScale = remember(zoomWindowSize) {
+                if (zoomWindowSize.width > 0) zoomWindowSize.width.toFloat() / zoomBoxWorldW else 2.4f
+            }
+
+            Surface(
+                shape = RoundedCornerShape(18.dp),
+                color = LernspaceSurfaceCard,
+                shadowElevation = 12.dp,
+                border = BorderStroke(1.5.dp, AccentBlue.copy(alpha = 0.6f)),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(horizontal = 24.dp, vertical = 14.dp)
+                    .fillMaxWidth(0.76f)
+                    .height(220.dp)
+                    .zIndex(22f)
+                    .rejectPalmAfterStylus(shouldRejectFloatingTouch)
+            ) {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    // Zoom Box Header Controls
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xFFF8FAFC))
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(Icons.Filled.ZoomIn, null, tint = AccentBlue, modifier = Modifier.size(16.dp))
+                            Text(
+                                text = "Kotak Zoom Tulis (Geser kotak biru di kanvas untuk pindah posisi)",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = LernspaceDark
+                            )
+                        }
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            FilledTonalIconButton(
+                                onClick = {
+                                    zoomBoxWorldX = (zoomBoxWorldX - zoomBoxWorldW * 0.7f).coerceAtLeast(40f)
+                                },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Geser Kiri", modifier = Modifier.size(15.dp))
+                            }
+                            FilledTonalIconButton(
+                                onClick = {
+                                    val nextX = zoomBoxWorldX + zoomBoxWorldW * 0.7f
+                                    if (nextX + zoomBoxWorldW > CanvasConstants.PAGE_WIDTH - 40f) {
+                                        zoomBoxWorldX = 90f
+                                        zoomBoxWorldY = (zoomBoxWorldY + zoomBoxWorldH * 0.85f).coerceAtMost(CanvasConstants.PAGE_HEIGHT - zoomBoxWorldH)
+                                    } else {
+                                        zoomBoxWorldX = nextX
+                                    }
+                                },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowForward, "Geser Kanan", modifier = Modifier.size(15.dp))
+                            }
+                            FilledTonalIconButton(
+                                onClick = {
+                                    zoomBoxWorldX = 90f
+                                    zoomBoxWorldY = (zoomBoxWorldY + zoomBoxWorldH * 0.85f).coerceAtMost(CanvasConstants.PAGE_HEIGHT - zoomBoxWorldH)
+                                },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(Icons.Filled.SubdirectoryArrowLeft, "Baris Baru", modifier = Modifier.size(15.dp))
+                            }
+                            IconButton(
+                                onClick = { isZoomBoxEnabled = false },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(Icons.Filled.Close, "Tutup Zoom Box", tint = Color(0xFF64748B), modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+
+                    HorizontalDivider(color = LernspaceBorder, thickness = 1.dp)
+
+                    // Magnified Paper + DrawingSurface
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clipToBounds()
+                            .onSizeChanged { zoomWindowSize = it }
+                    ) {
+                        PaperBackground(
+                            style = state.paperStyle,
+                            scaleProvider = { zoomBoxScale },
+                            panXProvider = { -zoomBoxWorldX * zoomBoxScale },
+                            panYProvider = { -zoomBoxWorldY * zoomBoxScale },
+                            isPaged = state.canvasType == NoteCanvasType.PAGED_NOTE,
+                            isDarkPaper = state.isDarkPaper,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        DrawingSurface(
+                            strokes = state.strokes,
+                            canvasStrokeRenderer = state.canvasStrokeRenderer,
+                            currentBrush = currentBrush,
+                            onGetNextBrush = { currentBrush },
+                            onStrokesFinished = { newStrokes ->
+                                val processed = newStrokes.map { stroke ->
+                                    if (activeTool == NoteTool.HIGHLIGHTER) {
+                                        ShapeRecognizer.straightenHighlighterIfNearLine(stroke)
+                                    } else {
+                                        stroke
+                                    }
+                                }
+                                if (processed.isNotEmpty()) {
+                                    state.pushUndoSnapshot()
+                                    state.strokes.addAll(processed)
+                                    state.saveActivePageData()
+                                }
+                            },
+                            isEraserMode = activeTool == NoteTool.ERASER && isActive,
+                            isDarkPaper = state.isDarkPaper,
+                            isDrawingEnabled = activeTool == NoteTool.PEN || activeTool == NoteTool.HIGHLIGHTER || activeTool == NoteTool.ERASER,
+                            isFingerDrawingEnabled = AppSettingsManager.touchInputMode == TouchInputMode.FINGER_AND_STYLUS,
+                            eraserRadiusPx = AppSettingsManager.eraserRadius,
+                            scaleProvider = { zoomBoxScale },
+                            panXProvider = { -zoomBoxWorldX * zoomBoxScale },
+                            panYProvider = { -zoomBoxWorldY * zoomBoxScale },
+                            onEraseStart = { state.beginUndoTransaction() },
+                            onErase = { wx, wy -> state.eraseNear(wx, wy, AppSettingsManager.eraserRadius, AppSettingsManager.eraserMode) },
+                            onEraseEnd = {
+                                state.commitUndoTransactionIfChanged()
+                                state.saveActivePageData()
+                            },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                }
+            }
+        }
+
         // Dialog: Confirm Delete Current Page
         if (showDeletePageDialog) {
             AlertDialog(
@@ -4517,6 +5027,8 @@ private fun UnifiedNoteTopBar(
                 onSelectPenColor = onSelectPenColor,
                 penThickness = penThickness,
                 onSelectPenThickness = onSelectPenThickness,
+                penBrushType = AppSettingsManager.penBrushType,
+                onSelectPenBrushType = { AppSettingsManager.updatePenBrushType(it) },
                 highlighterColor = highlighterColor,
                 onSelectHighlighterColor = onSelectHighlighterColor,
                 highlighterThickness = highlighterThickness,
@@ -5221,7 +5733,13 @@ private fun renderPageThumbnailBitmap(
     val canvas = android.graphics.Canvas(bitmap)
 
     val scale = targetWidth.toFloat() / CanvasConstants.PAGE_WIDTH
-    val bgColor = if (isDarkPaper) android.graphics.Color.rgb(15, 23, 42) else android.graphics.Color.WHITE
+    val isWarm = paperStyle == PaperStyle.WARM_CREAM
+    val bgColor = when {
+        isDarkPaper && isWarm -> android.graphics.Color.rgb(28, 25, 20)
+        isDarkPaper -> android.graphics.Color.rgb(15, 23, 42)
+        isWarm -> android.graphics.Color.rgb(253, 248, 236)
+        else -> android.graphics.Color.WHITE
+    }
     canvas.drawColor(bgColor)
 
     // 1. PDF Page Background
@@ -5282,6 +5800,28 @@ private fun renderPageThumbnailBitmap(
                         y += dotSpacing
                     }
                     x += dotSpacing
+                }
+            }
+            PaperStyle.CORNELL -> {
+                val headerY = 140f * scale
+                val summaryY = (CanvasConstants.PAGE_HEIGHT - 240f) * scale
+                val cueX = targetWidth * 0.28f
+                canvas.drawLine(0f, headerY, targetWidth.toFloat(), headerY, marginPaint)
+                canvas.drawLine(0f, summaryY, targetWidth.toFloat(), summaryY, marginPaint)
+                canvas.drawLine(cueX, headerY, cueX, summaryY, marginPaint)
+                val spacing = CanvasConstants.RULED_LINE_SPACING * scale
+                var y = headerY + spacing
+                while (y < summaryY - 2f) {
+                    canvas.drawLine(cueX, y, targetWidth.toFloat(), y, linePaint)
+                    y += spacing
+                }
+            }
+            PaperStyle.WARM_CREAM -> {
+                val spacing = CanvasConstants.RULED_LINE_SPACING * scale
+                var y = CanvasConstants.RULED_FIRST_LINE_Y * scale
+                while (y < targetHeight - 2f) {
+                    canvas.drawLine(0f, y, targetWidth.toFloat(), y, linePaint)
+                    y += spacing
                 }
             }
             PaperStyle.BLANK -> {}

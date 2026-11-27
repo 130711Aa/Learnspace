@@ -34,6 +34,8 @@ object AcademicDatabaseManager {
     private var storageManager: NoteStorageManager? = null
     private val pendingNoteSaves = ConcurrentHashMap<String, Job>()
     private val noteWriteMutexes = ConcurrentHashMap<String, Mutex>()
+    private val inFlightNoteLoads = ConcurrentHashMap<String, Deferred<LoadedNoteContent?>>()
+    private var preloadJob: Job? = null
 
     fun init(database: LernspaceDatabase, context: Context) {
         db = database
@@ -117,62 +119,65 @@ object AcademicDatabaseManager {
             })
         }
 
-        // 4. Notes & Canvas Strokes (decode off main thread in Dispatchers.IO!)
+        // 4. Notes (Instant metadata-only load from Room; heavy strokes/images load lazily when opened!)
         val existingNotes = database.noteDao().getAllActiveNotes().firstOrNull() ?: emptyList()
-        val loadedNoteModels = withContext(Dispatchers.IO) {
-            existingNotes.map { entity ->
-                val loaded = storage.loadNoteWithMeta(entity.id)
-                val loadedPages = loaded?.pages ?: listOf(NotePageData(pageIndex = 0))
-                val isDark = loaded?.isDarkPaper ?: false
-                val paperStyle = try {
-                    PaperStyle.valueOf(entity.paperStyle)
-                } catch (e: Exception) {
-                    PaperStyle.RULED
-                }
-                val dateFormatted = SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date(entity.updatedAt))
-
-                val isDoc = loaded?.canvasType == NoteCanvasType.DOC_DOCUMENT.name || entity.paperStyle == "DOC_DOCUMENT"
-                val rawDocContent = loaded?.documentContent.orEmpty()
-                val cleanSnippet = when {
-                    isDoc -> {
-                        val text = DocxDocumentCodec.exportToPlainText(rawDocContent.ifBlank { entity.snippet }).replace("\n", " ").trim()
-                        if (text.isNotBlank()) text.take(120) + (if (text.length > 120) "..." else "") else "Dokumen Teks Kosong..."
-                    }
-                    entity.snippet.contains('<') || entity.snippet.contains("<!--LSPAGE") -> {
-                        val text = DocxDocumentCodec.exportToPlainText(entity.snippet).replace("\n", " ").trim()
-                        if (text.isNotBlank()) text.take(120) + (if (text.length > 120) "..." else "") else "Catatan kosong..."
-                    }
-                    else -> entity.snippet
-                }
-
-                NoteUiModel(
-                    id = entity.id,
-                    title = entity.title,
-                    subject = entity.subject,
-                    date = dateFormatted,
-                    snippet = cleanSnippet,
-                    subjectId = entity.subjectId,
-                    topicId = entity.topicId,
-                    topicName = entity.topicName,
-                    isScratchpad = entity.isScratchpad,
-                    canvasType = when {
-                        loaded?.canvasType == NoteCanvasType.DOC_DOCUMENT.name || entity.paperStyle == "DOC_DOCUMENT" -> NoteCanvasType.DOC_DOCUMENT
-                        !entity.pdfUri.isNullOrBlank() -> NoteCanvasType.PDF_DOCUMENT
-                        entity.isScratchpad -> NoteCanvasType.INFINITE_SCRATCHPAD
-                        else -> NoteCanvasType.PAGED_NOTE
-                    },
-                    paperStyle = paperStyle,
-                    isDarkPaper = isDark,
-                    pdfUri = entity.pdfUri,
-                    pdfTotalPages = entity.pdfTotalPages,
-                    pages = loadedPages.toMutableList(),
-                    documentContent = loaded?.documentContent ?: ""
-                )
+        val dateFormat = SimpleDateFormat("MMM d, h:mm a", Locale.getDefault())
+        val loadedNoteModels = existingNotes.map { entity ->
+            val paperStyle = try {
+                PaperStyle.valueOf(entity.paperStyle)
+            } catch (e: Exception) {
+                PaperStyle.RULED
             }
+            val dateFormatted = dateFormat.format(Date(entity.updatedAt))
+            val isDoc = entity.paperStyle == "DOC_DOCUMENT"
+            val cleanSnippet = if (entity.snippet.contains('<') || entity.snippet.contains("<!--LSPAGE")) {
+                val text = DocxDocumentCodec.exportToPlainText(entity.snippet).replace("\n", " ").trim()
+                if (text.isNotBlank()) text.take(120) + (if (text.length > 120) "..." else "") else if (isDoc) "Dokumen Teks Kosong..." else "Catatan kosong..."
+            } else {
+                entity.snippet
+            }
+
+            NoteUiModel(
+                id = entity.id,
+                title = entity.title,
+                subject = entity.subject,
+                date = dateFormatted,
+                snippet = cleanSnippet,
+                subjectId = entity.subjectId,
+                topicId = entity.topicId,
+                topicName = entity.topicName,
+                isScratchpad = entity.isScratchpad,
+                canvasType = when {
+                    isDoc -> NoteCanvasType.DOC_DOCUMENT
+                    !entity.pdfUri.isNullOrBlank() -> NoteCanvasType.PDF_DOCUMENT
+                    entity.isScratchpad -> NoteCanvasType.INFINITE_SCRATCHPAD
+                    else -> NoteCanvasType.PAGED_NOTE
+                },
+                paperStyle = paperStyle,
+                isDarkPaper = false,
+                pdfUri = entity.pdfUri,
+                pdfTotalPages = entity.pdfTotalPages,
+                pages = mutableListOf(NotePageData(pageIndex = 0)),
+                documentContent = "",
+                isContentLoaded = false
+            )
         }
         withContext(Dispatchers.Main) {
             AcademicWorkspaceState.notes.clear()
             AcademicWorkspaceState.notes.addAll(loadedNoteModels)
+        }
+
+        // Background Preload: diam-diam muat 6 catatan terbaru setelah Workspace tampil agar buka catatan langsung instan
+        preloadJob?.cancel()
+        preloadJob = scope.launch(Dispatchers.IO) {
+            for (noteModel in loadedNoteModels.take(6)) {
+                if (!isActive) break
+                if (!noteModel.isContentLoaded) {
+                    try {
+                        ensureNoteLoaded(noteModel)
+                    } catch (_: Exception) {}
+                }
+            }
         }
 
         // 5. Calendar Events & Weekly Classes
@@ -333,6 +338,7 @@ object AcademicDatabaseManager {
             updatedAt = System.currentTimeMillis()
         )
 
+        val shouldSaveContent = note.isContentLoaded
         pendingNoteSaves.remove(note.id)?.cancel()
         val mutex = noteWriteMutexes.getOrPut(note.id) { Mutex() }
         lateinit var launchedJob: Job
@@ -343,14 +349,16 @@ object AcademicDatabaseManager {
                 }
                 mutex.withLock {
                     database.noteDao().insertNote(entity)
-                    storage.saveNotePages(
-                        note.id,
-                        pagesSnapshot,
-                        isDark,
-                        note.lastOpenedPageIndex,
-                        canvasType = note.canvasType.name,
-                        documentContent = note.documentContent
-                    )
+                    if (shouldSaveContent) {
+                        storage.saveNotePages(
+                            note.id,
+                            pagesSnapshot,
+                            isDark,
+                            note.lastOpenedPageIndex,
+                            canvasType = note.canvasType.name,
+                            documentContent = note.documentContent
+                        )
+                    }
                 }
             } finally {
                 pendingNoteSaves.remove(note.id, launchedJob)
@@ -373,6 +381,53 @@ object AcademicDatabaseManager {
 
     fun loadNoteContent(noteId: String): com.lernspace.app.data.local.LoadedNoteContent? {
         return storageManager?.loadNoteWithMeta(noteId)
+    }
+
+    suspend fun loadNoteContentAsync(noteId: String): LoadedNoteContent? {
+        val storage = storageManager ?: return null
+        val existing = inFlightNoteLoads[noteId]
+        if (existing != null && existing.isActive) {
+            return existing.await()
+        }
+        val deferred = scope.async(Dispatchers.IO) {
+            try {
+                storage.loadNoteWithMeta(noteId)
+            } finally {
+                inFlightNoteLoads.remove(noteId)
+            }
+        }
+        val prev = inFlightNoteLoads.putIfAbsent(noteId, deferred)
+        return if (prev != null && prev.isActive) {
+            deferred.cancel()
+            prev.await()
+        } else {
+            deferred.await()
+        }
+    }
+
+    suspend fun ensureNoteLoaded(note: NoteUiModel) {
+        if (note.isContentLoaded || hasPendingSave(note.id)) {
+            note.isContentLoaded = true
+            return
+        }
+        awaitPendingSave(note.id)
+        val diskContent = loadNoteContentAsync(note.id)
+        withContext(Dispatchers.Main) {
+            if (!note.isContentLoaded && diskContent != null) {
+                note.isDarkPaper = diskContent.isDarkPaper
+                if (diskContent.documentContent != null) {
+                    note.documentContent = diskContent.documentContent
+                }
+                if (diskContent.pages.isNotEmpty()) {
+                    note.pages.clear()
+                    note.pages.addAll(diskContent.pages)
+                    if (diskContent.lastOpenedPageIndex in 0 until note.pages.size) {
+                        note.lastOpenedPageIndex = diskContent.lastOpenedPageIndex
+                    }
+                }
+            }
+            note.isContentLoaded = true
+        }
     }
 
     fun deleteNote(noteId: String) {

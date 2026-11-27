@@ -22,6 +22,8 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.setFrom
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerType
+import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
+import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.core.graphics.withSave
 import androidx.ink.authoring.compose.InProgressStrokes
@@ -631,7 +633,9 @@ fun DrawingSurface(
     onEraseEnd: () -> Unit = {},
     hiddenStrokes: Set<Stroke> = emptySet(),
     movingStrokes: List<Stroke> = emptyList(),
-    movingOffsetProvider: () -> Offset = { Offset.Zero }
+    movingOffsetProvider: () -> Offset = { Offset.Zero },
+    movingScaleProvider: () -> Float = { 1f },
+    movingPivotProvider: () -> Offset = { Offset.Zero }
 ) {
     val currentOnErase by rememberUpdatedState(onErase)
     val currentOnEraseStart by rememberUpdatedState(onEraseStart)
@@ -640,6 +644,8 @@ fun DrawingSurface(
     val currentPanXProvider by rememberUpdatedState(panXProvider)
     val currentPanYProvider by rememberUpdatedState(panYProvider)
     val currentMovingOffsetProvider by rememberUpdatedState(movingOffsetProvider)
+    val currentMovingScaleProvider by rememberUpdatedState(movingScaleProvider)
+    val currentMovingPivotProvider by rememberUpdatedState(movingPivotProvider)
 
     val boundsIndex = remember { StrokeBoundsIndex() }
     val directMatrix = remember { Matrix() }
@@ -730,8 +736,13 @@ fun DrawingSurface(
                             desiredLodScale = desiredLodScale
                         )
                         val mOff = currentMovingOffsetProvider()
+                        val mScale = currentMovingScaleProvider()
+                        val mPivot = currentMovingPivotProvider()
                         val invScale = 1f / movingStrokesCache.recordedScale
                         nativeCanvas.withSave {
+                            if (mScale != 1f) {
+                                nativeCanvas.scale(mScale, mScale, mPivot.x, mPivot.y)
+                            }
                             nativeCanvas.translate(
                                 movingStrokesCache.minX + mOff.x,
                                 movingStrokesCache.minY + mOff.y
@@ -810,23 +821,65 @@ fun DrawingSurface(
                         }
                 )
             } else {
-                ActiveInkingOverlay(
-                    currentBrush = currentBrush,
-                    onGetNextBrush = onGetNextBrush,
-                    onStrokesFinished = onStrokesFinished,
-                    isDarkPaper = isDarkPaper,
-                    isFingerDrawingEnabled = isFingerDrawingEnabled,
-                    transformGeneration = transformGeneration,
-                    scaleProvider = scaleProvider,
-                    panXProvider = panXProvider,
-                    panYProvider = panYProvider
-                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(Unit) {
+                            awaitEachGesture {
+                                val firstEvent = awaitPointerEvent(pass = PointerEventPass.Initial)
+                                val down = firstEvent.changes.firstOrNull { it.changedToDownIgnoreConsumed() }
+                                    ?: return@awaitEachGesture
+                                val isQuickErase = down.type == PointerType.Eraser ||
+                                    (down.type == PointerType.Stylus && firstEvent.buttons.isSecondaryPressed)
+                                if (!isQuickErase) return@awaitEachGesture
+
+                                down.consume()
+                                eraserPointerPos = down.position
+                                currentOnEraseStart()
+                                val s0 = currentScaleProvider().coerceAtLeast(0.05f)
+                                currentOnErase(
+                                    (down.position.x - currentPanXProvider()) / s0,
+                                    (down.position.y - currentPanYProvider()) / s0
+                                )
+
+                                while (true) {
+                                    val ev = awaitPointerEvent(pass = PointerEventPass.Initial)
+                                    val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                                    if (!ch.pressed) {
+                                        ch.consume()
+                                        break
+                                    }
+                                    ch.consume()
+                                    eraserPointerPos = ch.position
+                                    val curS = currentScaleProvider().coerceAtLeast(0.05f)
+                                    currentOnErase(
+                                        (ch.position.x - currentPanXProvider()) / curS,
+                                        (ch.position.y - currentPanYProvider()) / curS
+                                    )
+                                }
+                                eraserPointerPos = null
+                                currentOnEraseEnd()
+                            }
+                        }
+                ) {
+                    ActiveInkingOverlay(
+                        currentBrush = currentBrush,
+                        onGetNextBrush = onGetNextBrush,
+                        onStrokesFinished = onStrokesFinished,
+                        isDarkPaper = isDarkPaper,
+                        isFingerDrawingEnabled = isFingerDrawingEnabled,
+                        transformGeneration = transformGeneration,
+                        scaleProvider = scaleProvider,
+                        panXProvider = panXProvider,
+                        panYProvider = panYProvider
+                    )
+                }
             }
         }
 
         // ─── Layer 3: Eraser Area Indicator (Lingkaran Radius Penghapus) ───
         // State read happens inside Canvas draw scope so dragging the eraser never recomposes DrawingSurface
-        if (isEraserMode) {
+        if (isEraserMode || eraserPointerPos != null) {
             Canvas(modifier = Modifier.fillMaxSize().clipToBounds()) {
                 val pos = eraserPointerPos ?: return@Canvas
                 val r = eraserRadiusPx

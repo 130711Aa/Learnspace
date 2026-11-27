@@ -114,6 +114,8 @@ fun CreateTopicNoteDialog(
                                 PaperStyle.RULED -> Icons.Filled.Subject
                                 PaperStyle.GRID -> Icons.Filled.GridOn
                                 PaperStyle.DOTTED -> Icons.Filled.Apps
+                                PaperStyle.CORNELL -> Icons.Filled.ViewSidebar
+                                PaperStyle.WARM_CREAM -> Icons.Filled.WbSunny
                                 PaperStyle.BLANK -> Icons.Filled.CropSquare
                             }
                             Surface(

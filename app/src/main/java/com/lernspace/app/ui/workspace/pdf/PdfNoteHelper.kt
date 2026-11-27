@@ -573,6 +573,42 @@ object PdfNoteHelper {
                     x += CanvasConstants.DOT_SPACING
                 }
             }
+            PaperStyle.CORNELL -> {
+                val marginPaint = Paint().apply {
+                    color = android.graphics.Color.parseColor("#FCA5A5")
+                    strokeWidth = 3f
+                    isAntiAlias = true
+                }
+                val linePaint = Paint().apply {
+                    color = android.graphics.Color.parseColor("#E2E8F0")
+                    strokeWidth = 1.8f
+                    isAntiAlias = true
+                }
+                val headerY = 140f
+                val summaryY = height - 240f
+                val cueX = width * 0.28f
+                canvas.drawLine(0f, headerY, width.toFloat(), headerY, marginPaint)
+                canvas.drawLine(0f, summaryY, width.toFloat(), summaryY, marginPaint)
+                canvas.drawLine(cueX, headerY, cueX, summaryY, marginPaint)
+                var y = headerY + CanvasConstants.RULED_LINE_SPACING
+                while (y < summaryY) {
+                    canvas.drawLine(cueX, y, width.toFloat(), y, linePaint)
+                    y += CanvasConstants.RULED_LINE_SPACING
+                }
+            }
+            PaperStyle.WARM_CREAM -> {
+                canvas.drawColor(android.graphics.Color.rgb(253, 248, 236))
+                val linePaint = Paint().apply {
+                    color = android.graphics.Color.parseColor("#EFE6D2")
+                    strokeWidth = 1.8f
+                    isAntiAlias = true
+                }
+                var y = CanvasConstants.RULED_FIRST_LINE_Y
+                while (y < height - 40f) {
+                    canvas.drawLine(0f, y, width.toFloat(), y, linePaint)
+                    y += CanvasConstants.RULED_LINE_SPACING
+                }
+            }
             PaperStyle.BLANK -> {
                 // Pure clean white canvas
             }

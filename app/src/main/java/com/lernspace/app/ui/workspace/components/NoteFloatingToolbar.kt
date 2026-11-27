@@ -37,6 +37,7 @@ import com.lernspace.app.ui.theme.LernspaceBorder
 import com.lernspace.app.ui.theme.LernspaceDark
 import com.lernspace.app.ui.workspace.model.GeometricShapeType
 import com.lernspace.app.ui.workspace.model.NoteTool
+import com.lernspace.app.ui.workspace.model.PenBrushType
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -50,6 +51,8 @@ fun NoteFloatingToolbar(
     onSelectPenColor: (Color) -> Unit,
     penThickness: Float,
     onSelectPenThickness: (Float) -> Unit,
+    penBrushType: PenBrushType = PenBrushType.PRESSURE_PEN,
+    onSelectPenBrushType: (PenBrushType) -> Unit = {},
     highlighterColor: Color,
     onSelectHighlighterColor: (Color) -> Unit,
     highlighterThickness: Float,
@@ -269,11 +272,7 @@ fun NoteFloatingToolbar(
         }
 
         // ── Tool Configuration Card (Opened via Tap-Again, Long-Press, or Thickness Pill) ──
-        AnimatedVisibility(
-            visible = openConfigTool != null,
-            enter = fadeIn(),
-            exit = fadeOut()
-        ) {
+        if (openConfigTool != null) {
             when (openConfigTool) {
                 NoteTool.PEN -> {
                     ToolConfigCard(
@@ -289,6 +288,8 @@ fun NoteFloatingToolbar(
                         onSelectThickness = onSelectPenThickness,
                         presetSizes = listOf(2f, 4f, 7f, 12f, 18f),
                         isHighlighter = false,
+                        penBrushType = penBrushType,
+                        onSelectPenBrushType = onSelectPenBrushType,
                         onClose = { openConfigTool = null }
                     )
                 }
@@ -323,14 +324,10 @@ fun NoteFloatingToolbar(
         }
 
         // ── Secondary Sub-Bar: Geometric Shape Picker (Visible when SHAPE tool is active) ──
-        AnimatedVisibility(
-            visible = activeTool == NoteTool.SHAPE && openConfigTool == null,
-            enter = fadeIn(),
-            exit = fadeOut()
-        ) {
+        if (activeTool == NoteTool.SHAPE && openConfigTool == null) {
             Surface(
                 shape = RoundedCornerShape(20.dp),
-                color = Color.White.copy(alpha = 0.98f),
+                color = Color.White,
                 shadowElevation = 5.dp,
                 border = BorderStroke(1.dp, Color(0xFFE2E8F0))
             ) {
@@ -397,11 +394,13 @@ private fun ToolConfigCard(
     onSelectThickness: (Float) -> Unit,
     presetSizes: List<Float>,
     isHighlighter: Boolean,
+    penBrushType: PenBrushType = PenBrushType.PRESSURE_PEN,
+    onSelectPenBrushType: (PenBrushType) -> Unit = {},
     onClose: () -> Unit
 ) {
     Surface(
         shape = RoundedCornerShape(20.dp),
-        color = Color.White.copy(alpha = 0.98f),
+        color = Color.White,
         shadowElevation = 8.dp,
         border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
         modifier = Modifier.widthIn(min = 340.dp, max = 390.dp)
@@ -450,6 +449,45 @@ private fun ToolConfigCard(
                         )
                     }
                 }
+            }
+
+            if (!isHighlighter) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "Tipe Pena",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFF64748B)
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        PenBrushType.values().forEach { type ->
+                            val isChosen = penBrushType == type
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (isChosen) LernspaceDark else Color(0xFFF1F5F9),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable { onSelectPenBrushType(type) }
+                            ) {
+                                Box(
+                                    modifier = Modifier.padding(vertical = 6.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = type.displayName,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isChosen) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isChosen) Color.White else Color(0xFF475569)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                HorizontalDivider(color = Color(0xFFF1F5F9), thickness = 1.dp)
             }
 
             // Section 1: Color Presets

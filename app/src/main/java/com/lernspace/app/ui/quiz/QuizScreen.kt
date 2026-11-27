@@ -1,6 +1,7 @@
 package com.lernspace.app.ui.quiz
 
 import android.net.Uri
+import com.lernspace.app.data.local.AcademicDatabaseManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -102,7 +103,27 @@ fun QuizScreen() {
     var detectedCanonicalTopic by remember { mutableStateOf<String?>(null) }
     var detectedCanonicalSubtopic by remember { mutableStateOf<String?>(null) }
 
-    val activeSourcePages = remember(sourceMode, selectedNote, selectedTopic, notes) {
+    var noteReloadTick by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(sourceMode, selectedNote?.id, selectedTopic?.id) {
+        when (sourceMode) {
+            0 -> selectedNote?.let { n ->
+                if (!n.isContentLoaded) {
+                    AcademicDatabaseManager.ensureNoteLoaded(n)
+                    noteReloadTick++
+                }
+            }
+            1 -> selectedTopic?.let { t ->
+                val topicNotes = notes.filter { it.topicId == t.id && !it.isContentLoaded }
+                if (topicNotes.isNotEmpty()) {
+                    topicNotes.forEach { AcademicDatabaseManager.ensureNoteLoaded(it) }
+                    noteReloadTick++
+                }
+            }
+        }
+    }
+
+    val activeSourcePages = remember(sourceMode, selectedNote, selectedTopic, notes, noteReloadTick) {
         when (sourceMode) {
             0 -> selectedNote?.pages ?: emptyList()
             1 -> notes.filter { it.topicId == selectedTopic?.id }.flatMap { it.pages }
@@ -114,10 +135,13 @@ fun QuizScreen() {
     }
 
     // Auto-extract note text if not already cached in NoteStorageManager
-    LaunchedEffect(selectedNote?.id, selectedNote?.pdfUri) {
+    LaunchedEffect(selectedNote?.id, selectedNote?.pdfUri, noteReloadTick) {
         val note = selectedNote ?: run {
             noteExtractedText = ""
             return@LaunchedEffect
+        }
+        if (!note.isContentLoaded) {
+            AcademicDatabaseManager.ensureNoteLoaded(note)
         }
         val tbText = note.pages
             .flatMap { it.textBoxes }

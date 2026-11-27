@@ -11,6 +11,7 @@ import androidx.compose.ui.graphics.toArgb
 import com.lernspace.app.ui.workspace.model.GeometricShapeType
 import com.lernspace.app.ui.workspace.model.NoteTool
 import com.lernspace.app.ui.workspace.model.PaperStyle
+import com.lernspace.app.ui.workspace.model.PenBrushType
 
 enum class Handedness(val title: String, val description: String) {
     RIGHT_HANDED("Tangan Kanan (Right-Handed)", "Navigasi rail di sisi kiri, area layar bebas untuk tangan kanan"),
@@ -46,6 +47,11 @@ enum class EraserMode(val title: String, val description: String) {
     STROKE("Goresan Utuh", "Menghapus seluruh goresan yang tersentuh lingkaran penghapus")
 }
 
+enum class WorkspaceSortOrder(val label: String) {
+    RECENT("Terbaru"),
+    TITLE_ASC("Judul A-Z")
+}
+
 /**
  * Single source of truth for user preferences on the tablet.
  * Persists instantaneously to Android SharedPreferences and provides reactive Compose states.
@@ -65,9 +71,12 @@ object AppSettingsManager {
     private const val KEY_ACTIVE_TOOL = "active_note_tool"
     private const val KEY_PEN_COLOR = "pen_color"
     private const val KEY_PEN_THICKNESS = "pen_thickness"
+    private const val KEY_PEN_BRUSH_TYPE = "pen_brush_type"
     private const val KEY_HIGHLIGHTER_COLOR = "highlighter_color"
     private const val KEY_HIGHLIGHTER_THICKNESS = "highlighter_thickness"
     private const val KEY_SELECTED_SHAPE_TYPE = "selected_shape_type"
+    private const val KEY_PINNED_NOTE_IDS = "pinned_note_ids"
+    private const val KEY_WORKSPACE_SORT_ORDER = "workspace_sort_order"
 
     val DEFAULT_PEN_COLOR = Color(0xFF0F172A)
     val DEFAULT_HIGHLIGHTER_COLOR = Color(0xFFFDE047)
@@ -85,9 +94,12 @@ object AppSettingsManager {
     var activeTool by mutableStateOf(NoteTool.PEN)
     var penColor by mutableStateOf(DEFAULT_PEN_COLOR)
     var penThickness by mutableFloatStateOf(4f)
+    var penBrushType by mutableStateOf(PenBrushType.PRESSURE_PEN)
     var highlighterColor by mutableStateOf(DEFAULT_HIGHLIGHTER_COLOR)
     var highlighterThickness by mutableFloatStateOf(24f)
     var selectedShapeType by mutableStateOf(GeometricShapeType.RECTANGLE)
+    var pinnedNoteIds by mutableStateOf<Set<String>>(emptySet())
+    var workspaceSortOrder by mutableStateOf(WorkspaceSortOrder.RECENT)
 
     val isFingerDrawingEnabled: Boolean
         get() = touchInputMode == TouchInputMode.FINGER_AND_STYLUS
@@ -154,6 +166,12 @@ object AppSettingsManager {
 
         penThickness = sp.getFloat(KEY_PEN_THICKNESS, 4f)
 
+        penBrushType = try {
+            PenBrushType.valueOf(sp.getString(KEY_PEN_BRUSH_TYPE, PenBrushType.PRESSURE_PEN.name) ?: PenBrushType.PRESSURE_PEN.name)
+        } catch (e: Exception) {
+            PenBrushType.PRESSURE_PEN
+        }
+
         highlighterColor = try {
             val argb = sp.getInt(KEY_HIGHLIGHTER_COLOR, DEFAULT_HIGHLIGHTER_COLOR.toArgb())
             Color(argb)
@@ -168,6 +186,14 @@ object AppSettingsManager {
             GeometricShapeType.valueOf(shapeName)
         } catch (e: Exception) {
             GeometricShapeType.RECTANGLE
+        }
+
+        pinnedNoteIds = sp.getStringSet(KEY_PINNED_NOTE_IDS, emptySet())?.toSet() ?: emptySet()
+        workspaceSortOrder = try {
+            val sortName = sp.getString(KEY_WORKSPACE_SORT_ORDER, WorkspaceSortOrder.RECENT.name) ?: WorkspaceSortOrder.RECENT.name
+            WorkspaceSortOrder.valueOf(sortName)
+        } catch (e: Exception) {
+            WorkspaceSortOrder.RECENT
         }
     }
 
@@ -192,6 +218,11 @@ object AppSettingsManager {
     fun updatePenThickness(value: Float) {
         penThickness = value
         prefs?.edit()?.putFloat(KEY_PEN_THICKNESS, value)?.apply()
+    }
+
+    fun updatePenBrushType(value: PenBrushType) {
+        penBrushType = value
+        prefs?.edit()?.putString(KEY_PEN_BRUSH_TYPE, value.name)?.apply()
     }
 
     fun updateHighlighterColor(value: Color) {
@@ -247,6 +278,21 @@ object AppSettingsManager {
     fun updateScribbleToErase(enabled: Boolean) {
         isScribbleToEraseEnabled = enabled
         prefs?.edit()?.putBoolean(KEY_SCRIBBLE_TO_ERASE, enabled)?.apply()
+    }
+
+    fun togglePinNote(noteId: String) {
+        val next = if (pinnedNoteIds.contains(noteId)) {
+            pinnedNoteIds - noteId
+        } else {
+            pinnedNoteIds + noteId
+        }
+        pinnedNoteIds = next
+        prefs?.edit()?.putStringSet(KEY_PINNED_NOTE_IDS, next)?.apply()
+    }
+
+    fun updateWorkspaceSortOrder(order: WorkspaceSortOrder) {
+        workspaceSortOrder = order
+        prefs?.edit()?.putString(KEY_WORKSPACE_SORT_ORDER, order.name)?.apply()
     }
 }
 

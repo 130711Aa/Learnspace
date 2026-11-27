@@ -42,9 +42,9 @@ object ShapeRecognizer {
         val oldInputs = stroke.inputs
         val newBatch = MutableStrokeInputBatch()
         val temp = StrokeInput()
+        val updated = StrokeInput()
         for (i in 0 until oldInputs.size) {
             oldInputs.populate(i, temp)
-            val updated = StrokeInput()
             updated.update(
                 x = temp.x + dx,
                 y = temp.y + dy,
@@ -80,9 +80,9 @@ object ShapeRecognizer {
         val oldInputs = stroke.inputs
         val newBatch = MutableStrokeInputBatch()
         val temp = StrokeInput()
+        val updated = StrokeInput()
         for (i in 0 until oldInputs.size) {
             oldInputs.populate(i, temp)
-            val updated = StrokeInput()
             val newX = pivot.x + (temp.x - pivot.x) * scaleFactor
             val newY = pivot.y + (temp.y - pivot.y) * scaleFactor
             updated.update(
@@ -97,13 +97,54 @@ object ShapeRecognizer {
             )
             newBatch.add(updated)
         }
-        val newBrush = Brush.createWithComposeColor(
+        val newBrush = Brush.createWithColorIntArgb(
             family = stroke.brush.family,
-            color = androidx.compose.ui.graphics.Color(stroke.brush.colorLong),
+            colorIntArgb = stroke.brush.colorIntArgb,
             size = (stroke.brush.size * scaleFactor).coerceIn(1f, 100f),
             epsilon = stroke.brush.epsilon
         )
         return Stroke(newBrush, newBatch)
+    }
+
+    /**
+     * Auto-straightens a highlighter stroke into a crisp line if its points stay within 8%
+     * perpendicular deviation of the start-to-end segment (with gentle 4-degree H/V snapping).
+     */
+    fun straightenHighlighterIfNearLine(stroke: Stroke): Stroke {
+        val inputs = stroke.inputs
+        val count = inputs.size
+        if (count < 4) return stroke
+        val temp = StrokeInput()
+        inputs.populate(0, temp)
+        val start = Offset(temp.x, temp.y)
+        inputs.populate(count - 1, temp)
+        val end = Offset(temp.x, temp.y)
+        val dx = end.x - start.x
+        val dy = end.y - start.y
+        val len = kotlin.math.hypot(dx.toDouble(), dy.toDouble()).toFloat()
+        if (len < 48f) return stroke
+
+        var maxDev = 0f
+        for (i in 1 until count - 1) {
+            inputs.populate(i, temp)
+            val dev = perpendicularDistance(Offset(temp.x, temp.y), start, end)
+            if (dev > maxDev) maxDev = dev
+        }
+        if (maxDev / len > 0.08f) return stroke
+
+        // Gentle horizontal/vertical snap within 4 degrees
+        val tan4 = 0.07f
+        val snappedEnd = when {
+            kotlin.math.abs(dy) < kotlin.math.abs(dx) * tan4 -> Offset(end.x, start.y)
+            kotlin.math.abs(dx) < kotlin.math.abs(dy) * tan4 -> Offset(start.x, end.y)
+            else -> end
+        }
+        return generateGeometricShape(
+            type = GeometricShapeType.LINE,
+            start = start,
+            end = snappedEnd,
+            brush = stroke.brush
+        )
     }
 
     /**

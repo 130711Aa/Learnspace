@@ -1,6 +1,7 @@
 ﻿package com.lernspace.app.ui.flashcards
 
 import android.net.Uri
+import com.lernspace.app.data.local.AcademicDatabaseManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -1643,8 +1644,27 @@ private fun GenerateFlashcardsFromNoteDialog(
     var recognizedHandwritingText by remember { mutableStateOf("") }
     var handwritingStatus by remember { mutableStateOf<String?>(null) }
     var isRecognizingInk by remember { mutableStateOf(false) }
+    var noteReloadTick by remember { mutableIntStateOf(0) }
 
-    val activeSourcePages = remember(sourceMode, selectedNote, selectedTopic, notes) {
+    LaunchedEffect(sourceMode, selectedNote?.id, selectedTopic?.id) {
+        when (sourceMode) {
+            0 -> selectedNote?.let { n ->
+                if (!n.isContentLoaded) {
+                    AcademicDatabaseManager.ensureNoteLoaded(n)
+                    noteReloadTick++
+                }
+            }
+            1 -> selectedTopic?.let { t ->
+                val topicNotes = notes.filter { it.topicId == t.id && !it.isContentLoaded }
+                if (topicNotes.isNotEmpty()) {
+                    topicNotes.forEach { AcademicDatabaseManager.ensureNoteLoaded(it) }
+                    noteReloadTick++
+                }
+            }
+        }
+    }
+
+    val activeSourcePages = remember(sourceMode, selectedNote, selectedTopic, notes, noteReloadTick) {
         when (sourceMode) {
             0 -> selectedNote?.pages ?: emptyList()
             1 -> selectedTopic?.let { t ->

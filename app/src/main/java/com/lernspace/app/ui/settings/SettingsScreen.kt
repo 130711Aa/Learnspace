@@ -847,6 +847,8 @@ private fun WorkspaceDefaultsSection() {
                                         PaperStyle.GRID -> "Kertas kotak-kotak matematika untuk rumus, tabel, dan diagram"
                                         PaperStyle.BLANK -> "Kertas putih polos bebas coret untuk sketsa dan gambar konsep"
                                         PaperStyle.DOTTED -> "Pola titik-titik rapi fleksibel untuk bullet journaling"
+                                        PaperStyle.CORNELL -> "Layout Cornell (kolom kata kunci, catatan utama, dan ringkasan)"
+                                        PaperStyle.WARM_CREAM -> "Kertas krem hangat bergaris yang nyaman di mata untuk baca lama"
                                     },
                                     fontSize = 11.sp,
                                     color = LernspaceTextSecondary

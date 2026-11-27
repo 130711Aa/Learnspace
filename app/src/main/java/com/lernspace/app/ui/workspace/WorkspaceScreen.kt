@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -26,6 +27,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -190,13 +194,18 @@ fun WorkspaceScreen(
         }
     }
 
-    // Filtered notes - uses snapshot state observation without allocating intermediate lists
+    val pinnedIds = AppSettingsManager.pinnedNoteIds
+    val sortOrder = AppSettingsManager.workspaceSortOrder
+
+    // Filtered & sorted notes (pinned first, then selected sort order)
     val filteredNotes = remember(
         notes.size,
         selectedFilterKey,
-        searchQuery
+        searchQuery,
+        pinnedIds,
+        sortOrder
     ) {
-        notes.filter { note ->
+        val base = notes.filter { note ->
             val matchesFilter = when (selectedFilterKey) {
                 "ALL" -> true
                 "SCRATCHPAD" -> note.isScratchpad
@@ -211,6 +220,11 @@ fun WorkspaceScreen(
 
             matchesFilter && matchesSearch
         }
+        val ordered = when (sortOrder) {
+            com.lernspace.app.data.local.WorkspaceSortOrder.RECENT -> base
+            com.lernspace.app.data.local.WorkspaceSortOrder.TITLE_ASC -> base.sortedBy { it.title.lowercase() }
+        }
+        ordered.sortedByDescending { pinnedIds.contains(it.id) }
     }
 
     val scratchpadCount = notes.count { it.isScratchpad }
@@ -340,6 +354,23 @@ fun WorkspaceScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
             ) {
+                // Sort toggle chip
+                item {
+                    AssistChip(
+                        onClick = {
+                            val next = if (sortOrder == com.lernspace.app.data.local.WorkspaceSortOrder.RECENT) {
+                                com.lernspace.app.data.local.WorkspaceSortOrder.TITLE_ASC
+                            } else {
+                                com.lernspace.app.data.local.WorkspaceSortOrder.RECENT
+                            }
+                            AppSettingsManager.updateWorkspaceSortOrder(next)
+                        },
+                        leadingIcon = { Icon(Icons.Filled.SwapVert, null, modifier = Modifier.size(14.dp)) },
+                        label = { Text(sortOrder.label, fontSize = 12.sp) },
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                }
+
                 // "All Notes"
                 item {
                     FilterChip(
@@ -448,6 +479,8 @@ fun WorkspaceScreen(
                     WorkspaceNoteCard(
                         note = note,
                         subjectColor = subjectColor,
+                        isPinned = pinnedIds.contains(note.id),
+                        onTogglePin = { AppSettingsManager.togglePinNote(note.id) },
                         onOpen = { AcademicWorkspaceState.openNoteEditor(note) },
                         onEditLink = { noteToEditLink = note },
                         onViewInSyllabus = {
@@ -575,12 +608,25 @@ fun WorkspaceScreen(
 private fun WorkspaceNoteCard(
     note: NoteUiModel,
     subjectColor: Color,
+    isPinned: Boolean = false,
+    onTogglePin: () -> Unit = {},
     onOpen: () -> Unit,
     onEditLink: () -> Unit,
     onViewInSyllabus: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val context = LocalContext.current
     var showMenu by remember { mutableStateOf(false) }
+    val thumbnailBitmap by produceState<ImageBitmap?>(initialValue = null, note.id, note.date) {
+        value = withContext(Dispatchers.IO) {
+            val file = NoteStorageManager.getThumbnailFile(context, note.id)
+            if (file.exists()) {
+                android.graphics.BitmapFactory.decodeFile(file.absolutePath)?.asImageBitmap()
+            } else {
+                null
+            }
+        }
+    }
 
     Surface(
         modifier = Modifier
@@ -640,11 +686,19 @@ private fun WorkspaceNoteCard(
                             }
                         }
 
-                        // Date & Dropdown Menu
+                        // Date, Pin badge & Dropdown Menu
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
+                            if (isPinned) {
+                                Icon(
+                                    imageVector = Icons.Filled.PushPin,
+                                    contentDescription = "Pinned",
+                                    tint = AccentBlue,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
                             Text(
                                 text = note.date,
                                 style = MaterialTheme.typography.labelSmall,
@@ -660,6 +714,14 @@ private fun WorkspaceNoteCard(
                                     expanded = showMenu,
                                     onDismissRequest = { showMenu = false }
                                 ) {
+                                    DropdownMenuItem(
+                                        text = { Text(if (isPinned) "Lepas Pin" else "Sematkan (Pin)") },
+                                        leadingIcon = { Icon(Icons.Filled.PushPin, null, tint = AccentBlue, modifier = Modifier.size(16.dp)) },
+                                        onClick = {
+                                            showMenu = false
+                                            onTogglePin()
+                                        }
+                                    )
                                     DropdownMenuItem(
                                         text = { Text("Edit & Tautkan Silabus") },
                                         leadingIcon = { Icon(Icons.Filled.Edit, null, tint = AccentBlue, modifier = Modifier.size(16.dp)) },
@@ -716,22 +778,42 @@ private fun WorkspaceNoteCard(
                         }
                     }
 
-                    // Note Title
-                    Text(
-                        text = note.title,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = LernspaceDark,
-                        maxLines = 2
-                    )
-
-                    // Note Snippet preview
-                    Text(
-                        text = note.displaySnippet,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = LernspaceTextSecondary,
-                        maxLines = 2
-                    )
+                    // Note Title & Snippet + Optional Page-1 Thumbnail
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = note.title,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = LernspaceDark,
+                                maxLines = 2
+                            )
+                            Text(
+                                text = note.displaySnippet,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = LernspaceTextSecondary,
+                                maxLines = 2
+                            )
+                        }
+                        thumbnailBitmap?.let { bmp ->
+                            Image(
+                                bitmap = bmp,
+                                contentDescription = "Preview Halaman 1",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .size(width = 52.dp, height = 68.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .border(1.dp, LernspaceBorder, RoundedCornerShape(8.dp))
+                            )
+                        }
+                    }
                 }
 
                 // Bottom Action: Open Canvas Pill
