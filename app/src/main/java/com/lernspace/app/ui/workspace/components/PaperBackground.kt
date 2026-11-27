@@ -29,6 +29,9 @@ fun PaperBackground(
     isPaged: Boolean = true,
     pageWidth: Float = CanvasConstants.PAGE_WIDTH,
     pageHeight: Float = CanvasConstants.PAGE_HEIGHT,
+    currentPageIndex: Int = 0,
+    totalPages: Int = 1,
+    pageGap: Float = CanvasConstants.PAGE_GAP,
     isDarkPaper: Boolean = false,
     modifier: Modifier = Modifier
 ) {
@@ -80,50 +83,57 @@ fun PaperBackground(
             val blankInfiniteColor = if (isDarkPaper) Color(0xFF131822) else Color.White
 
             if (isPaged) {
-                // Desk background (desk canvas surrounding the physical page sheet)
+                // Desk background (desk canvas surrounding the physical page sheets)
                 drawRect(deskColor)
 
                 val sheetLeft = panX
-                val sheetTop = panY
                 val sheetWidth = pageWidth * scale
                 val sheetHeight = pageHeight * scale
-                val sheetRight = sheetLeft + sheetWidth
-                val sheetBottom = sheetTop + sheetHeight
+                val strideScreen = (pageHeight + pageGap) * scale
+                val pageCount = totalPages.coerceAtLeast(1)
 
-                // Drop shadow behind the paper sheet
-                drawRoundRect(
-                    color = shadowColor,
-                    topLeft = Offset(sheetLeft + 4f, sheetTop + 6f),
-                    size = Size(sheetWidth, sheetHeight),
-                    cornerRadius = CornerRadius(6f, 6f)
-                )
+                for (pageIdx in 0 until pageCount) {
+                    val rel = pageIdx - currentPageIndex
+                    val sheetTop = panY + rel * strideScreen
+                    val sheetRight = sheetLeft + sheetWidth
+                    val sheetBottom = sheetTop + sheetHeight
 
-                // Physical paper sheet
-                drawRoundRect(
-                    color = sheetColor,
-                    topLeft = Offset(sheetLeft, sheetTop),
-                    size = Size(sheetWidth, sheetHeight),
-                    cornerRadius = CornerRadius(4f, 4f)
-                )
+                    if (sheetBottom < -8f || sheetTop > size.height + 8f) continue
 
-                // Sheet border
-                drawRoundRect(
-                    color = borderColor,
-                    topLeft = Offset(sheetLeft, sheetTop),
-                    size = Size(sheetWidth, sheetHeight),
-                    cornerRadius = CornerRadius(4f, 4f),
-                    style = Stroke(width = 1.5f)
-                )
+                    // Drop shadow behind the paper sheet
+                    drawRoundRect(
+                        color = shadowColor,
+                        topLeft = Offset(sheetLeft + 4f, sheetTop + 6f),
+                        size = Size(sheetWidth, sheetHeight),
+                        cornerRadius = CornerRadius(6f, 6f)
+                    )
 
-                // Visible bounds intersection with sheet
-                val visLeft = maxOf(sheetLeft, 0f)
-                val visRight = minOf(sheetRight, size.width)
-                val visTop = maxOf(sheetTop, 0f)
-                val visBottom = minOf(sheetBottom, size.height)
-                if (visRight <= visLeft || visBottom <= visTop) return@clipRect
+                    // Physical paper sheet
+                    drawRoundRect(
+                        color = sheetColor,
+                        topLeft = Offset(sheetLeft, sheetTop),
+                        size = Size(sheetWidth, sheetHeight),
+                        cornerRadius = CornerRadius(4f, 4f)
+                    )
 
-                // Draw Paper Template STRICTLY within visible sheet region
-                when (style) {
+                    // Sheet border
+                    drawRoundRect(
+                        color = borderColor,
+                        topLeft = Offset(sheetLeft, sheetTop),
+                        size = Size(sheetWidth, sheetHeight),
+                        cornerRadius = CornerRadius(4f, 4f),
+                        style = Stroke(width = 1.5f)
+                    )
+
+                    // Visible bounds intersection with sheet
+                    val visLeft = maxOf(sheetLeft, 0f)
+                    val visRight = minOf(sheetRight, size.width)
+                    val visTop = maxOf(sheetTop, 0f)
+                    val visBottom = minOf(sheetBottom, size.height)
+                    if (visRight <= visLeft || visBottom <= visTop) continue
+
+                    // Draw Paper Template STRICTLY within visible sheet region
+                    when (style) {
                     PaperStyle.RULED -> {
                         val marginScreenX = sheetLeft + (CanvasConstants.RULED_MARGIN_X * scale)
                         if (marginScreenX in visLeft..visRight) {
@@ -285,6 +295,7 @@ fun PaperBackground(
                     }
 
                     PaperStyle.BLANK -> Unit
+                }
                 }
             } else {
                 // Infinite Scratchpad Mode: Endless surface without sheet borders

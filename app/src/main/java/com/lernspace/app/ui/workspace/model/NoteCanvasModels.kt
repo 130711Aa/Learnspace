@@ -51,6 +51,7 @@ enum class NoteCanvasType(val title: String, val description: String) {
 object CanvasConstants {
     const val PAGE_WIDTH = 1800f
     const val PAGE_HEIGHT = 2545f // Standard ISO 216 A4 ratio: 1800 * 1.414 ≈ 2545f
+    const val PAGE_GAP = 64f
 
     // Standard Ruled Paper Metrics (exact 1:1 synchronization between Compose & PdfRenderer)
     const val RULED_MARGIN_X = 140f

@@ -488,6 +488,80 @@ class NotePaneState(
         }
     }
 
+    private fun activePageHeight(): Float {
+        return if (canvasType == NoteCanvasType.PDF_DOCUMENT) pdfPageWorldHeight else CanvasConstants.PAGE_HEIGHT
+    }
+
+    private fun activePageWidth(): Float {
+        return if (canvasType == NoteCanvasType.PDF_DOCUMENT) pdfPageWorldWidth else CanvasConstants.PAGE_WIDTH
+    }
+
+    fun switchPageSeamless(targetIndex: Int) {
+        if (targetIndex == currentPageIndex || targetIndex !in 0 until totalPages) return
+        val stride = (activePageHeight() + CanvasConstants.PAGE_GAP) * scale
+        val delta = targetIndex - currentPageIndex
+        saveActivePageData()
+        currentPageIndex = targetIndex
+        note.lastOpenedPageIndex = targetIndex
+        loadActivePageData(targetIndex)
+        panY += delta * stride
+        if (canvasType == NoteCanvasType.PDF_DOCUMENT) {
+            loadPdfPage()
+        }
+    }
+
+    fun checkSeamlessPageBoundary(viewportHeight: Float) {
+        if (canvasType == NoteCanvasType.INFINITE_SCRATCHPAD || canvasType == NoteCanvasType.DOC_DOCUMENT) return
+        if (viewportHeight <= 0f) return
+        val pageH = activePageHeight()
+        val halfGap = CanvasConstants.PAGE_GAP * 0.5f * scale
+        val centerScreenY = viewportHeight * 0.5f
+        val pageScreenTop = panY
+        val pageScreenBottom = panY + pageH * scale
+        if (centerScreenY > pageScreenBottom + halfGap && currentPageIndex + 1 < totalPages) {
+            switchPageSeamless(currentPageIndex + 1)
+        } else if (centerScreenY < pageScreenTop - halfGap && currentPageIndex - 1 >= 0) {
+            switchPageSeamless(currentPageIndex - 1)
+        }
+    }
+
+    suspend fun snapPageIfNeeded(viewportHeight: Float, viewportWidth: Float) {
+        if (canvasType == NoteCanvasType.INFINITE_SCRATCHPAD || canvasType == NoteCanvasType.DOC_DOCUMENT) return
+        if (viewportHeight <= 0f || viewportWidth <= 0f) return
+        checkSeamlessPageBoundary(viewportHeight)
+
+        val sheetH = activePageHeight() * scale
+        val sheetW = activePageWidth() * scale
+
+        val targetPanY = when {
+            sheetH <= viewportHeight - 120f -> (viewportHeight - sheetH) * 0.5f
+            panY > 105f -> 105f
+            panY + sheetH < viewportHeight - 36f -> viewportHeight - 36f - sheetH
+            else -> panY
+        }
+        val targetPanX = if (sheetW <= viewportWidth - 24f) {
+            (viewportWidth - sheetW) * 0.5f
+        } else {
+            panX
+        }
+
+        if (kotlin.math.abs(targetPanY - panY) > 1.5f || kotlin.math.abs(targetPanX - panX) > 1.5f) {
+            val startX = panX
+            val startY = panY
+            val anim = androidx.compose.animation.core.Animatable(0f)
+            anim.animateTo(
+                targetValue = 1f,
+                animationSpec = androidx.compose.animation.core.tween(
+                    durationMillis = 200,
+                    easing = androidx.compose.animation.core.FastOutSlowInEasing
+                )
+            ) {
+                panX = startX + (targetPanX - startX) * value
+                panY = startY + (targetPanY - startY) * value
+            }
+        }
+    }
+
     fun addNewPage() {
         saveActivePageData(immediate = true)
         val newPage = NotePageData(pageIndex = note.pages.size)
@@ -2475,6 +2549,11 @@ private fun NotePaneViewport(
                                         } else if (!isTransforming && accumulatedPan.getDistance() < touchSlop) {
                                             state.deselectAll()
                                         }
+                                        if (isTransforming) {
+                                            coroutineScope.launch {
+                                                state.snapPageIfNeeded(viewportSize.height.toFloat(), viewportSize.width.toFloat())
+                                            }
+                                        }
                                         break
                                     }
 
@@ -2498,6 +2577,7 @@ private fun NotePaneViewport(
                                             state.panX = centroid.x - (centroid.x - state.panX) * effectiveZoom + pan.x
                                             state.panY = centroid.y - (centroid.y - state.panY) * effectiveZoom + pan.y
                                             state.scale = newScale
+                                            state.checkSeamlessPageBoundary(viewportSize.height.toFloat())
                                         }
                                     } else if (pressedFingers.size == 1) {
                                         // 1-finger pan
@@ -2511,10 +2591,12 @@ private fun NotePaneViewport(
                                                 isTransforming = true
                                                 state.panX += accumulatedPan.x
                                                 state.panY += accumulatedPan.y
+                                                state.checkSeamlessPageBoundary(viewportSize.height.toFloat())
                                             }
                                         } else {
                                             state.panX += panDelta.x
                                             state.panY += panDelta.y
+                                            state.checkSeamlessPageBoundary(viewportSize.height.toFloat())
                                         }
                                     }
                                 }
@@ -2560,6 +2642,11 @@ private fun NotePaneViewport(
                                             try { view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK) } catch (_: Exception) {}
                                         }
                                     }
+                                    if (isTransforming) {
+                                        coroutineScope.launch {
+                                            state.snapPageIfNeeded(viewportSize.height.toFloat(), viewportSize.width.toFloat())
+                                        }
+                                    }
                                     break
                                 }
 
@@ -2587,6 +2674,7 @@ private fun NotePaneViewport(
                                         state.panX = centroid.x - (centroid.x - state.panX) * effectiveZoom + pan.x
                                         state.panY = centroid.y - (centroid.y - state.panY) * effectiveZoom + pan.y
                                         state.scale = newScale
+                                        state.checkSeamlessPageBoundary(viewportSize.height.toFloat())
                                     }
                                 } else if (isTransforming) {
                                     // Keep consuming remainder of 2-finger gesture until all lifted
@@ -2605,40 +2693,63 @@ private fun NotePaneViewport(
                 Canvas(modifier = Modifier.fillMaxSize().clipToBounds()) {
                     clipRect(0f, 0f, size.width, size.height) {
                         drawRect(if (state.isDarkPaper) Color(0xFF091426) else Color(0xFFE2E8F0)) // desk canvas background
-                        if (state.pdfPageBitmap != null) {
-                            val bmp = state.pdfPageBitmap!!
-                            val dstW = state.pdfPageWorldWidth * state.scale
-                            val dstH = state.pdfPageWorldHeight * state.scale
+                        val dstW = state.pdfPageWorldWidth * state.scale
+                        val dstH = state.pdfPageWorldHeight * state.scale
+                        val strideScreen = (state.pdfPageWorldHeight + CanvasConstants.PAGE_GAP) * state.scale
+                        val pdfUriObj = state.note.pdfUri?.let { Uri.parse(it) }
+
+                        for (p in (state.currentPageIndex - 1)..(state.currentPageIndex + 1)) {
+                            if (p !in 0 until state.totalPages) continue
+                            val rel = p - state.currentPageIndex
+                            val pTop = state.panY + rel * strideScreen
+                            if (pTop + dstH < -8f || pTop > size.height + 8f) continue
 
                             drawRoundRect(
                                 color = Color(0x1F0F172A),
-                                topLeft = Offset(state.panX + 4f, state.panY + 6f),
+                                topLeft = Offset(state.panX + 4f, pTop + 6f),
                                 size = Size(dstW, dstH),
                                 cornerRadius = CornerRadius(6f, 6f)
                             )
-
-                            drawImage(
-                                image = bmp,
-                                dstOffset = IntOffset(state.panX.roundToInt(), state.panY.roundToInt()),
-                                dstSize = IntSize(dstW.roundToInt().coerceAtLeast(1), dstH.roundToInt().coerceAtLeast(1)),
-                                filterQuality = FilterQuality.Medium
+                            drawRoundRect(
+                                color = Color.White,
+                                topLeft = Offset(state.panX, pTop),
+                                size = Size(dstW, dstH),
+                                cornerRadius = CornerRadius(4f, 4f)
                             )
 
-                            val tile = state.pdfTile
-                            if (tile != null && tile.pageIndex == state.currentPageIndex) {
-                                val tLeft = state.panX + tile.worldLeft * state.scale
-                                val tTop = state.panY + tile.worldTop * state.scale
-                                val tRight = state.panX + tile.worldRight * state.scale
-                                val tBottom = state.panY + tile.worldBottom * state.scale
+                            val pageBmp: ImageBitmap? = if (p == state.currentPageIndex) {
+                                state.pdfPageBitmap
+                            } else if (pdfUriObj != null) {
+                                PdfNoteHelper.getCachedPage(pdfUriObj, p, 1400)?.bitmap?.asImageBitmap()
+                            } else {
+                                null
+                            }
+                            if (pageBmp != null) {
                                 drawImage(
-                                    image = tile.bitmap,
-                                    dstOffset = IntOffset(tLeft.roundToInt(), tTop.roundToInt()),
-                                    dstSize = IntSize(
-                                        (tRight - tLeft).roundToInt().coerceAtLeast(1),
-                                        (tBottom - tTop).roundToInt().coerceAtLeast(1)
-                                    ),
+                                    image = pageBmp,
+                                    dstOffset = IntOffset(state.panX.roundToInt(), pTop.roundToInt()),
+                                    dstSize = IntSize(dstW.roundToInt().coerceAtLeast(1), dstH.roundToInt().coerceAtLeast(1)),
                                     filterQuality = FilterQuality.Medium
                                 )
+                            }
+
+                            if (p == state.currentPageIndex) {
+                                val tile = state.pdfTile
+                                if (tile != null && tile.pageIndex == state.currentPageIndex) {
+                                    val tLeft = state.panX + tile.worldLeft * state.scale
+                                    val tTop = pTop + tile.worldTop * state.scale
+                                    val tRight = state.panX + tile.worldRight * state.scale
+                                    val tBottom = pTop + tile.worldBottom * state.scale
+                                    drawImage(
+                                        image = tile.bitmap,
+                                        dstOffset = IntOffset(tLeft.roundToInt(), tTop.roundToInt()),
+                                        dstSize = IntSize(
+                                            (tRight - tLeft).roundToInt().coerceAtLeast(1),
+                                            (tBottom - tTop).roundToInt().coerceAtLeast(1)
+                                        ),
+                                        filterQuality = FilterQuality.Medium
+                                    )
+                                }
                             }
                         }
                     }
@@ -2650,9 +2761,47 @@ private fun NotePaneViewport(
                     panXProvider = { state.panX },
                     panYProvider = { state.panY },
                     isPaged = state.canvasType == NoteCanvasType.PAGED_NOTE,
+                    currentPageIndex = state.currentPageIndex,
+                    totalPages = state.totalPages,
+                    pageGap = CanvasConstants.PAGE_GAP,
                     isDarkPaper = state.isDarkPaper,
                     modifier = Modifier.fillMaxSize().clipToBounds()
                 )
+            }
+
+            // Neighboring Pages Ink Preview Layer (renders prev/next pages' strokes seamlessly during vertical scroll)
+            if (state.canvasType != NoteCanvasType.INFINITE_SCRATCHPAD && state.totalPages > 1) {
+                val neighborMatrix = remember { android.graphics.Matrix() }
+                Canvas(modifier = Modifier.fillMaxSize().clipToBounds()) {
+                    val pageH = if (state.canvasType == NoteCanvasType.PDF_DOCUMENT) state.pdfPageWorldHeight else CanvasConstants.PAGE_HEIGHT
+                    val strideScreen = (pageH + CanvasConstants.PAGE_GAP) * state.scale
+                    val sheetH = pageH * state.scale
+                    val nc = drawContext.canvas.nativeCanvas
+                    for (p in (state.currentPageIndex - 1)..(state.currentPageIndex + 1)) {
+                        if (p == state.currentPageIndex || p !in 0 until state.note.pages.size) continue
+                        val rel = p - state.currentPageIndex
+                        val pTop = state.panY + rel * strideScreen
+                        if (pTop + sheetH < 0f || pTop > size.height) continue
+                        val pageStrokes = state.note.pages[p].strokes
+                        if (pageStrokes.isEmpty()) continue
+
+                        neighborMatrix.reset()
+                        neighborMatrix.postScale(state.scale, state.scale)
+                        neighborMatrix.postTranslate(state.panX, pTop)
+                        nc.save()
+                        nc.clipRect(0f, 0f, size.width, size.height)
+                        nc.translate(state.panX, pTop)
+                        nc.scale(state.scale, state.scale)
+                        for (i in pageStrokes.indices) {
+                            state.canvasStrokeRenderer.draw(
+                                canvas = nc,
+                                stroke = pageStrokes[i],
+                                strokeToScreenTransform = neighborMatrix
+                            )
+                        }
+                        nc.restore()
+                    }
+                }
             }
 
             // Viewport Spatial Culling for Placed Images & Text Boxes (Quantized derivedStateOf to prevent pan/zoom recomposition storms!)
