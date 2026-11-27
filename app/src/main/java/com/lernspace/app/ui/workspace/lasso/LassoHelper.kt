@@ -21,6 +21,53 @@ data class LassoSelectionState(
 
 object LassoHelper {
 
+    private val strokeBoundsCache = java.util.WeakHashMap<Stroke, Rect>()
+
+    fun getStrokeBounds(stroke: Stroke): Rect? {
+        strokeBoundsCache[stroke]?.let { return it }
+        val inputs = stroke.inputs
+        val count = inputs.size
+        if (count == 0) return null
+        val temp = StrokeInput()
+        inputs.populate(0, temp)
+        var minX = temp.x
+        var maxX = temp.x
+        var minY = temp.y
+        var maxY = temp.y
+        for (i in 1 until count) {
+            inputs.populate(i, temp)
+            if (temp.x < minX) minX = temp.x
+            if (temp.x > maxX) maxX = temp.x
+            if (temp.y < minY) minY = temp.y
+            if (temp.y > maxY) maxY = temp.y
+        }
+        return Rect(minX, minY, maxX, maxY).also {
+            strokeBoundsCache[stroke] = it
+        }
+    }
+
+    /**
+     * Simplifies a dense pointer polygon so ray-casting runs on ~20-60 vertices instead of 500+.
+     */
+    fun simplifyPolygon(polygon: List<Offset>, minDistance: Float = 12f): List<Offset> {
+        if (polygon.size <= 16) return polygon
+        val result = ArrayList<Offset>(minOf(polygon.size, 64))
+        var last = polygon[0]
+        result.add(last)
+        val minDistSq = minDistance * minDistance
+        for (i in 1 until polygon.size - 1) {
+            val pt = polygon[i]
+            val dx = pt.x - last.x
+            val dy = pt.y - last.y
+            if (dx * dx + dy * dy >= minDistSq) {
+                result.add(pt)
+                last = pt
+            }
+        }
+        result.add(polygon.last())
+        return result
+    }
+
     /**
      * Determines whether a 2D point lies within an arbitrary polygon using ray-casting.
      */
@@ -44,17 +91,20 @@ object LassoHelper {
     /**
      * Tests if an AndroidX Ink Stroke is enclosed by or overlaps the lasso polygon.
      */
-    fun isStrokeSelected(stroke: Stroke, polygon: List<Offset>): Boolean {
+    fun isStrokeSelected(stroke: Stroke, polygon: List<Offset>, polyBounds: Rect? = null): Boolean {
+        if (polyBounds != null) {
+            val sb = getStrokeBounds(stroke) ?: return false
+            if (!sb.overlaps(polyBounds)) return false
+        }
         val inputs = stroke.inputs
         val count = inputs.size
         if (count == 0) return false
 
         val temp = StrokeInput()
 
-        // 1. Check midpoint / centroid
         var sumX = 0f
         var sumY = 0f
-        val sampleStep = maxOf(1, count / 20)
+        val sampleStep = maxOf(1, count / 12)
         var sampledCount = 0
         var insideCount = 0
 
@@ -138,6 +188,8 @@ object LassoHelper {
      * Checks if a stroke overlaps with a bounding box.
      */
     fun isStrokeInBounds(stroke: Stroke, bounds: Rect): Boolean {
+        val sb = getStrokeBounds(stroke) ?: return false
+        if (!sb.overlaps(bounds)) return false
         val inputs = stroke.inputs
         val count = inputs.size
         if (count == 0) return false
@@ -187,16 +239,12 @@ object LassoHelper {
         var minY = Float.MAX_VALUE
         var maxY = -Float.MAX_VALUE
 
-        val temp = StrokeInput()
         for (stroke in strokes) {
-            val inputs = stroke.inputs
-            for (i in 0 until inputs.size) {
-                inputs.populate(i, temp)
-                if (temp.x < minX) minX = temp.x
-                if (temp.x > maxX) maxX = temp.x
-                if (temp.y < minY) minY = temp.y
-                if (temp.y > maxY) maxY = temp.y
-            }
+            val sb = getStrokeBounds(stroke) ?: continue
+            if (sb.left < minX) minX = sb.left
+            if (sb.right > maxX) maxX = sb.right
+            if (sb.top < minY) minY = sb.top
+            if (sb.bottom > maxY) maxY = sb.bottom
         }
 
         for (box in textBoxes) {

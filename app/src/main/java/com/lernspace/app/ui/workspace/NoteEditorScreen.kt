@@ -2604,22 +2604,31 @@ private fun NotePaneViewport(
                 )
             }
 
-            // Viewport Spatial Culling for Placed Images & Text Boxes
-            val curScale = state.scale.coerceAtLeast(0.05f)
-            val vpW = if (viewportSize.width > 0) viewportSize.width.toFloat() else 2400f
-            val vpH = if (viewportSize.height > 0) viewportSize.height.toFloat() else 2400f
-            val cullingMargin = 400f
-            val visWorldLeft = -state.panX / curScale - cullingMargin
-            val visWorldTop = -state.panY / curScale - cullingMargin
-            val visWorldRight = (vpW - state.panX) / curScale + cullingMargin
-            val visWorldBottom = (vpH - state.panY) / curScale + cullingMargin
+            // Viewport Spatial Culling for Placed Images & Text Boxes (Quantized derivedStateOf to prevent pan/zoom recomposition storms!)
+            val cullingBounds by remember(state) {
+                derivedStateOf {
+                    val curScale = state.scale.coerceAtLeast(0.05f)
+                    val qPanX = kotlin.math.floor(state.panX / 128f) * 128f
+                    val qPanY = kotlin.math.floor(state.panY / 128f) * 128f
+                    val qScale = (kotlin.math.floor(curScale / 0.25f) * 0.25f).coerceAtLeast(0.05f)
+                    val vpW = if (viewportSize.width > 0) viewportSize.width.toFloat() else 2400f
+                    val vpH = if (viewportSize.height > 0) viewportSize.height.toFloat() else 2400f
+                    val cullingMargin = 550f / qScale
+                    floatArrayOf(
+                        -qPanX / qScale - cullingMargin,
+                        -qPanY / qScale - cullingMargin,
+                        (vpW - qPanX) / qScale + cullingMargin,
+                        (vpH - qPanY) / qScale + cullingMargin
+                    )
+                }
+            }
 
             // Placed Images Layer (Rendered inside pane on top of paper surface, below inking layer)
             state.imageElements.forEachIndexed { index, img ->
                 key(img.id) {
                     val isVisible = img.isSelected || (
-                        img.x + img.width >= visWorldLeft && img.x <= visWorldRight &&
-                        img.y + img.height >= visWorldTop && img.y <= visWorldBottom
+                        img.x + img.width >= cullingBounds[0] && img.x <= cullingBounds[2] &&
+                        img.y + img.height >= cullingBounds[1] && img.y <= cullingBounds[3]
                     )
                     if (isVisible) {
                         DraggableImage(
@@ -2675,6 +2684,10 @@ private fun NotePaneViewport(
                     }
                 }
             }
+
+            var lassoHiddenStrokes by remember { mutableStateOf<Set<Stroke>>(emptySet()) }
+            var lassoMovingStrokes by remember { mutableStateOf<List<Stroke>>(emptyList()) }
+            var lassoDragOffset by remember { mutableStateOf(Offset.Zero) }
 
             // Inking Layer (AndroidX Ink Native Vector Tessellation - Strictly clipped)
             DrawingSurface(
@@ -2739,6 +2752,9 @@ private fun NotePaneViewport(
                     state.commitUndoTransactionIfChanged()
                     state.saveActivePageData()
                 },
+                hiddenStrokes = lassoHiddenStrokes,
+                movingStrokes = lassoMovingStrokes,
+                movingOffsetProvider = { lassoDragOffset },
                 modifier = Modifier.fillMaxSize().clipToBounds().zIndex(1f)
             )
 
@@ -2881,8 +2897,8 @@ private fun NotePaneViewport(
             // Placed Draggable Text Boxes Layer (Rendered inside pane with viewport culling)
             state.textBoxes.forEachIndexed { index, boxElement ->
                 val isVisible = boxElement.isSelected || (
-                    boxElement.x + boxElement.width >= visWorldLeft && boxElement.x <= visWorldRight &&
-                    boxElement.y + boxElement.height >= visWorldTop && boxElement.y <= visWorldBottom
+                    boxElement.x + boxElement.width >= cullingBounds[0] && boxElement.x <= cullingBounds[2] &&
+                    boxElement.y + boxElement.height >= cullingBounds[1] && boxElement.y <= cullingBounds[3]
                 )
                 if (isVisible) {
                     DraggableTextBox(
@@ -2929,6 +2945,47 @@ private fun NotePaneViewport(
 
             // Lasso Tool Selection & Manipulation Layer (Strictly clipped - Top-most layer)
             if ((activeTool == NoteTool.LASSO || state.lassoSelection != null) && isActive) {
+                val beginLassoMove: (LassoSelectionState) -> Unit = { sel ->
+                    state.beginUndoTransaction()
+                    if (sel.selectedStrokes.isNotEmpty()) {
+                        val hidden = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Stroke, Boolean>())
+                        hidden.addAll(sel.selectedStrokes)
+                        lassoHiddenStrokes = hidden
+                        lassoMovingStrokes = sel.selectedStrokes.toList()
+                    }
+                    lassoDragOffset = Offset.Zero
+                }
+                val commitLassoMove: (LassoSelectionState?) -> Unit = { sel ->
+                    val totalDx = lassoDragOffset.x
+                    val totalDy = lassoDragOffset.y
+                    if (sel != null && (totalDx != 0f || totalDy != 0f)) {
+                        if (sel.selectedStrokes.isNotEmpty()) {
+                            val indexMap = java.util.IdentityHashMap<Stroke, Int>(state.strokes.size)
+                            for (idx in state.strokes.indices) {
+                                indexMap[state.strokes[idx]] = idx
+                            }
+                            for (i in sel.selectedStrokes.indices) {
+                                val oldStroke = sel.selectedStrokes[i]
+                                val newStroke = ShapeRecognizer.translateStroke(oldStroke, totalDx, totalDy)
+                                val idxInMain = indexMap[oldStroke]
+                                if (idxInMain != null) {
+                                    state.strokes[idxInMain] = newStroke
+                                }
+                                sel.selectedStrokes[i] = newStroke
+                            }
+                        }
+                        val latestSel = state.lassoSelection ?: sel
+                        state.lassoSelection = latestSel.copy(
+                            bounds = latestSel.bounds.translate(Offset(totalDx, totalDy))
+                        )
+                    }
+                    lassoHiddenStrokes = emptySet()
+                    lassoMovingStrokes = emptyList()
+                    lassoDragOffset = Offset.Zero
+                    state.commitUndoTransactionIfChanged()
+                    state.saveActivePageData()
+                }
+
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -2953,43 +3010,33 @@ private fun NotePaneViewport(
                                         curSel.bounds.bottom * state.scale + state.panY
                                     )
                                     if (screenBounds.contains(screenPoint)) {
-                                        val strokeIndices = curSel.selectedStrokes.map { state.strokes.indexOf(it) }
-                                        state.beginUndoTransaction()
+                                        beginLassoMove(curSel)
 
-                                        drag(down.id) { change ->
-                                            val isChangeAllowed = change.type == PointerType.Stylus || change.type == PointerType.Eraser || (isFingerDrawing && change.type == PointerType.Touch)
-                                            if (isChangeAllowed) {
-                                                val delta = change.positionChange()
-                                                change.consume()
-                                                val dx = delta.x / state.scale
-                                                val dy = delta.y / state.scale
+                                        try {
+                                            drag(down.id) { change ->
+                                                val isChangeAllowed = change.type == PointerType.Stylus || change.type == PointerType.Eraser || (isFingerDrawing && change.type == PointerType.Touch)
+                                                if (isChangeAllowed) {
+                                                    val delta = change.positionChange()
+                                                    change.consume()
+                                                    val dx = delta.x / state.scale
+                                                    val dy = delta.y / state.scale
 
-                                                if (dx != 0f || dy != 0f) {
-                                                    for (i in curSel.selectedStrokes.indices) {
-                                                        val oldStroke = curSel.selectedStrokes[i]
-                                                        val newStroke = ShapeRecognizer.translateStroke(oldStroke, dx, dy)
-                                                        val idxInMain = strokeIndices[i]
-                                                        if (idxInMain != -1 && idxInMain < state.strokes.size) {
-                                                            state.strokes[idxInMain] = newStroke
+                                                    if (dx != 0f || dy != 0f) {
+                                                        lassoDragOffset += Offset(dx, dy)
+                                                        for (box in curSel.selectedTextBoxes) {
+                                                            box.x += dx
+                                                            box.y += dy
                                                         }
-                                                        curSel.selectedStrokes[i] = newStroke
+                                                        for (img in curSel.selectedImages) {
+                                                            img.x += dx
+                                                            img.y += dy
+                                                        }
                                                     }
-                                                    for (box in curSel.selectedTextBoxes) {
-                                                        box.x += dx
-                                                        box.y += dy
-                                                    }
-                                                    for (img in curSel.selectedImages) {
-                                                        img.x += dx
-                                                        img.y += dy
-                                                    }
-                                                    val sel = state.lassoSelection ?: curSel
-                                                    val newBounds = sel.bounds.translate(Offset(dx, dy))
-                                                    state.lassoSelection = sel.copy(bounds = newBounds)
                                                 }
                                             }
+                                        } finally {
+                                            commitLassoMove(state.lassoSelection ?: curSel)
                                         }
-                                        state.commitUndoTransactionIfChanged()
-                                        state.saveActivePageData()
                                         return@awaitEachGesture
                                     } else {
                                         state.lassoSelection = null
@@ -3005,18 +3052,25 @@ private fun NotePaneViewport(
                                         if (isChangeAllowed) {
                                             change.consume()
                                             val curWorld = Offset((change.position.x - state.panX) / state.scale, (change.position.y - state.panY) / state.scale)
-                                            state.currentLassoLoop.add(curWorld)
+                                            val lastPt = state.currentLassoLoop.lastOrNull()
+                                            val minStep = 5f / state.scale.coerceAtLeast(0.1f)
+                                            if (lastPt == null || (curWorld - lastPt).getDistanceSquared() >= minStep * minStep) {
+                                                state.currentLassoLoop.add(curWorld)
+                                            }
                                         }
                                     }
 
                                     if (state.currentLassoLoop.size >= 4) {
-                                        val loopCopy = state.currentLassoLoop.toList()
+                                        val loopCopy = LassoHelper.simplifyPolygon(
+                                            state.currentLassoLoop,
+                                            minDistance = 10f / state.scale.coerceAtLeast(0.1f)
+                                        )
                                         val polyBounds = LassoHelper.computePolygonBounds(loopCopy, padding = 8f)
 
                                         if (state.canvasType == NoteCanvasType.PDF_DOCUMENT && polyBounds != null && polyBounds.width >= 24f && polyBounds.height >= 24f) {
                                             // Di mode PDF: dukung deteksi konten teks/gambar/soal PDF secara langsung
                                             val matchedStrokes = state.strokes.filter {
-                                                LassoHelper.isStrokeSelected(it, loopCopy) || LassoHelper.isStrokeInBounds(it, polyBounds)
+                                                LassoHelper.isStrokeSelected(it, loopCopy, polyBounds) || LassoHelper.isStrokeInBounds(it, polyBounds)
                                             }.toMutableList()
                                             val matchedBoxes = state.textBoxes.filter { LassoHelper.isTextBoxSelected(it, loopCopy) }.toMutableList()
                                             val matchedImages = state.imageElements.filter { LassoHelper.isImageSelected(it, loopCopy) }.toMutableList()
@@ -3030,7 +3084,7 @@ private fun NotePaneViewport(
                                                 lassoPolygon = loopCopy
                                             )
                                         } else {
-                                            val matchedStrokes = state.strokes.filter { LassoHelper.isStrokeSelected(it, loopCopy) }.toMutableList()
+                                            val matchedStrokes = state.strokes.filter { LassoHelper.isStrokeSelected(it, loopCopy, polyBounds) }.toMutableList()
                                             val matchedBoxes = state.textBoxes.filter { LassoHelper.isTextBoxSelected(it, loopCopy) }.toMutableList()
                                             val wholeImages = state.imageElements.filter { LassoHelper.isWholeImageSelected(it, loopCopy) }.toMutableList()
                                             val overlappingImages = state.imageElements.filter { img ->
@@ -3056,7 +3110,7 @@ private fun NotePaneViewport(
                                                 }
                                             } else if (polyBounds != null && (polyBounds.width >= 12f || polyBounds.height >= 12f)) {
                                                 val regionStrokes = state.strokes.filter {
-                                                    LassoHelper.isStrokeInBounds(it, polyBounds) || LassoHelper.isStrokeSelected(it, loopCopy)
+                                                    LassoHelper.isStrokeInBounds(it, polyBounds) || LassoHelper.isStrokeSelected(it, loopCopy, polyBounds)
                                                 }.toMutableList()
                                                 val regionBoxes = state.textBoxes.filter {
                                                     LassoHelper.isTextBoxSelected(it, loopCopy)
@@ -3112,10 +3166,11 @@ private fun NotePaneViewport(
                     Canvas(modifier = Modifier.fillMaxSize().clipToBounds()) {
                         val sel = state.lassoSelection ?: return@Canvas
                         if (sel.isEmpty) return@Canvas
-                        val sLeft = sel.bounds.left * state.scale + state.panX
-                        val sTop = sel.bounds.top * state.scale + state.panY
-                        val sRight = sel.bounds.right * state.scale + state.panX
-                        val sBottom = sel.bounds.bottom * state.scale + state.panY
+                        val dragOff = lassoDragOffset
+                        val sLeft = (sel.bounds.left + dragOff.x) * state.scale + state.panX
+                        val sTop = (sel.bounds.top + dragOff.y) * state.scale + state.panY
+                        val sRight = (sel.bounds.right + dragOff.x) * state.scale + state.panX
+                        val sBottom = (sel.bounds.bottom + dragOff.y) * state.scale + state.panY
                         val sWidth = maxOf(40f, sRight - sLeft)
                         val sHeight = maxOf(40f, sBottom - sTop)
 
@@ -3139,9 +3194,10 @@ private fun NotePaneViewport(
                             .offset {
                                 val sel = state.lassoSelection
                                 if (sel != null && !sel.isEmpty) {
-                                    val sLeft = sel.bounds.left * state.scale + state.panX
-                                    val sTop = sel.bounds.top * state.scale + state.panY
-                                    val sRight = sel.bounds.right * state.scale + state.panX
+                                    val dragOff = lassoDragOffset
+                                    val sLeft = (sel.bounds.left + dragOff.x) * state.scale + state.panX
+                                    val sTop = (sel.bounds.top + dragOff.y) * state.scale + state.panY
+                                    val sRight = (sel.bounds.right + dragOff.x) * state.scale + state.panX
                                     val sWidth = maxOf(40f, sRight - sLeft)
                                     IntOffset(
                                         x = (sLeft + sWidth / 2f - 190.dp.toPx()).roundToInt().coerceAtLeast(16),
@@ -3176,27 +3232,22 @@ private fun NotePaneViewport(
                                     modifier = Modifier
                                         .pointerInput(state.note.id, state.lassoSelection == null) {
                                             detectDragGestures(
-                                                onDragStart = { state.beginUndoTransaction() },
-                                                onDragEnd = {
-                                                    state.commitUndoTransactionIfChanged()
-                                                    state.saveActivePageData()
+                                                onDragStart = {
+                                                    state.lassoSelection?.let { beginLassoMove(it) }
                                                 },
-                                                onDragCancel = { state.commitUndoTransactionIfChanged() }
+                                                onDragEnd = {
+                                                    commitLassoMove(state.lassoSelection)
+                                                },
+                                                onDragCancel = {
+                                                    commitLassoMove(state.lassoSelection)
+                                                }
                                             ) { change, dragAmount ->
                                                 change.consume()
                                                 val sel = state.lassoSelection ?: return@detectDragGestures
                                                 val dx = dragAmount.x / state.scale
                                                 val dy = dragAmount.y / state.scale
                                                 if (dx != 0f || dy != 0f) {
-                                                    for (i in sel.selectedStrokes.indices) {
-                                                        val oldStroke = sel.selectedStrokes[i]
-                                                        val newStroke = ShapeRecognizer.translateStroke(oldStroke, dx, dy)
-                                                        val idxInMain = state.strokes.indexOf(oldStroke)
-                                                        if (idxInMain != -1) {
-                                                            state.strokes[idxInMain] = newStroke
-                                                        }
-                                                        sel.selectedStrokes[i] = newStroke
-                                                    }
+                                                    lassoDragOffset += Offset(dx, dy)
                                                     for (box in sel.selectedTextBoxes) {
                                                         box.x += dx
                                                         box.y += dy
@@ -3205,8 +3256,6 @@ private fun NotePaneViewport(
                                                         img.x += dx
                                                         img.y += dy
                                                     }
-                                                    val newBounds = sel.bounds.translate(Offset(dx, dy))
-                                                    state.lassoSelection = sel.copy(bounds = newBounds)
                                                 }
                                             }
                                         }

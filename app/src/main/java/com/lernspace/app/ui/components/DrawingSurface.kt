@@ -101,6 +101,86 @@ private class StrokeBoundsIndex {
     }
 }
 
+private fun recordStrokesToCanvas(
+    rc: android.graphics.Canvas,
+    strokes: List<Stroke>,
+    isDarkPaper: Boolean,
+    darkStrokePaint: Paint,
+    renderer: CanvasStrokeRenderer,
+    localMatrix: Matrix
+) {
+    if (!isDarkPaper) {
+        // Pass 1: Under-ink highlighter rendering (luminous color washes behind text)
+        for (i in 0 until strokes.size) {
+            if (isHighlighterStroke(strokes[i])) {
+                renderer.draw(
+                    canvas = rc,
+                    stroke = strokes[i],
+                    strokeToScreenTransform = localMatrix
+                )
+            }
+        }
+        // Pass 2: Regular pen and shape strokes rendered crisp on top
+        for (i in 0 until strokes.size) {
+            if (!isHighlighterStroke(strokes[i])) {
+                renderer.draw(
+                    canvas = rc,
+                    stroke = strokes[i],
+                    strokeToScreenTransform = localMatrix
+                )
+            }
+        }
+    } else {
+        // Pass 1: Highlighters under ink on dark paper
+        for (i in 0 until strokes.size) {
+            if (isHighlighterStroke(strokes[i])) {
+                renderer.draw(
+                    canvas = rc,
+                    stroke = strokes[i],
+                    strokeToScreenTransform = localMatrix
+                )
+            }
+        }
+        // Pass 2: Pen strokes on dark paper with smart inversion for dark ink
+        var i = 0
+        val count = strokes.size
+        while (i < count) {
+            if (isHighlighterStroke(strokes[i])) {
+                i++
+                continue
+            }
+            val isDark = isDarkInkColor(strokes[i].brush.colorIntArgb)
+            val batchStart = i
+            while (i < count && !isHighlighterStroke(strokes[i]) && isDarkInkColor(strokes[i].brush.colorIntArgb) == isDark) {
+                i++
+            }
+            if (isDark) {
+                rc.saveLayer(null, darkStrokePaint)
+                for (j in batchStart until i) {
+                    if (!isHighlighterStroke(strokes[j])) {
+                        renderer.draw(
+                            canvas = rc,
+                            stroke = strokes[j],
+                            strokeToScreenTransform = localMatrix
+                        )
+                    }
+                }
+                rc.restore()
+            } else {
+                for (j in batchStart until i) {
+                    if (!isHighlighterStroke(strokes[j])) {
+                        renderer.draw(
+                            canvas = rc,
+                            stroke = strokes[j],
+                            strokeToScreenTransform = localMatrix
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 @RequiresApi(Build.VERSION_CODES.Q)
 private class WorldStrokeChunk(
     val key: Long
@@ -115,6 +195,7 @@ private class WorldStrokeChunk(
     }
     var recorded: Boolean = false
     var recordedDarkPaper: Boolean = false
+    var recordedScale: Float = 1f
     private val localMatrix = Matrix()
 
     fun addStroke(stroke: Stroke, bounds: FloatArray?) {
@@ -168,98 +249,46 @@ private class WorldStrokeChunk(
     fun ensureRecorded(
         isDarkPaper: Boolean,
         darkStrokePaint: Paint,
-        renderer: CanvasStrokeRenderer
+        renderer: CanvasStrokeRenderer,
+        desiredLodScale: Float
     ) {
-        if (recorded && recordedDarkPaper == isDarkPaper && renderNode.hasDisplayList()) {
+        val baseW = if (maxX > minX) (maxX - minX) else 512f
+        val baseH = if (maxY > minY) (maxY - minY) else 512f
+        val maxDim = maxOf(baseW, baseH).coerceAtLeast(1f)
+        val maxSafeScale = (2048f / maxDim).coerceAtLeast(1f)
+        val targetScale = desiredLodScale.coerceAtMost(maxSafeScale)
+
+        if (recorded && recordedDarkPaper == isDarkPaper && recordedScale == targetScale && renderNode.hasDisplayList()) {
             return
         }
-        val w = if (maxX > minX) ceil(maxX - minX).toInt().coerceAtLeast(1) else 512
-        val h = if (maxY > minY) ceil(maxY - minY).toInt().coerceAtLeast(1) else 512
+        val w = ceil(baseW * targetScale).toInt().coerceAtLeast(1)
+        val h = ceil(baseH * targetScale).toInt().coerceAtLeast(1)
         val ox = if (minX.isFinite()) minX else 0f
         val oy = if (minY.isFinite()) minY else 0f
 
         renderNode.setPosition(0, 0, w, h)
         localMatrix.reset()
         localMatrix.postTranslate(-ox, -oy)
+        localMatrix.postScale(targetScale, targetScale)
 
         val rc = renderNode.beginRecording(w, h)
         try {
+            rc.scale(targetScale, targetScale)
             rc.translate(-ox, -oy)
-            if (!isDarkPaper) {
-                // Pass 1: Under-ink highlighter rendering (luminous color washes behind text)
-                for (i in 0 until strokes.size) {
-                    if (isHighlighterStroke(strokes[i])) {
-                        renderer.draw(
-                            canvas = rc,
-                            stroke = strokes[i],
-                            strokeToScreenTransform = localMatrix
-                        )
-                    }
-                }
-                // Pass 2: Regular pen and shape strokes rendered crisp on top
-                for (i in 0 until strokes.size) {
-                    if (!isHighlighterStroke(strokes[i])) {
-                        renderer.draw(
-                            canvas = rc,
-                            stroke = strokes[i],
-                            strokeToScreenTransform = localMatrix
-                        )
-                    }
-                }
-            } else {
-                // Pass 1: Highlighters under ink on dark paper
-                for (i in 0 until strokes.size) {
-                    if (isHighlighterStroke(strokes[i])) {
-                        renderer.draw(
-                            canvas = rc,
-                            stroke = strokes[i],
-                            strokeToScreenTransform = localMatrix
-                        )
-                    }
-                }
-                // Pass 2: Pen strokes on dark paper with smart inversion for dark ink
-                var i = 0
-                val count = strokes.size
-                while (i < count) {
-                    if (isHighlighterStroke(strokes[i])) {
-                        i++
-                        continue
-                    }
-                    val isDark = isDarkInkColor(strokes[i].brush.colorIntArgb)
-                    val batchStart = i
-                    while (i < count && !isHighlighterStroke(strokes[i]) && isDarkInkColor(strokes[i].brush.colorIntArgb) == isDark) {
-                        i++
-                    }
-                    if (isDark) {
-                        rc.saveLayer(null, darkStrokePaint)
-                        for (j in batchStart until i) {
-                            if (!isHighlighterStroke(strokes[j])) {
-                                renderer.draw(
-                                    canvas = rc,
-                                    stroke = strokes[j],
-                                    strokeToScreenTransform = localMatrix
-                                )
-                            }
-                        }
-                        rc.restore()
-                    } else {
-                        for (j in batchStart until i) {
-                            if (!isHighlighterStroke(strokes[j])) {
-                                renderer.draw(
-                                    canvas = rc,
-                                    stroke = strokes[j],
-                                    strokeToScreenTransform = localMatrix
-                                )
-                            }
-                        }
-                    }
-                }
-            }
+            recordStrokesToCanvas(
+                rc = rc,
+                strokes = strokes,
+                isDarkPaper = isDarkPaper,
+                darkStrokePaint = darkStrokePaint,
+                renderer = renderer,
+                localMatrix = localMatrix
+            )
         } finally {
             renderNode.endRecording()
         }
         recorded = true
         recordedDarkPaper = isDarkPaper
+        recordedScale = targetScale
     }
 
     fun discard() {
@@ -277,6 +306,7 @@ private class GpuChunkCache(
     val chunksList = ArrayList<WorldStrokeChunk>()
     private val tempBuckets = HashMap<Long, ArrayList<Stroke>>()
     var lastDarkPaper: Boolean = false
+    var lastHiddenStrokes: Set<Stroke> = emptySet()
 
     fun release() {
         for (i in 0 until chunksList.size) {
@@ -285,6 +315,7 @@ private class GpuChunkCache(
         chunksList.clear()
         chunksMap.clear()
         cachedStrokeRefs.clear()
+        lastHiddenStrokes = emptySet()
     }
 
     private fun chunkKeyForStroke(stroke: Stroke): Long {
@@ -296,15 +327,19 @@ private class GpuChunkCache(
         return (gx.toLong() shl 32) or (gy.toLong() and 0xFFFFFFFFL)
     }
 
-    fun syncStrokes(strokes: List<Stroke>, isDarkPaper: Boolean) {
+    fun syncStrokes(strokes: List<Stroke>, hiddenStrokes: Set<Stroke>, isDarkPaper: Boolean) {
         val count = strokes.size
         if (count == 0) {
             if (cachedStrokeRefs.isNotEmpty()) release()
             lastDarkPaper = isDarkPaper
+            lastHiddenStrokes = hiddenStrokes
             return
         }
 
-        var prefixMatch = count >= cachedStrokeRefs.size
+        val hiddenChanged = lastHiddenStrokes !== hiddenStrokes &&
+            !(lastHiddenStrokes.isEmpty() && hiddenStrokes.isEmpty())
+
+        var prefixMatch = !hiddenChanged && count >= cachedStrokeRefs.size
         if (prefixMatch) {
             val prevCount = cachedStrokeRefs.size
             for (i in 0 until prevCount) {
@@ -319,17 +354,18 @@ private class GpuChunkCache(
             return
         }
 
-        if (prefixMatch) {
+        if (prefixMatch && hiddenStrokes.isEmpty()) {
             for (i in cachedStrokeRefs.size until count) {
                 val s = strokes[i]
                 addStrokeToChunk(s)
                 cachedStrokeRefs.add(s)
             }
         } else {
-            // Smart per-chunk diff: only chunks whose strokes changed (e.g. under eraser) re-record!
+            // Smart per-chunk diff: only chunks whose strokes changed (e.g. under eraser or lasso drag) re-record!
             tempBuckets.values.forEach { it.clear() }
             for (i in 0 until count) {
                 val s = strokes[i]
+                if (hiddenStrokes.isNotEmpty() && hiddenStrokes.contains(s)) continue
                 val key = chunkKeyForStroke(s)
                 var list = tempBuckets[key]
                 if (list == null) {
@@ -369,6 +405,7 @@ private class GpuChunkCache(
             cachedStrokeRefs.addAll(strokes)
         }
         lastDarkPaper = isDarkPaper
+        lastHiddenStrokes = hiddenStrokes
     }
 
     private fun addStrokeToChunk(stroke: Stroke) {
@@ -377,6 +414,96 @@ private class GpuChunkCache(
             WorldStrokeChunk(key).also { chunksList.add(it) }
         }
         chunk.addStroke(stroke, boundsIndex.getStrokeBounds(stroke))
+    }
+}
+
+@RequiresApi(Build.VERSION_CODES.Q)
+private class MovingStrokesCache(
+    private val boundsIndex: StrokeBoundsIndex
+) {
+    val renderNode = RenderNode("MovingStrokes").apply {
+        setClipToBounds(false)
+    }
+    var lastStrokesRef: List<Stroke>? = null
+    var lastDarkPaper: Boolean = false
+    var recordedScale: Float = 1f
+    var minX: Float = 0f
+    var minY: Float = 0f
+    var maxX: Float = 512f
+    var maxY: Float = 512f
+    private val localMatrix = Matrix()
+
+    fun release() {
+        renderNode.discardDisplayList()
+        lastStrokesRef = null
+    }
+
+    fun ensureRecorded(
+        strokes: List<Stroke>,
+        isDarkPaper: Boolean,
+        darkStrokePaint: Paint,
+        renderer: CanvasStrokeRenderer,
+        desiredLodScale: Float
+    ) {
+        if (strokes.isEmpty()) {
+            if (lastStrokesRef != null) release()
+            return
+        }
+        val listChanged = lastStrokesRef !== strokes
+        if (listChanged) {
+            var bMinX = Float.POSITIVE_INFINITY
+            var bMinY = Float.POSITIVE_INFINITY
+            var bMaxX = Float.NEGATIVE_INFINITY
+            var bMaxY = Float.NEGATIVE_INFINITY
+            for (i in 0 until strokes.size) {
+                val b = boundsIndex.getStrokeBounds(strokes[i]) ?: continue
+                if (b[0] < bMinX) bMinX = b[0]
+                if (b[1] < bMinY) bMinY = b[1]
+                if (b[2] > bMaxX) bMaxX = b[2]
+                if (b[3] > bMaxY) bMaxY = b[3]
+            }
+            minX = if (bMinX.isFinite()) bMinX else 0f
+            minY = if (bMinY.isFinite()) bMinY else 0f
+            maxX = if (bMaxX.isFinite()) bMaxX else 512f
+            maxY = if (bMaxY.isFinite()) bMaxY else 512f
+        }
+
+        val baseW = (maxX - minX).coerceAtLeast(1f)
+        val baseH = (maxY - minY).coerceAtLeast(1f)
+        val maxDim = maxOf(baseW, baseH).coerceAtLeast(1f)
+        val maxSafeScale = (2048f / maxDim).coerceAtLeast(1f)
+        val targetScale = desiredLodScale.coerceAtMost(maxSafeScale)
+
+        if (!listChanged && lastDarkPaper == isDarkPaper && recordedScale == targetScale && renderNode.hasDisplayList()) {
+            return
+        }
+
+        val w = ceil(baseW * targetScale).toInt().coerceAtLeast(1)
+        val h = ceil(baseH * targetScale).toInt().coerceAtLeast(1)
+
+        renderNode.setPosition(0, 0, w, h)
+        localMatrix.reset()
+        localMatrix.postTranslate(-minX, -minY)
+        localMatrix.postScale(targetScale, targetScale)
+
+        val rc = renderNode.beginRecording(w, h)
+        try {
+            rc.scale(targetScale, targetScale)
+            rc.translate(-minX, -minY)
+            recordStrokesToCanvas(
+                rc = rc,
+                strokes = strokes,
+                isDarkPaper = isDarkPaper,
+                darkStrokePaint = darkStrokePaint,
+                renderer = renderer,
+                localMatrix = localMatrix
+            )
+        } finally {
+            renderNode.endRecording()
+        }
+        lastStrokesRef = strokes
+        lastDarkPaper = isDarkPaper
+        recordedScale = targetScale
     }
 }
 
@@ -501,7 +628,10 @@ fun DrawingSurface(
     eraserRadiusPx: Float = 30f,
     onErase: (Float, Float) -> Unit = { _, _ -> },
     onEraseStart: () -> Unit = {},
-    onEraseEnd: () -> Unit = {}
+    onEraseEnd: () -> Unit = {},
+    hiddenStrokes: Set<Stroke> = emptySet(),
+    movingStrokes: List<Stroke> = emptyList(),
+    movingOffsetProvider: () -> Offset = { Offset.Zero }
 ) {
     val currentOnErase by rememberUpdatedState(onErase)
     val currentOnEraseStart by rememberUpdatedState(onEraseStart)
@@ -509,16 +639,21 @@ fun DrawingSurface(
     val currentScaleProvider by rememberUpdatedState(scaleProvider)
     val currentPanXProvider by rememberUpdatedState(panXProvider)
     val currentPanYProvider by rememberUpdatedState(panYProvider)
+    val currentMovingOffsetProvider by rememberUpdatedState(movingOffsetProvider)
 
     val boundsIndex = remember { StrokeBoundsIndex() }
     val directMatrix = remember { Matrix() }
     val gpuChunkCache = remember {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) GpuChunkCache(boundsIndex) else null
     }
+    val movingStrokesCache = remember {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) MovingStrokesCache(boundsIndex) else null
+    }
     DisposableEffect(Unit) {
         onDispose {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 gpuChunkCache?.release()
+                movingStrokesCache?.release()
             }
         }
     }
@@ -554,27 +689,81 @@ fun DrawingSurface(
             val visBottom = (size.height - py) / s
             val nativeCanvas = drawContext.canvas.nativeCanvas
 
-            directMatrix.reset()
-            directMatrix.postScale(s, s)
-            directMatrix.postTranslate(px, py)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && gpuChunkCache != null && nativeCanvas.isHardwareAccelerated) {
+                gpuChunkCache.syncStrokes(strokes, hiddenStrokes, isDarkPaper)
+                val desiredLodScale = when {
+                    s <= 1.25f -> 1f
+                    s <= 2.5f -> 2f
+                    s <= 5.0f -> 4f
+                    else -> 8f
+                }
+                nativeCanvas.withSave {
+                    nativeCanvas.clipRect(0f, 0f, size.width, size.height)
+                    nativeCanvas.translate(px, py)
+                    nativeCanvas.scale(s, s)
+                    val chunks = gpuChunkCache.chunksList
+                    for (i in 0 until chunks.size) {
+                        val chunk = chunks[i]
+                        if (!chunk.intersects(visLeft, visTop, visRight, visBottom)) continue
+                        chunk.ensureRecorded(
+                            isDarkPaper = isDarkPaper,
+                            darkStrokePaint = darkStrokePaint,
+                            renderer = canvasStrokeRenderer,
+                            desiredLodScale = desiredLodScale
+                        )
+                        val ox = if (chunk.minX.isFinite()) chunk.minX else 0f
+                        val oy = if (chunk.minY.isFinite()) chunk.minY else 0f
+                        val invScale = 1f / chunk.recordedScale
+                        nativeCanvas.withSave {
+                            nativeCanvas.translate(ox, oy)
+                            nativeCanvas.scale(invScale, invScale)
+                            nativeCanvas.drawRenderNode(chunk.renderNode)
+                        }
+                    }
 
-            nativeCanvas.withSave {
-                nativeCanvas.clipRect(0f, 0f, size.width, size.height)
-                nativeCanvas.translate(px, py)
-                nativeCanvas.scale(s, s)
-                drawCulledStrokesDirect(
-                    canvas = nativeCanvas,
-                    strokes = strokes,
-                    isDarkPaper = isDarkPaper,
-                    darkStrokePaint = darkStrokePaint,
-                    renderer = canvasStrokeRenderer,
-                    matrix = directMatrix,
-                    boundsIndex = boundsIndex,
-                    visLeft = visLeft,
-                    visTop = visTop,
-                    visRight = visRight,
-                    visBottom = visBottom
-                )
+                    if (movingStrokes.isNotEmpty() && movingStrokesCache != null) {
+                        movingStrokesCache.ensureRecorded(
+                            strokes = movingStrokes,
+                            isDarkPaper = isDarkPaper,
+                            darkStrokePaint = darkStrokePaint,
+                            renderer = canvasStrokeRenderer,
+                            desiredLodScale = desiredLodScale
+                        )
+                        val mOff = currentMovingOffsetProvider()
+                        val invScale = 1f / movingStrokesCache.recordedScale
+                        nativeCanvas.withSave {
+                            nativeCanvas.translate(
+                                movingStrokesCache.minX + mOff.x,
+                                movingStrokesCache.minY + mOff.y
+                            )
+                            nativeCanvas.scale(invScale, invScale)
+                            nativeCanvas.drawRenderNode(movingStrokesCache.renderNode)
+                        }
+                    }
+                }
+            } else {
+                directMatrix.reset()
+                directMatrix.postScale(s, s)
+                directMatrix.postTranslate(px, py)
+
+                nativeCanvas.withSave {
+                    nativeCanvas.clipRect(0f, 0f, size.width, size.height)
+                    nativeCanvas.translate(px, py)
+                    nativeCanvas.scale(s, s)
+                    drawCulledStrokesDirect(
+                        canvas = nativeCanvas,
+                        strokes = strokes,
+                        isDarkPaper = isDarkPaper,
+                        darkStrokePaint = darkStrokePaint,
+                        renderer = canvasStrokeRenderer,
+                        matrix = directMatrix,
+                        boundsIndex = boundsIndex,
+                        visLeft = visLeft,
+                        visTop = visTop,
+                        visRight = visRight,
+                        visBottom = visBottom
+                    )
+                }
             }
         }
 
