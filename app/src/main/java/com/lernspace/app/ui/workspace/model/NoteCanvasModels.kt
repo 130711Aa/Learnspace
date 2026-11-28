@@ -94,6 +94,23 @@ data class ImageElement(
     var isLocked: Boolean = false
 )
 
+enum class InteractiveModuleType(val displayName: String) {
+    GRAPH_SLIDER("Grafik Fungsi Interaktif")
+}
+
+data class InteractiveModuleElement(
+    val id: String = UUID.randomUUID().toString(),
+    var x: Float,
+    var y: Float,
+    var width: Float = 640f,
+    var height: Float = 560f,
+    val moduleType: InteractiveModuleType = InteractiveModuleType.GRAPH_SLIDER,
+    var equation: String = "y = mx + c",
+    var parameters: Map<String, Float> = mapOf("m" to 1f, "c" to 0f),
+    var isSelected: Boolean = false,
+    var isLocked: Boolean = false
+)
+
 /**
  * Isolated content per page in a paged note or PDF document.
  */
@@ -102,7 +119,8 @@ data class NotePageData(
     var pageIndex: Int,
     val strokes: MutableList<Stroke> = mutableListOf(),
     val textBoxes: MutableList<TextBoxElement> = mutableListOf(),
-    val imageElements: MutableList<ImageElement> = mutableListOf()
+    val imageElements: MutableList<ImageElement> = mutableListOf(),
+    val interactiveModules: MutableList<InteractiveModuleElement> = mutableListOf()
 )
 
 data class NoteUiModel(

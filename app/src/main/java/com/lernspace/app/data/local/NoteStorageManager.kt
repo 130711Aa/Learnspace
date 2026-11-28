@@ -15,6 +15,8 @@ import androidx.ink.brush.compose.createWithComposeColor
 import androidx.ink.storage.StrokeInputBatchSerialization
 import androidx.ink.strokes.Stroke
 import com.lernspace.app.ui.workspace.model.ImageElement
+import com.lernspace.app.ui.workspace.model.InteractiveModuleElement
+import com.lernspace.app.ui.workspace.model.InteractiveModuleType
 import com.lernspace.app.ui.workspace.model.NotePageData
 import com.lernspace.app.ui.workspace.model.TextBoxAlign
 import com.lernspace.app.ui.workspace.model.TextBoxElement
@@ -344,6 +346,26 @@ class NoteStorageManager(private val context: Context) {
                 }
                 pageObj.put("images", imagesArray)
 
+                // 2b. Interactive Modules
+                val modulesArray = JSONArray()
+                page.interactiveModules.forEach { mod ->
+                    val paramsObj = JSONObject()
+                    mod.parameters.forEach { (k, v) -> paramsObj.put(k, v.toDouble()) }
+                    val modObj = JSONObject().apply {
+                        put("id", mod.id)
+                        put("x", mod.x.toDouble())
+                        put("y", mod.y.toDouble())
+                        put("width", mod.width.toDouble())
+                        put("height", mod.height.toDouble())
+                        put("moduleType", mod.moduleType.name)
+                        put("equation", mod.equation)
+                        put("parameters", paramsObj)
+                        put("isLocked", mod.isLocked)
+                    }
+                    modulesArray.put(modObj)
+                }
+                pageObj.put("interactiveModules", modulesArray)
+
                 // 3. AndroidX Ink Strokes (Compressed binary protobuf via androidx.ink:ink-storage)
                 val strokesArray = JSONArray()
                 val baos = ByteArrayOutputStream(512)
@@ -500,6 +522,39 @@ class NoteStorageManager(private val context: Context) {
                                 )
                             }
                         }
+                    }
+                }
+
+                // 2b. Interactive Modules
+                val modulesArray = pageObj.optJSONArray("interactiveModules")
+                if (modulesArray != null) {
+                    for (j in 0 until modulesArray.length()) {
+                        val modObj = modulesArray.getJSONObject(j)
+                        val paramsMap = mutableMapOf<String, Float>()
+                        val paramsObj = modObj.optJSONObject("parameters")
+                        if (paramsObj != null) {
+                            val keys = paramsObj.keys()
+                            while (keys.hasNext()) {
+                                val k = keys.next()
+                                paramsMap[k] = paramsObj.optDouble(k, 0.0).toFloat()
+                            }
+                        }
+                        pageData.interactiveModules.add(
+                            InteractiveModuleElement(
+                                id = modObj.optString("id"),
+                                x = modObj.optDouble("x").toFloat(),
+                                y = modObj.optDouble("y").toFloat(),
+                                width = modObj.optDouble("width", 640.0).toFloat(),
+                                height = modObj.optDouble("height", 560.0).toFloat(),
+                                moduleType = runCatching {
+                                    InteractiveModuleType.valueOf(modObj.optString("moduleType", "GRAPH_SLIDER"))
+                                }.getOrDefault(InteractiveModuleType.GRAPH_SLIDER),
+                                equation = modObj.optString("equation", "y = mx + c"),
+                                parameters = paramsMap,
+                                isSelected = false,
+                                isLocked = modObj.optBoolean("isLocked", false)
+                            )
+                        )
                     }
                 }
 

@@ -304,7 +304,8 @@ object AcademicDatabaseManager {
                 pageIndex = page.pageIndex,
                 textBoxes = page.textBoxes.toMutableList(),
                 strokes = page.strokes.toMutableList(),
-                imageElements = page.imageElements.toMutableList()
+                imageElements = page.imageElements.toMutableList(),
+                interactiveModules = page.interactiveModules.toMutableList()
             )
         }
         val isDark = note.isDarkPaper

@@ -253,6 +253,7 @@ fun FloatingGraphWindow(
     isDarkTheme: Boolean = false,
     onClose: () -> Unit,
     onInsertGraphToNote: (Bitmap, List<String>) -> Unit,
+    onInsertInteractiveModule: ((equation: String, parameters: Map<String, Float>) -> Unit)? = null,
     onOpen3DLab: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -1442,11 +1443,50 @@ fun FloatingGraphWindow(
                             }
                         }
 
-                        // Action Controls: Single Sisipkan Button, Expand, Minimize, Close
+                        // Action Controls: Sisipkan Gambar, Modul Interaktif, Expand, Minimize, Close
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
+                            if (onInsertInteractiveModule != null) {
+                                Button(
+                                    onClick = {
+                                        val firstItem = graphItems.firstOrNull { it.isVisible }
+                                        val primaryEq = if (firstItem != null) {
+                                            val rawClean = firstItem.cleanExpr.ifBlank {
+                                                MathPlotHelper.cleanLatexForPlot(firstItem.rawEquation)
+                                            }
+                                            val natural = MathPlotHelper.denormalizeImplicitMultiplication(rawClean).trim()
+                                            when {
+                                                natural.isBlank() -> "y = mx + c"
+                                                natural.contains("=") -> natural
+                                                else -> "y = $natural"
+                                            }
+                                        } else {
+                                            "y = mx + c"
+                                        }
+                                        val detected = MathPlotHelper.extractParameters(primaryEq)
+                                        val paramsMap = mutableMapOf<String, Float>()
+                                        for (ch in detected) {
+                                            paramsMap[ch.toString()] = paramValues[ch] ?: when (ch) {
+                                                'a', 'b', 'm', 'k' -> 1f
+                                                'r' -> 3f
+                                                else -> 0f
+                                            }
+                                        }
+                                        onInsertInteractiveModule(primaryEq, paramsMap)
+                                    },
+                                    shape = RoundedCornerShape(7.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F766E)),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                    modifier = Modifier.height(28.dp)
+                                ) {
+                                    Icon(Icons.AutoMirrored.Filled.ShowChart, contentDescription = null, modifier = Modifier.size(13.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Modul", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+
                             // Single Unified Sisipkan button
                             Button(
                                 onClick = { insertCurrentToNote() },

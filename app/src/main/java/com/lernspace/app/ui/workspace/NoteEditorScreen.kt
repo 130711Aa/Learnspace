@@ -120,6 +120,7 @@ import com.lernspace.app.ui.workspace.components.LockedImageBadge
 import com.lernspace.app.ui.workspace.components.DraggableTextBox
 import com.lernspace.app.ui.workspace.components.FloatingGraphWindow
 import com.lernspace.app.ui.workspace.components.InteractiveGraphDialog
+import com.lernspace.app.ui.workspace.components.InteractiveGraphModule
 import com.lernspace.app.ui.math3d.Math3DLabScreen
 import com.lernspace.app.ui.workspace.components.MarkdownLatexContent
 import com.lernspace.app.ui.workspace.components.NoteFloatingToolbar
@@ -246,12 +247,14 @@ class NotePaneState(
 
     val textBoxes = mutableStateListOf<TextBoxElement>()
     val imageElements = mutableStateListOf<ImageElement>()
+    val interactiveModules = mutableStateListOf<InteractiveModuleElement>()
     val aiChatMessages = mutableStateListOf<com.lernspace.app.ui.workspace.ai.AiChatMessage>()
 
     data class CanvasHistorySnapshot(
         val strokes: List<Stroke>,
         val textBoxes: List<TextBoxElement>,
-        val imageElements: List<ImageElement>
+        val imageElements: List<ImageElement>,
+        val interactiveModules: List<InteractiveModuleElement> = emptyList()
     )
 
     val undoStack = mutableStateListOf<CanvasHistorySnapshot>()
@@ -261,7 +264,8 @@ class NotePaneState(
     fun captureSnapshot(): CanvasHistorySnapshot = CanvasHistorySnapshot(
         strokes = strokes.toList(),
         textBoxes = textBoxes.map { it.copy(isSelected = false) },
-        imageElements = imageElements.map { it.copy(isSelected = false) }
+        imageElements = imageElements.map { it.copy(isSelected = false) },
+        interactiveModules = interactiveModules.map { it.copy(isSelected = false) }
     )
 
     fun pushUndoSnapshot(before: CanvasHistorySnapshot = captureSnapshot()) {
@@ -284,7 +288,8 @@ class NotePaneState(
         val now = captureSnapshot()
         if (before.strokes != now.strokes ||
             before.textBoxes != now.textBoxes ||
-            before.imageElements != now.imageElements
+            before.imageElements != now.imageElements ||
+            before.interactiveModules != now.interactiveModules
         ) {
             pushUndoSnapshot(before)
         }
@@ -297,6 +302,8 @@ class NotePaneState(
         textBoxes.addAll(snapshot.textBoxes.map { it.copy(isSelected = false) })
         imageElements.clear()
         imageElements.addAll(snapshot.imageElements.map { it.copy(isSelected = false) })
+        interactiveModules.clear()
+        interactiveModules.addAll(snapshot.interactiveModules.map { it.copy(isSelected = false) })
         lassoSelection = null
     }
 
@@ -316,6 +323,7 @@ class NotePaneState(
             strokes.addAll(pageToLoad.strokes)
             textBoxes.addAll(pageToLoad.textBoxes)
             imageElements.addAll(pageToLoad.imageElements)
+            interactiveModules.addAll(pageToLoad.interactiveModules)
         }
     }
 
@@ -344,6 +352,8 @@ class NotePaneState(
         target.textBoxes.addAll(textBoxes)
         target.imageElements.clear()
         target.imageElements.addAll(imageElements)
+        target.interactiveModules.clear()
+        target.interactiveModules.addAll(interactiveModules)
         note.isDarkPaper = isDarkPaper
         note.paperStyle = paperStyle
         note.lastOpenedPageIndex = currentPageIndex
@@ -357,6 +367,7 @@ class NotePaneState(
         pendingTransactionSnapshot = null
         textBoxes.clear()
         imageElements.clear()
+        interactiveModules.clear()
         lassoSelection = null
         currentLassoLoop.clear()
         shapeDrawStart = null
@@ -369,11 +380,12 @@ class NotePaneState(
         strokes.addAll(source.strokes)
         textBoxes.addAll(source.textBoxes)
         imageElements.addAll(source.imageElements)
+        interactiveModules.addAll(source.interactiveModules)
     }
 
     suspend fun loadFromDiskAsync() {
         val alreadyInRam = note.isContentLoaded || note.pages.any {
-            it.strokes.isNotEmpty() || it.textBoxes.isNotEmpty() || it.imageElements.isNotEmpty()
+            it.strokes.isNotEmpty() || it.textBoxes.isNotEmpty() || it.imageElements.isNotEmpty() || it.interactiveModules.isNotEmpty()
         }
         if (alreadyInRam || AcademicDatabaseManager.hasPendingSave(note.id)) {
             note.isContentLoaded = true
@@ -614,6 +626,9 @@ class NotePaneState(
         for (i in imageElements.indices) {
             imageElements[i] = imageElements[i].copy(isSelected = false)
         }
+        for (i in interactiveModules.indices) {
+            interactiveModules[i] = interactiveModules[i].copy(isSelected = false)
+        }
     }
 
     fun undo() {
@@ -640,11 +655,12 @@ class NotePaneState(
     }
 
     fun clearAll() {
-        if (strokes.isEmpty() && textBoxes.isEmpty() && imageElements.isEmpty()) return
+        if (strokes.isEmpty() && textBoxes.isEmpty() && imageElements.isEmpty() && interactiveModules.isEmpty()) return
         pushUndoSnapshot()
         strokes.clear()
         textBoxes.clear()
         imageElements.clear()
+        interactiveModules.clear()
         lassoSelection = null
         saveActivePageData(immediate = true)
     }
@@ -1550,6 +1566,35 @@ fun NoteEditorScreen(
                         Toast.makeText(context, "Grafik kartesius disisipkan ke catatan", Toast.LENGTH_SHORT).show()
                     }
                 },
+                onInsertInteractiveModule = if (activeState.canvasType != NoteCanvasType.DOC_DOCUMENT) {
+                    { eq, params ->
+                        val sel = activeState.lassoSelection
+                        val curScale = activeState.scale.coerceAtLeast(0.05f)
+                        val spawnX = (-activeState.panX + 140f) / curScale
+                        val spawnY = (-activeState.panY + 120f) / curScale
+                        val insertX = sel?.bounds?.left?.coerceAtLeast(32f) ?: spawnX.coerceAtLeast(32f)
+                        val insertY = (sel?.bounds?.bottom?.plus(20f))?.coerceAtLeast(32f) ?: spawnY.coerceAtLeast(32f)
+                        activeState.pushUndoSnapshot()
+                        activeState.deselectAll()
+                        activeState.interactiveModules.add(
+                            InteractiveModuleElement(
+                                x = insertX,
+                                y = insertY,
+                                width = 640f,
+                                height = 560f,
+                                moduleType = InteractiveModuleType.GRAPH_SLIDER,
+                                equation = eq,
+                                parameters = params,
+                                isSelected = true
+                            )
+                        )
+                        activeState.saveActivePageData()
+                        activeState.lassoSelection = null
+                        showInteractiveGraphDialog = false
+                        interactiveGraphFunction = null
+                        Toast.makeText(context, "Modul grafik interaktif disisipkan", Toast.LENGTH_SHORT).show()
+                    }
+                } else null,
                 onOpen3DLab = { showMath3DDialog = true },
                 modifier = Modifier.zIndex(20f)
             )
@@ -2480,6 +2525,10 @@ private fun NotePaneViewport(
                                         worldDownX in (badgeX - pad)..(badgeX + pad) &&
                                             worldDownY in (badgeY - pad)..(badgeY + pad)
                                     }
+                                } || state.interactiveModules.any { mod ->
+                                    val pad = 16f / state.scale
+                                    worldDownX in (mod.x - pad)..(mod.x + mod.width + pad) &&
+                                        worldDownY in (mod.y - pad)..(mod.y + mod.height + pad)
                                 }
 
                                 if (hitPlacedElement) {
@@ -2880,6 +2929,77 @@ private fun NotePaneViewport(
                             },
                             isSelectionEnabled = !img.isLocked || activeTool == NoteTool.IMAGE || activeTool == NoteTool.LASSO,
                             modifier = Modifier.zIndex(if (img.isSelected) 10f else if (!img.isLocked) 2f else 0f)
+                        )
+                    }
+                }
+            }
+
+            // Interactive Modules Layer (Live widgets such as Graph + Auto-Sliders)
+            state.interactiveModules.forEachIndexed { index, mod ->
+                key(mod.id) {
+                    val isVisible = mod.isSelected || (
+                        mod.x + mod.width >= cullingBounds[0] && mod.x <= cullingBounds[2] &&
+                        mod.y + mod.height >= cullingBounds[1] && mod.y <= cullingBounds[3]
+                    )
+                    if (isVisible) {
+                        InteractiveGraphModule(
+                            module = mod,
+                            isDarkTheme = state.isDarkPaper,
+                            scaleProvider = { state.scale },
+                            panXProvider = { state.panX },
+                            panYProvider = { state.panY },
+                            onCommitMove = { newWorldX, newWorldY ->
+                                if (index < state.interactiveModules.size) {
+                                    state.pushUndoSnapshot()
+                                    state.interactiveModules[index] = state.interactiveModules[index].copy(
+                                        x = newWorldX,
+                                        y = newWorldY
+                                    )
+                                    state.saveActivePageData()
+                                }
+                            },
+                            onCommitResize = { newWorldW, newWorldH ->
+                                if (index < state.interactiveModules.size) {
+                                    state.pushUndoSnapshot()
+                                    state.interactiveModules[index] = state.interactiveModules[index].copy(
+                                        width = newWorldW,
+                                        height = newWorldH
+                                    )
+                                    state.saveActivePageData()
+                                }
+                            },
+                            onUpdateModuleState = { eq, params ->
+                                if (index < state.interactiveModules.size) {
+                                    state.interactiveModules[index] = state.interactiveModules[index].copy(
+                                        equation = eq,
+                                        parameters = params
+                                    )
+                                    state.saveActivePageData()
+                                }
+                            },
+                            onSelect = {
+                                state.deselectAll()
+                                if (index < state.interactiveModules.size) {
+                                    state.interactiveModules[index] = state.interactiveModules[index].copy(isSelected = true)
+                                }
+                            },
+                            onToggleLock = {
+                                if (index < state.interactiveModules.size) {
+                                    state.pushUndoSnapshot()
+                                    val nowLocked = !state.interactiveModules[index].isLocked
+                                    state.interactiveModules[index] = state.interactiveModules[index].copy(
+                                        isLocked = nowLocked,
+                                        isSelected = !nowLocked
+                                    )
+                                    state.saveActivePageData()
+                                }
+                            },
+                            onDelete = {
+                                state.pushUndoSnapshot()
+                                state.interactiveModules.remove(mod)
+                                state.saveActivePageData()
+                            },
+                            modifier = Modifier.zIndex(if (mod.isSelected) 12f else 5f)
                         )
                     }
                 }
